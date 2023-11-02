@@ -4,7 +4,7 @@ use crate::{
     kv::data_router::{self, DataRouter},
     kv::dist_kv_raft::tikvraft_proxy::RaftMsg,
     logical_modules_view::{self, P2PModuleLMView},
-    result::{NotMatchNodeErr, WSResult},
+    result::{ErrCvt, NotMatchNodeErr, WSError, WSResult, WsNetworkLogicErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID},
 };
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ pub trait P2P: Send + LogicalModule {
 
 pub struct P2PModule {
     pub logical_modules_view: P2PModuleLMView,
-    dispatch_map: RwLock<HashMap<u32, Box<dyn Fn(u32, Bytes) -> WSResult<()>>>>,
+    dispatch_map: RwLock<HashMap<u32, Box<dyn Fn(Bytes) -> WSResult<()>>>>,
     p2p: Box<dyn P2P>,
 }
 
@@ -52,8 +52,8 @@ impl P2PModule {
         let mut map = self.dispatch_map.write();
         let old = map.insert(
             M::msg_id(),
-            Box::new(move |id, data| {
-                let msg = M::decode(data)?;
+            Box::new(move |data| {
+                let msg = M::decode(data).map_err(|err| ErrCvt(err).to_ws_network_logic_err())?;
                 f(msg)
             }),
         );
@@ -65,23 +65,13 @@ impl P2PModule {
         // self.p2p.regist_rpc();
     }
     pub fn dispatch(&self, id: u32, data: Bytes) -> WSResult<()> {
-        // match id {
-        //     0 => {
-        //         let msg = raft::prelude::Message::decode(data)?;
-        //         if let Some(dr) = self.logical_modules_view.data_router() {
-        //             dr.raft_kv.raft_module.consume_msg(RaftMsg::Raft(msg))?;
-        //         } else {
-        //             tracing::warn!("raft message only works with data_router");
-        //             return Err(NotMatchNodeErr::NotRaft(
-        //                 "raft message only works with data_router".to_string(),
-        //             )
-        //             .into());
-        //         }
-        //     }
-        //     _ => {
-        //         panic!("unsupported message id: {}", id);
-        //     }
-        // }
-        Ok(())
+        let read = self.dispatch_map.read();
+        if let Some(cb) = read.get(&id) {
+            cb(data)?;
+            Ok(())
+        } else {
+            tracing::warn!("not match id: {}", id);
+            Err(WsNetworkLogicErr::MsgIdNotDispatchable(id).into())
+        }
     }
 }

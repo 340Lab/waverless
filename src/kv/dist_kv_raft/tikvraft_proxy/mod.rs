@@ -54,7 +54,7 @@ impl LogicalModule for RaftModule {
         // let (tx, rx) = std::sync::mpsc::channel();
         self.logical_modules_view
             .p2p()
-            .regist_dispatch::<raft::prelude::Message, _>(|m: raft::prelude::Message| {
+            .regist_dispatch(|m: raft::prelude::Message| {
                 tracing::info!("raft msg: {:?}", m);
 
                 Ok(())

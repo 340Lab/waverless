@@ -27,7 +27,7 @@ use std::{
 use tokio::task::JoinHandle;
 
 use crate::{
-    result::WSResult,
+    result::{ErrCvt, WSResult},
     sys::{
         BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID,
     },
@@ -103,7 +103,8 @@ impl LogicalModule for P2PQuicNode {
         let (endpoint, mut incoming_conns) = Endpoint::builder()
             .addr((Ipv4Addr::LOCALHOST, 0))
             .idle_timeout(60 * 60 * 1_000 /* 3600s = 1h */)
-            .server()?;
+            .server()
+            .map_err(|err| ErrCvt(err).to_ws_network_conn_err())?;
 
         let shared = self.shared.clone();
         let listen_for_new_conn = tokio::spawn(async move {
