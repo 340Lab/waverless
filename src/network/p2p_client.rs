@@ -1,6 +1,6 @@
 use super::proto;
 use crate::{
-    result::{WSError, WSNetworkErr, WSResult},
+    result::{WSError, WSResult, WsNetworkLogicErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID},
 };
 use async_trait::async_trait;
