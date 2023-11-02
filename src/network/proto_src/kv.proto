@@ -1,0 +1,31 @@
+syntax = "proto3";
+package kv;
+
+message KeyRange {
+  uint64 start=1;
+  uint64 end=2;
+}
+
+message KVPair {
+  uint64 key=1;
+  bytes value=2;
+}
+
+message GetRequest {
+  KeyRange key_range=1;
+}
+message GetFromNodeRequest {
+  KeyRange key_range=1;
+  uint64 node_id=2;
+}
+message GetResponse{
+  repeated KVPair kvs=1;
+}
+
+
+message RouteOfKeyRangeRequest {
+  KeyRange key_range=1;
+}
+message RouteOfKeyRangeResponse {
+  uint64 node_id=1;
+}

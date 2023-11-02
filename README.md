@@ -1,5 +1,5 @@
 # wasm_serverless
-An serverless framework based on wasm runtime.
+An distributed serverless framework based on wasm runtime.
 
 ## Roadmap
 ### System
@@ -23,3 +23,9 @@ An serverless framework based on wasm runtime.
 - Deploy
 - Metric
 - Experiment config
+
+## 底层技术选型
+
+### Wasm
+- [WasmEdge](https://wasmedge.org/)
+
