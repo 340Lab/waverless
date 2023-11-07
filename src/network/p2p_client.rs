@@ -1,7 +1,9 @@
 use super::proto;
 use crate::{
+    module_iter::*,
     result::{WSError, WSResult, WsNetworkLogicErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID},
+    util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -25,7 +27,10 @@ impl RemoteCommunicator {
     // }
 }
 
-pub struct P2PClient {}
+#[derive(LogicalModuleParent, LogicalModule)]
+pub struct P2PClient {
+    name: String,
+}
 
 impl P2PClient {
     pub fn regist_nodeid(&self) {
@@ -37,13 +42,18 @@ impl P2PClient {
 }
 
 impl LogicalModule for P2PClient {
-    fn new(args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        Self {}
+        Self {
+            name: format!("{}::{}", args.parent_name, Self::self_name()),
+        }
     }
-    fn start(&self) -> WSResult<Vec<JoinHandle<()>>> {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         Ok(vec![])
     }
 }

@@ -29,3 +29,10 @@ An distributed serverless framework based on wasm runtime.
 ### Wasm
 - [WasmEdge](https://wasmedge.org/)
 
+### KV for route
+- TiKV raft
+
+### KV for global
+- Router cluster with raft for load balancing.
+- Erasure coding for reliability.
+

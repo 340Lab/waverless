@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use tokio::task::JoinHandle;
 
 use crate::{
+    module_iter::*,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID, Sys},
+    util::JoinHandleWrapper,
 };
 
 use super::{
@@ -13,7 +15,10 @@ use super::{
     KeyRange,
 };
 
-pub struct KVClient {}
+#[derive(LogicalModuleParent, LogicalModule)]
+pub struct KVClient {
+    name: String,
+}
 
 impl KVClient {
     pub fn get(
@@ -36,14 +41,19 @@ impl KVClient {
 }
 
 impl LogicalModule for KVClient {
-    fn new(args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        KVClient {}
+        KVClient {
+            name: format!("{}::{}", args.parent_name, Self::self_name()),
+        }
     }
-    fn start(&self) -> WSResult<Vec<JoinHandle<()>>> {
+    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         Ok(vec![])
+    }
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
