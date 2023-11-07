@@ -9,17 +9,24 @@ use raft::{
 use slog::{o, Drain};
 use std::{
     cell::UnsafeCell,
-    sync::{mpsc::channel, Arc, Weak},
+    sync::{
+        mpsc::{channel, RecvTimeoutError},
+        Arc, Weak,
+    },
     time::{Duration, Instant},
 };
 use tokio::task::JoinHandle;
 
 use crate::{
-    logical_modules_view::RaftModuleLMView,
+    module_iter::*,
+    module_state_trans::LogicalModuleWaiter,
+    module_view::TiKVRaftModuleLMView,
     network::p2p::P2PModule,
     network::serial::MsgPack,
     result::WSResult,
+    sync_loop,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, Sys},
+    util::JoinHandleWrapper,
 };
 
 pub enum RaftMsg {
@@ -30,36 +37,46 @@ pub enum RaftMsg {
     Raft(Message),
 }
 
-pub struct RaftModule {
-    pub logical_modules_view: RaftModuleLMView,
+#[derive(LogicalModuleParent, LogicalModule)]
+pub struct TiKVRaftModule {
+    pub logical_modules_view: TiKVRaftModuleLMView,
+    name: String,
 }
 
-impl RaftModule {
-    pub fn consume_msg(&self, msg: RaftMsg) -> WSResult<()> {
-        Ok(())
-    }
-}
-
-impl LogicalModule for RaftModule {
-    fn new(args: LogicalModuleNewArgs) -> Self
+impl LogicalModule for TiKVRaftModule {
+    fn inner_new(mut args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
+        args.expand_parent_name(Self::self_name());
         Self {
-            logical_modules_view: RaftModuleLMView::new(),
+            logical_modules_view: TiKVRaftModuleLMView::new(),
+            name: args.parent_name,
         }
     }
 
-    fn start(&self) -> WSResult<Vec<JoinHandle<()>>> {
-        // let (tx, rx) = std::sync::mpsc::channel();
+    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        let (tx, rx) = std::sync::mpsc::channel();
         self.logical_modules_view
             .p2p()
-            .regist_dispatch(|m: raft::prelude::Message| {
+            .regist_dispatch(move |m: raft::prelude::Message| {
                 tracing::info!("raft msg: {:?}", m);
-
+                tx.send(RaftMsg::Raft(m)).unwrap_or_else(|e| {
+                    tracing::error!(
+                        "send raft msg to thread channel error, raft thread may be dead, err:{e:?}"
+                    );
+                });
                 Ok(())
             });
-        Ok(vec![])
+        let listen_for_net = self.logical_modules_view.p2p().listen();
+        let waiter = LogicalModuleWaiter::new(vec![listen_for_net]);
+        let raft_thread = std::thread::spawn(move || {
+            new_tick_thread(rx, waiter);
+        });
+        Ok(vec![raft_thread.into()])
+    }
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -85,40 +102,57 @@ pub fn new_node() -> RawNode<MemStorage> {
     node
 }
 
-pub fn new_tick_thread() {
-    let mut node = new_node();
-    let timeout = Duration::from_millis(100);
-    let mut remaining_timeout = timeout;
-    // We're using a channel, but this could be any stream of events.
-    let (tx, rx) = channel();
+struct RaftThreadState {
+    node: RawNode<MemStorage>,
+    remaining_timeout: Duration,
+    timeout: Duration,
+    rx: std::sync::mpsc::Receiver<RaftMsg>,
+}
 
-    // Simulate a message coming down the stream.
-    tx.send(RaftMsg::Propose {
-        id: 1,
-        callback: Box::new(|| ()),
-    });
+impl RaftThreadState {
+    fn new(rx: std::sync::mpsc::Receiver<RaftMsg>) -> Self {
+        let node = new_node();
+        let timeout = Duration::from_millis(100);
+        Self {
+            node,
+            remaining_timeout: timeout,
+            timeout,
+            rx,
+        }
+    }
 
-    // let mut cbs = HashMap::new();
-    loop {
+    fn tick(&mut self) {
         let now = Instant::now();
-        if node.has_ready() {
-            let mut ready = node.ready();
-            handle_ready(&mut node, ready);
+        if self.node.has_ready() {
+            let mut ready = self.node.ready();
+            handle_ready(&mut self.rx, self.remaining_timeout, &mut self.node, ready);
         }
 
         // Tick raft node
         let elapsed = now.elapsed();
-        if elapsed >= remaining_timeout {
-            remaining_timeout = timeout;
+        if elapsed >= self.remaining_timeout {
+            self.remaining_timeout = self.timeout;
             // We drive Raft every 100ms.
-            node.tick();
+            self.node.tick();
+            // tracing::info!("raft thread tick");
         } else {
-            remaining_timeout -= elapsed;
+            self.remaining_timeout -= elapsed;
         }
     }
 }
 
-fn handle_ready(node: &mut RawNode<MemStorage>, mut ready: Ready) {
+pub fn new_tick_thread(rx: std::sync::mpsc::Receiver<RaftMsg>, mut waiter: LogicalModuleWaiter) {
+    let mut state = RaftThreadState::new(rx);
+
+    sync_loop!("TiKVRaftModule::raft_tick", waiter, { state.tick() });
+}
+
+fn handle_ready(
+    rx: &mut std::sync::mpsc::Receiver<RaftMsg>,
+    remaining_timeout: Duration,
+    node: &mut RawNode<MemStorage>,
+    mut ready: Ready,
+) {
     fn handle_messages(msgs: Vec<Message>) {}
     fn handle_committed_entries(node: &mut RawNode<MemStorage>, entries: Vec<Entry>) {
         let mut _last_apply_index = 0;
@@ -173,16 +207,23 @@ fn handle_ready(node: &mut RawNode<MemStorage>, mut ready: Ready) {
         handle_messages(ready.take_messages())
     }
 
-    // TODO: 2.select peers msgs
-    // match rx.recv_timeout(remaining_timeout) {
-    //     Ok(Msg::Propose { id, callback }) => {
-    //         cbs.insert(id, callback);
-    //         node.propose(vec![], vec![id]).unwrap();
-    //     }
-    //     Ok(Msg::Raft(m)) => node.step(m).unwrap(),
-    //     Err(RecvTimeoutError::Timeout) => (),
-    //     Err(RecvTimeoutError::Disconnected) => unimplemented!(),
-    // }
+    // 2.select peers msgs
+    match rx.recv_timeout(remaining_timeout) {
+        Ok(RaftMsg::Propose { id, callback }) => {
+            // TODO: figure out what propose is
+            // cbs.insert(id, callback);
+            // node.propose(vec![], vec![id]).unwrap();
+        }
+        Ok(RaftMsg::Raft(m)) => {
+            if let Err(e) = node.step(m) {
+                tracing::warn!("raft step error:{:?}", e);
+            }
+        }
+        Err(RecvTimeoutError::Timeout) => (), // there's no message recently, just skip.
+        Err(RecvTimeoutError::Disconnected) => {
+            panic!("tx is held by network dispatcher, should not be disconnected")
+        }
+    }
 
     // 3.This is a snapshot, we need to apply the snapshot at first.
     if !ready.snapshot().is_empty() {
@@ -209,7 +250,6 @@ fn handle_ready(node: &mut RawNode<MemStorage>, mut ready: Ready) {
 
     // 7.New entries not appended
     // TODO: make sure the logic here is correct
-    assert!(node.has_ready());
     let mut ready = node.ready();
     if !ready.entries().is_empty() {
         // Append entries to the Raft log

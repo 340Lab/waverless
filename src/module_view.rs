@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use crate::{
-    kv::{data_router::DataRouter, dist_kv_raft::tikvraft_proxy::RaftModule},
-    network::p2p::P2PModule,
+    kv::{data_router::DataRouter, dist_kv_raft::tikvraft_proxy::TiKVRaftModule},
+    network::{p2p::P2PModule, p2p_quic::P2PQuicNode},
     sys::LogicalModules,
 };
 use camelpaste::paste;
@@ -10,7 +12,7 @@ macro_rules! logical_modules_view_iter {
         paste! {
             impl [<$pt LMView>]{
                 pub fn $e<'a>(&'a self) -> &'a $t {
-                    unsafe { &*(*self.inner.get()).as_ref().unwrap().as_ptr() }.$e()
+                    &unsafe { &*(*self.inner.get()).as_ref().unwrap().as_ptr() }.$e
                 }
             }
         }
@@ -38,10 +40,23 @@ macro_rules! logical_modules_view {
         paste! {
                 // use std::cell::UnsafeCell;
             // use std::sync::Weak;
+
             pub struct [<$t LMView>]{
                 inner: std::cell::UnsafeCell<
                     Option<
                         std::sync::Weak<LogicalModules>>>,
+            }
+
+            impl Clone for [<$t LMView>]{
+                fn clone(&self) -> Self {
+                    Self{
+                        inner: std::cell::UnsafeCell::new(
+                            unsafe{
+                                Some((*self.inner.get()).as_ref().unwrap().clone())
+                            }
+                        ),
+                    }
+                }
             }
 
             unsafe impl Send for [<$t LMView>]{}
@@ -72,5 +87,17 @@ macro_rules! logical_modules_view {
 
 // every module should be seen
 logical_modules_view!(P2PModule, data_router, Option<DataRouter>);
+logical_modules_view!(P2PQuicNode, p2p, P2PModule);
+logical_modules_view!(TiKVRaftModule, p2p, P2PModule);
 
-logical_modules_view!(RaftModule, p2p, P2PModule);
+pub fn setup_views(arc: &Arc<LogicalModules>) {
+    arc.p2p.setup_logical_modules_view(Arc::downgrade(arc));
+    arc.p2p
+        .p2p_kernel
+        .setup_logical_modules_view(Arc::downgrade(arc));
+    if let Some(v) = arc.data_router.as_ref() {
+        v.raft_kv
+            .raft_module
+            .setup_logical_modules_view(Arc::downgrade(arc));
+    }
+}

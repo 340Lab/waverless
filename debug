@@ -1,0 +1,2671 @@
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::rust_2021::*;
+#[macro_use]
+extern crate std;
+use kv::dist_kv_raft;
+use sys::Sys;
+use tokio::task::block_in_place;
+
+#[macro_use]
+pub mod logical_modules_view {
+
+    // inlcude macro logical_module
+
+    // Include the `items` module, which is generated from items.proto.
+
+    // dist_kv_raft::tikvraft_proxy::start();
+    use crate::{
+        kv::{
+            data_router::DataRouter, dist_kv_raft::tikvraft_proxy::RaftModule,
+        },
+        network::p2p::P2PModule, sys::LogicalModules,
+    };
+    use camelpaste::paste;
+    macro_rules! logical_modules_view_iter {
+        ($pt : ty, $e : ident, $t : ty) =>
+        {
+            paste!
+            {
+                impl [< $pt LMView >]
+                {
+                    pub fn $e < 'a > (& 'a self) -> & 'a $t
+                    {
+                        unsafe
+                        { & * (* self.inner.get()).as_ref().unwrap().as_ptr() }.$e()
+                    }
+                }
+            }
+        } ; ($pt : ty, $e : ident, $t : ty, $($es : ident, $ts : ty), +) =>
+        {
+            logical_modules_view_iter! { $e, $t } logical_modules_view_iter!
+            { $($es, $ts), + }
+        } ;
+    }
+    macro_rules! logical_modules_view {
+        ($t : ty, $($es : ident, $ts : ty), +) =>
+        {
+            paste!
+            {
+                pub struct [< $t LMView >]
+                {
+                    inner : std :: cell :: UnsafeCell < Option < std :: sync ::
+                    Weak < LogicalModules >> >,
+                } unsafe impl Send for [< $t LMView >] {} unsafe impl Sync for
+                [< $t LMView >] {} impl [< $t LMView >]
+                {
+                    #[must_use] pub fn new() -> Self
+                    { Self { inner : std :: cell :: UnsafeCell :: new(None), } }
+                } impl $t
+                {
+                    #[must_use] pub fn
+                    setup_logical_modules_view(& self, logical_modules : std ::
+                    sync :: Weak < LogicalModules >)
+                    {
+                        unsafe
+                        {
+                            * self.logical_modules_view.inner.get() =
+                            Some(logical_modules) ;
+                        }
+                    }
+                } logical_modules_view_iter! { $t, $($es, $ts), + }
+            }
+        } ;
+    }
+    pub struct P2PModuleLMView {
+        inner: std::cell::UnsafeCell<Option<std::sync::Weak<LogicalModules>>>,
+    }
+    unsafe impl Send for P2PModuleLMView {}
+    unsafe impl Sync for P2PModuleLMView {}
+    impl P2PModuleLMView {
+        #[must_use]
+        pub fn new() -> Self {
+            Self { inner: std::cell::UnsafeCell::new(None) }
+        }
+    }
+    impl P2PModule {
+        #[must_use]
+        pub fn setup_logical_modules_view(&self,
+            logical_modules: std::sync::Weak<LogicalModules>) {
+            unsafe {
+                *self.logical_modules_view.inner.get() =
+                    Some(logical_modules);
+            }
+        }
+    }
+    impl P2PModuleLMView {
+        pub fn data_router<'a>(&'a self) -> &'a Option<DataRouter> {
+            unsafe {
+                    &*(*self.inner.get()).as_ref().unwrap().as_ptr()
+                }.data_router()
+        }
+    }
+    pub struct RaftModuleLMView {
+        inner: std::cell::UnsafeCell<Option<std::sync::Weak<LogicalModules>>>,
+    }
+    unsafe impl Send for RaftModuleLMView {}
+    unsafe impl Sync for RaftModuleLMView {}
+    impl RaftModuleLMView {
+        #[must_use]
+        pub fn new() -> Self {
+            Self { inner: std::cell::UnsafeCell::new(None) }
+        }
+    }
+    impl RaftModule {
+        #[must_use]
+        pub fn setup_logical_modules_view(&self,
+            logical_modules: std::sync::Weak<LogicalModules>) {
+            unsafe {
+                *self.logical_modules_view.inner.get() =
+                    Some(logical_modules);
+            }
+        }
+    }
+    impl RaftModuleLMView {
+        pub fn p2p<'a>(&'a self) -> &'a P2PModule {
+            unsafe { &*(*self.inner.get()).as_ref().unwrap().as_ptr() }.p2p()
+        }
+    }
+}
+pub mod error_collector {}
+mod kv {
+    pub mod data_router {
+        use std::sync::Arc;
+        use crate::{
+            module_iter::*, result::WSResult,
+            sys::{
+                init_module, LogicalModule, LogicalModuleNewArgs,
+                LogicalModules,
+            },
+            util::JoinHandleWrapper,
+        };
+        use tokio::task::JoinHandle;
+        use super::dist_kv_raft::RaftDistKV;
+        pub struct DataRouter {
+            #[sub]
+            pub raft_kv: RaftDistKV,
+            name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, DataRouter> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop {
+                    match self.index {
+                        0usize => {
+                            let sub = &unsafe { self.inner_ref.as_ref() }.raft_kv;
+                            if let Some(sub_iter) = &mut self.current_sub_iter {
+                                    if let Some(sub) = sub_iter.next_module() {
+                                            return Some(sub);
+                                        } else {
+                                           self.index += 1;
+                                           self.current_sub_iter = None;
+                                           return Some(sub);
+                                       }
+                                } else {
+                                   self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                                   if let Some(sub_sub) =
+                                               self.current_sub_iter.as_mut().unwrap().next_module() {
+                                           return Some(sub_sub);
+                                       } else {
+                                          self.index += 1;
+                                          self.current_sub_iter = None;
+                                          return Some(sub)
+                                      }
+                               }
+                        }
+                        _ => { return None; }
+                    }
+                }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for DataRouter {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl DataRouter {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl LogicalModule for DataRouter {
+            fn inner_new(mut args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                args.expand_parent_name("DataRouter");
+                Self {
+                    name: args.parent_name.clone(),
+                    raft_kv: { let ret = <RaftDistKV>::new(args.clone()); ret },
+                }
+            }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                let mut tasks = ::alloc::vec::Vec::new();
+                tasks.append(&mut self.raft_kv.start()?);
+                let main_task = tokio::spawn(async move {});
+                tasks.push(main_task.into());
+                Ok(tasks)
+            }
+            fn name(&self) -> &str { &self.name }
+        }
+    }
+    pub mod data_router_client {
+        use std::{collections::BTreeMap, sync::Arc};
+        use async_trait::async_trait;
+        use tokio::task::JoinHandle;
+        use crate::{
+            module_iter::*, result::WSResult,
+            sys::{
+                LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID,
+            },
+            util::JoinHandleWrapper,
+        };
+        use super::KeyRange;
+        pub struct DataRouterClient {
+            name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, DataRouterClient> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop { match self.index { _ => { return None; } } }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for DataRouterClient {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl DataRouterClient {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl DataRouterClient {
+            pub fn get_route_of_key_range(&self, key: KeyRange)
+                -> WSResult<BTreeMap<KeyRange, NodeID>> {
+                Ok(BTreeMap::new())
+            }
+        }
+        impl LogicalModule for DataRouterClient {
+            fn inner_new(mut args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                args.expand_parent_name("DataRouterClient");
+                Self { name: args.parent_name.clone() }
+            }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                Ok(::alloc::vec::Vec::new())
+            }
+            fn name(&self) -> &str { &self.name }
+        }
+    }
+    pub mod dist_kv {
+        use async_trait::async_trait;
+        use crate::{result::WSResult, sys::Sys};
+        use super::KeyRange;
+        pub struct SetOptions {
+            pub consistent: bool,
+        }
+        impl SetOptions {
+            pub fn new() -> SetOptions { SetOptions { consistent: false } }
+            pub fn set_consistent(mut self, consistent: bool) -> Self {
+                self.consistent = consistent;
+                self
+            }
+        }
+        pub trait DistKV {
+            #[must_use]
+            #[allow(clippy :: type_complexity, clippy ::
+            type_repetition_in_bounds)]
+            fn get<'a, 'life0,
+            'async_trait>(&'a self, sys: &'life0 Sys, key_range: KeyRange<'a>)
+            ->
+                ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                WSResult<Option<Vec<u8>>>> + ::core::marker::Send +
+                'async_trait>>
+            where
+            'a: 'async_trait,
+            'life0: 'async_trait,
+            Self: 'async_trait;
+            #[must_use]
+            #[allow(clippy :: type_complexity, clippy ::
+            type_repetition_in_bounds)]
+            fn set<'life0, 'life1,
+            'async_trait>(&'life0 self, sys: &'life1 Sys,
+            kvs: Vec<(Vec<u8>, Vec<u8>)>, opts: SetOptions)
+            ->
+                ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>>> +
+                ::core::marker::Send + 'async_trait>>
+            where
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            Self: 'async_trait;
+        }
+    }
+    pub mod dist_kv_raft {
+        pub mod tikvraft_proxy {
+            use prost::bytes::Bytes;
+            use raft::{
+                eraftpb::{Entry, EntryType},
+                prelude::{ConfChange, Message},
+                raw_node::RawNode, storage::MemStorage, Config, Ready,
+                StateRole,
+            };
+            use slog::{o, Drain};
+            use std::{
+                cell::UnsafeCell,
+                sync::{
+                    mpsc::{channel, RecvTimeoutError},
+                    Arc, Weak,
+                },
+                time::{Duration, Instant},
+            };
+            use tokio::task::JoinHandle;
+            use crate::{
+                logical_modules_view::RaftModuleLMView, module_iter::*,
+                network::p2p::P2PModule, network::serial::MsgPack,
+                result::WSResult,
+                sys::{
+                    LogicalModule, LogicalModuleNewArgs, LogicalModules, Sys,
+                },
+                util::JoinHandleWrapper,
+            };
+            pub enum RaftMsg {
+                Propose {
+                    id: u8,
+                    callback: Box<dyn Fn() + Send>,
+                },
+                Raft(Message),
+            }
+            pub struct RaftModule {
+                pub logical_modules_view: RaftModuleLMView,
+                name: String,
+            }
+            impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, RaftModule> {
+                fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                    loop { match self.index { _ => { return None; } } }
+                }
+            }
+            impl<'a> LogicalModuleParent<'a> for RaftModule {
+                fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                    ModuleIter {
+                        inner_ref: self.into(),
+                        index: 0,
+                        current_sub_iter: None,
+                        phantom: std::marker::PhantomData,
+                    }
+                }
+            }
+            impl RaftModule {
+                pub fn new(args: LogicalModuleNewArgs) -> Self {
+                    let ret = Self::inner_new(args);
+                    ret
+                }
+            }
+            impl LogicalModule for RaftModule {
+                fn inner_new(mut args: LogicalModuleNewArgs) -> Self where
+                    Self: Sized {
+                    args.expand_parent_name("RaftModule");
+                    Self {
+                        logical_modules_view: RaftModuleLMView::new(),
+                        name: args.parent_name,
+                    }
+                }
+                fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.logical_modules_view.p2p().regist_dispatch(move
+                            |m: raft::prelude::Message|
+                            {
+                                {
+                                    use ::tracing::__macro_support::Callsite as _;
+                                    static __CALLSITE: ::tracing::callsite::DefaultCallsite =
+                                        {
+                                            static META: ::tracing::Metadata<'static> =
+                                                {
+                                                    ::tracing_core::metadata::Metadata::new("event src/kv/dist_kv_raft/tikvraft_proxy/mod.rs:61",
+                                                        "wasm_serverless::kv::dist_kv_raft::tikvraft_proxy",
+                                                        ::tracing::Level::INFO,
+                                                        ::core::option::Option::Some("src/kv/dist_kv_raft/tikvraft_proxy/mod.rs"),
+                                                        ::core::option::Option::Some(61u32),
+                                                        ::core::option::Option::Some("wasm_serverless::kv::dist_kv_raft::tikvraft_proxy"),
+                                                        ::tracing_core::field::FieldSet::new(&["message"],
+                                                            ::tracing_core::callsite::Identifier(&__CALLSITE)),
+                                                        ::tracing::metadata::Kind::EVENT)
+                                                };
+                                            ::tracing::callsite::DefaultCallsite::new(&META)
+                                        };
+                                    let enabled =
+                                        ::tracing::Level::INFO <=
+                                                    ::tracing::level_filters::STATIC_MAX_LEVEL &&
+                                                ::tracing::Level::INFO <=
+                                                    ::tracing::level_filters::LevelFilter::current() &&
+                                            {
+                                                let interest = __CALLSITE.interest();
+                                                !interest.is_never() &&
+                                                    ::tracing::__macro_support::__is_enabled(__CALLSITE.metadata(),
+                                                        interest)
+                                            };
+                                    if enabled {
+                                            (|value_set: ::tracing::field::ValueSet|
+                                                        {
+                                                            let meta = __CALLSITE.metadata();
+                                                            ::tracing::Event::dispatch(meta, &value_set);
+                                                            ;
+                                                        })({
+                                                    #[allow(unused_imports)]
+                                                    use ::tracing::field::{debug, display, Value};
+                                                    let mut iter = __CALLSITE.metadata().fields().iter();
+                                                    __CALLSITE.metadata().fields().value_set(&[(&::core::iter::Iterator::next(&mut iter).expect("FieldSet corrupted (this is a bug)"),
+                                                                        ::core::option::Option::Some(&::core::fmt::Arguments::new_v1(&["raft msg: "],
+                                                                                        &[::core::fmt::ArgumentV1::new_debug(&m)]) as &dyn Value))])
+                                                });
+                                        } else { ; }
+                                };
+                                tx.send(RaftMsg::Raft(m)).unwrap_or_else(|e|
+                                        {
+                                            {
+                                                use ::tracing::__macro_support::Callsite as _;
+                                                static __CALLSITE: ::tracing::callsite::DefaultCallsite =
+                                                    {
+                                                        static META: ::tracing::Metadata<'static> =
+                                                            {
+                                                                ::tracing_core::metadata::Metadata::new("event src/kv/dist_kv_raft/tikvraft_proxy/mod.rs:63",
+                                                                    "wasm_serverless::kv::dist_kv_raft::tikvraft_proxy",
+                                                                    ::tracing::Level::ERROR,
+                                                                    ::core::option::Option::Some("src/kv/dist_kv_raft/tikvraft_proxy/mod.rs"),
+                                                                    ::core::option::Option::Some(63u32),
+                                                                    ::core::option::Option::Some("wasm_serverless::kv::dist_kv_raft::tikvraft_proxy"),
+                                                                    ::tracing_core::field::FieldSet::new(&["message"],
+                                                                        ::tracing_core::callsite::Identifier(&__CALLSITE)),
+                                                                    ::tracing::metadata::Kind::EVENT)
+                                                            };
+                                                        ::tracing::callsite::DefaultCallsite::new(&META)
+                                                    };
+                                                let enabled =
+                                                    ::tracing::Level::ERROR <=
+                                                                ::tracing::level_filters::STATIC_MAX_LEVEL &&
+                                                            ::tracing::Level::ERROR <=
+                                                                ::tracing::level_filters::LevelFilter::current() &&
+                                                        {
+                                                            let interest = __CALLSITE.interest();
+                                                            !interest.is_never() &&
+                                                                ::tracing::__macro_support::__is_enabled(__CALLSITE.metadata(),
+                                                                    interest)
+                                                        };
+                                                if enabled {
+                                                        (|value_set: ::tracing::field::ValueSet|
+                                                                    {
+                                                                        let meta = __CALLSITE.metadata();
+                                                                        ::tracing::Event::dispatch(meta, &value_set);
+                                                                        ;
+                                                                    })({
+                                                                #[allow(unused_imports)]
+                                                                use ::tracing::field::{debug, display, Value};
+                                                                let mut iter = __CALLSITE.metadata().fields().iter();
+                                                                __CALLSITE.metadata().fields().value_set(&[(&::core::iter::Iterator::next(&mut iter).expect("FieldSet corrupted (this is a bug)"),
+                                                                                    ::core::option::Option::Some(&::core::fmt::Arguments::new_v1(&["send raft msg to thread channel error, raft thread may be dead, err:"],
+                                                                                                    &[::core::fmt::ArgumentV1::new_debug(&e)]) as &dyn Value))])
+                                                            });
+                                                    } else { ; }
+                                            };
+                                        });
+                                Ok(())
+                            });
+                    let raft_thread =
+                        std::thread::spawn(move || { new_tick_thread(rx); });
+                    Ok(<[_]>::into_vec(#[rustc_box] ::alloc::boxed::Box::new([raft_thread.into()])))
+                }
+                fn name(&self) -> &str { &self.name }
+            }
+            pub fn new_node() -> RawNode<MemStorage> {
+                let config = Config { id: 1, ..Default::default() };
+                let decorator = slog_term::TermDecorator::new().build();
+                let drain =
+                    slog_term::FullFormat::new(decorator).build().fuse();
+                let drain = slog_async::Async::new(drain).build().fuse();
+                let logger = slog::Logger::root(drain, ::slog::OwnedKV(()));
+                config.validate().unwrap();
+                let storage =
+                    MemStorage::new_with_conf_state((<[_]>::into_vec(#[rustc_box] ::alloc::boxed::Box::new([1])),
+                            ::alloc::vec::Vec::new()));
+                let mut node =
+                    RawNode::new(&config, storage, &logger).unwrap();
+                node
+            }
+            pub fn new_tick_thread(mut rx:
+                    std::sync::mpsc::Receiver<RaftMsg>) {
+                let mut node = new_node();
+                let timeout = Duration::from_millis(100);
+                let mut remaining_timeout = timeout;
+                loop {
+                    let now = Instant::now();
+                    if node.has_ready() {
+                            let mut ready = node.ready();
+                            handle_ready(&mut rx, remaining_timeout, &mut node, ready);
+                        }
+                    let elapsed = now.elapsed();
+                    if elapsed >= remaining_timeout {
+                            remaining_timeout = timeout;
+                            node.tick();
+                        } else { remaining_timeout -= elapsed; }
+                }
+            }
+            fn handle_ready(rx: &mut std::sync::mpsc::Receiver<RaftMsg>,
+                remaining_timeout: Duration, node: &mut RawNode<MemStorage>,
+                mut ready: Ready) {
+                fn handle_messages(msgs: Vec<Message>) {}
+                fn handle_committed_entries(node: &mut RawNode<MemStorage>,
+                    entries: Vec<Entry>) {
+                    let mut _last_apply_index = 0;
+                    for entry in entries {
+                        _last_apply_index = entry.index;
+                        if entry.data.is_empty() { continue; }
+                        match entry.get_entry_type() {
+                            EntryType::EntryConfChange => {}
+                            EntryType::EntryNormal => {}
+                            EntryType::EntryConfChangeV2 => {
+                                ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["unsupport EntryConfChangeV2"],
+                                        &[]))
+                            }
+                        }
+                        if node.raft.state == StateRole::Leader {}
+                    }
+                }
+                if !ready.messages().is_empty() {
+                        handle_messages(ready.take_messages())
+                    }
+                match rx.recv_timeout(remaining_timeout) {
+                    Ok(RaftMsg::Propose { id, callback }) => {}
+                    Ok(RaftMsg::Raft(m)) => {
+                        if let Err(e) = node.step(m) {
+                                {
+                                    use ::tracing::__macro_support::Callsite as _;
+                                    static __CALLSITE: ::tracing::callsite::DefaultCallsite =
+                                        {
+                                            static META: ::tracing::Metadata<'static> =
+                                                {
+                                                    ::tracing_core::metadata::Metadata::new("event src/kv/dist_kv_raft/tikvraft_proxy/mod.rs:197",
+                                                        "wasm_serverless::kv::dist_kv_raft::tikvraft_proxy",
+                                                        ::tracing::Level::WARN,
+                                                        ::core::option::Option::Some("src/kv/dist_kv_raft/tikvraft_proxy/mod.rs"),
+                                                        ::core::option::Option::Some(197u32),
+                                                        ::core::option::Option::Some("wasm_serverless::kv::dist_kv_raft::tikvraft_proxy"),
+                                                        ::tracing_core::field::FieldSet::new(&["message"],
+                                                            ::tracing_core::callsite::Identifier(&__CALLSITE)),
+                                                        ::tracing::metadata::Kind::EVENT)
+                                                };
+                                            ::tracing::callsite::DefaultCallsite::new(&META)
+                                        };
+                                    let enabled =
+                                        ::tracing::Level::WARN <=
+                                                    ::tracing::level_filters::STATIC_MAX_LEVEL &&
+                                                ::tracing::Level::WARN <=
+                                                    ::tracing::level_filters::LevelFilter::current() &&
+                                            {
+                                                let interest = __CALLSITE.interest();
+                                                !interest.is_never() &&
+                                                    ::tracing::__macro_support::__is_enabled(__CALLSITE.metadata(),
+                                                        interest)
+                                            };
+                                    if enabled {
+                                            (|value_set: ::tracing::field::ValueSet|
+                                                        {
+                                                            let meta = __CALLSITE.metadata();
+                                                            ::tracing::Event::dispatch(meta, &value_set);
+                                                            ;
+                                                        })({
+                                                    #[allow(unused_imports)]
+                                                    use ::tracing::field::{debug, display, Value};
+                                                    let mut iter = __CALLSITE.metadata().fields().iter();
+                                                    __CALLSITE.metadata().fields().value_set(&[(&::core::iter::Iterator::next(&mut iter).expect("FieldSet corrupted (this is a bug)"),
+                                                                        ::core::option::Option::Some(&::core::fmt::Arguments::new_v1(&["raft step error:"],
+                                                                                        &[::core::fmt::ArgumentV1::new_debug(&e)]) as &dyn Value))])
+                                                });
+                                        } else { ; }
+                                };
+                            }
+                    }
+                    Err(RecvTimeoutError::Timeout) => (),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["tx is held by network dispatcher, should not be disconnected"],
+                                &[]))
+                    }
+                }
+                if !ready.snapshot().is_empty() {
+                        node.mut_store().wl().apply_snapshot(ready.snapshot().clone()).unwrap();
+                    }
+                handle_committed_entries(node,
+                    ready.take_committed_entries());
+                if !ready.persisted_messages().is_empty() {
+                        for msg in ready.take_persisted_messages() {}
+                    }
+                let mut light_rd = node.advance(ready);
+                handle_messages(light_rd.take_messages());
+                handle_committed_entries(node,
+                    light_rd.take_committed_entries());
+                node.advance_apply();
+                let mut ready = node.ready();
+                if !ready.entries().is_empty() {
+                        node.mut_store().wl().append(ready.entries()).unwrap();
+                    }
+                if let Some(hs) = ready.hs() {
+                        node.mut_store().wl().set_hardstate(hs.clone());
+                    }
+            }
+        }
+        use self::tikvraft_proxy::RaftModule;
+        use super::{
+            dist_kv::{DistKV, SetOptions},
+            KeyRange,
+        };
+        use crate::{
+            module_iter::*, result::WSResult,
+            sys::{
+                init_module, LogicalModule, LogicalModuleNewArgs,
+                LogicalModules, Sys,
+            },
+            util::JoinHandleWrapper,
+        };
+        use async_trait::async_trait;
+        use std::sync::Arc;
+        use tokio::task::JoinHandle;
+        pub struct RaftDistKV {
+            #[sub]
+            pub raft_module: RaftModule,
+            pub name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, RaftDistKV> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop {
+                    match self.index {
+                        0usize => {
+                            let sub = &unsafe { self.inner_ref.as_ref() }.raft_module;
+                            if let Some(sub_iter) = &mut self.current_sub_iter {
+                                    if let Some(sub) = sub_iter.next_module() {
+                                            return Some(sub);
+                                        } else {
+                                           self.index += 1;
+                                           self.current_sub_iter = None;
+                                           return Some(sub);
+                                       }
+                                } else {
+                                   self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                                   if let Some(sub_sub) =
+                                               self.current_sub_iter.as_mut().unwrap().next_module() {
+                                           return Some(sub_sub);
+                                       } else {
+                                          self.index += 1;
+                                          self.current_sub_iter = None;
+                                          return Some(sub)
+                                      }
+                               }
+                        }
+                        _ => { return None; }
+                    }
+                }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for RaftDistKV {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl RaftDistKV {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl LogicalModule for RaftDistKV {
+            fn inner_new(mut args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                args.expand_parent_name("RaftDistKV");
+                Self {
+                    raft_module: {
+                        let ret = <RaftModule>::new(args.clone());
+                        ret
+                    },
+                    name: args.parent_name.clone(),
+                }
+            }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                let mut all = ::alloc::vec::Vec::new();
+                all.append(&mut self.raft_module.start()?);
+                Ok(all)
+            }
+            fn name(&self) -> &str { &self.name }
+        }
+        impl DistKV for RaftDistKV {
+            #[allow(clippy :: async_yields_async, clippy ::
+            diverging_sub_expression, clippy :: let_unit_value, clippy ::
+            no_effect_underscore_binding, clippy :: shadow_same, clippy ::
+            type_complexity, clippy :: type_repetition_in_bounds, clippy ::
+            used_underscore_binding)]
+            fn get<'a, 'life0,
+                'async_trait>(&'a self, sys: &'life0 Sys,
+                key_range: KeyRange<'a>)
+                ->
+                    ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                    WSResult<Option<Vec<u8>>>> + ::core::marker::Send +
+                    'async_trait>> where 'a: 'async_trait, 'life0: 'async_trait,
+                Self: 'async_trait {
+                Box::pin(async move
+                        {
+                        if let ::core::option::Option::Some(__ret) =
+                                    ::core::option::Option::None::<WSResult<Option<Vec<u8>>>> {
+                                return __ret;
+                            }
+                        let __self = self;
+                        let key_range = key_range;
+                        let __ret: WSResult<Option<Vec<u8>>> = { Ok(None) };
+
+                        #[allow(unreachable_code)]
+                        __ret
+                    })
+            }
+            #[allow(clippy :: async_yields_async, clippy ::
+            diverging_sub_expression, clippy :: let_unit_value, clippy ::
+            no_effect_underscore_binding, clippy :: shadow_same, clippy ::
+            type_complexity, clippy :: type_repetition_in_bounds, clippy ::
+            used_underscore_binding)]
+            fn set<'life0, 'life1,
+                'async_trait>(&'life0 self, sys: &'life1 Sys,
+                kvs: Vec<(Vec<u8>, Vec<u8>)>, opts: SetOptions)
+                ->
+                    ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                    WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>>> +
+                    ::core::marker::Send + 'async_trait>> where
+                'life0: 'async_trait, 'life1: 'async_trait,
+                Self: 'async_trait {
+                Box::pin(async move
+                        {
+                        if let ::core::option::Option::Some(__ret) =
+                                    ::core::option::Option::None::<WSResult<Option<Vec<(Vec<u8>,
+                                        Vec<u8>)>>>> {
+                                return __ret;
+                            }
+                        let __self = self;
+                        let kvs = kvs;
+                        let opts = opts;
+                        let __ret: WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> =
+                            { Ok(None) };
+
+                        #[allow(unreachable_code)]
+                        __ret
+                    })
+            }
+        }
+    }
+    pub mod dist_kv_rscode {}
+    pub mod kv_client {
+        use std::{collections::BTreeMap, sync::Arc};
+        use async_trait::async_trait;
+        use tokio::task::JoinHandle;
+        use crate::{
+            module_iter::*, result::WSResult,
+            sys::{
+                LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID,
+                Sys,
+            },
+            util::JoinHandleWrapper,
+        };
+        use super::{
+            dist_kv::{DistKV, SetOptions},
+            KeyRange,
+        };
+        pub struct KVClient {
+            name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, KVClient> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop { match self.index { _ => { return None; } } }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for KVClient {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl KVClient {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl KVClient {
+            pub fn get(&self, sys: &Sys, node_id: NodeID, key_range: KeyRange)
+                -> WSResult<Option<Vec<u8>>> {
+                Ok(None)
+            }
+            pub fn set(&self, sys: &Sys, node_id: NodeID,
+                kvs: &[(&[u8], &[u8])], opts: SetOptions)
+                -> WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> {
+                Ok(None)
+            }
+        }
+        impl LogicalModule for KVClient {
+            fn inner_new(args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                KVClient {
+                    name: {
+                        let res =
+                            ::alloc::fmt::format(::core::fmt::Arguments::new_v1(&["",
+                                                "::KVClient"],
+                                    &[::core::fmt::ArgumentV1::new_display(&args.parent_name)]));
+                        res
+                    },
+                }
+            }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                Ok(::alloc::vec::Vec::new())
+            }
+            fn name(&self) -> &str { &self.name }
+        }
+        impl DistKV for KVClient {
+            #[allow(clippy :: async_yields_async, clippy ::
+            diverging_sub_expression, clippy :: let_unit_value, clippy ::
+            no_effect_underscore_binding, clippy :: shadow_same, clippy ::
+            type_complexity, clippy :: type_repetition_in_bounds, clippy ::
+            used_underscore_binding)]
+            fn get<'a, 'life0,
+                'async_trait>(&'a self, sys: &'life0 Sys,
+                key_range: KeyRange<'a>)
+                ->
+                    ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                    WSResult<Option<Vec<u8>>>> + ::core::marker::Send +
+                    'async_trait>> where 'a: 'async_trait, 'life0: 'async_trait,
+                Self: 'async_trait {
+                Box::pin(async move
+                        {
+                        if let ::core::option::Option::Some(__ret) =
+                                    ::core::option::Option::None::<WSResult<Option<Vec<u8>>>> {
+                                return __ret;
+                            }
+                        let __self = self;
+                        let key_range = key_range;
+                        let __ret: WSResult<Option<Vec<u8>>> = { Ok(None) };
+
+                        #[allow(unreachable_code)]
+                        __ret
+                    })
+            }
+            #[allow(clippy :: async_yields_async, clippy ::
+            diverging_sub_expression, clippy :: let_unit_value, clippy ::
+            no_effect_underscore_binding, clippy :: shadow_same, clippy ::
+            type_complexity, clippy :: type_repetition_in_bounds, clippy ::
+            used_underscore_binding)]
+            fn set<'life0, 'life1,
+                'async_trait>(&'life0 self, sys: &'life1 Sys,
+                kvs: Vec<(Vec<u8>, Vec<u8>)>, opts: SetOptions)
+                ->
+                    ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                    WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>>> +
+                    ::core::marker::Send + 'async_trait>> where
+                'life0: 'async_trait, 'life1: 'async_trait,
+                Self: 'async_trait {
+                Box::pin(async move
+                        {
+                        if let ::core::option::Option::Some(__ret) =
+                                    ::core::option::Option::None::<WSResult<Option<Vec<(Vec<u8>,
+                                        Vec<u8>)>>>> {
+                                return __ret;
+                            }
+                        let __self = self;
+                        let kvs = kvs;
+                        let opts = opts;
+                        let __ret: WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> =
+                            { Ok(None) };
+
+                        #[allow(unreachable_code)]
+                        __ret
+                    })
+            }
+        }
+    }
+    pub mod local_kv {
+        use async_trait::async_trait;
+        use crate::result::WSResult;
+        use super::dist_kv::SetOptions;
+        pub trait LocalKV {
+            #[must_use]
+            #[allow(clippy :: type_complexity, clippy ::
+            type_repetition_in_bounds)]
+            fn get<'life0, 'life1, 'life2,
+            'async_trait>(&'life0 self, keys: &'life1 [&'life2 [u8]])
+            ->
+                ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                WSResult<Option<Vec<u8>>>> + ::core::marker::Send +
+                'async_trait>>
+            where
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            'life2: 'async_trait,
+            Self: 'async_trait;
+            #[must_use]
+            #[allow(clippy :: type_complexity, clippy ::
+            type_repetition_in_bounds)]
+            fn set<'life0, 'life1, 'life2, 'life3,
+            'async_trait>(&'life0 self,
+            kvs: &'life1 [(&'life2 [u8], &'life3 [u8])], opts: SetOptions)
+            ->
+                ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>>> +
+                ::core::marker::Send + 'async_trait>>
+            where
+            'life0: 'async_trait,
+            'life1: 'async_trait,
+            'life2: 'async_trait,
+            'life3: 'async_trait,
+            Self: 'async_trait;
+        }
+    }
+    pub mod local_kv_sled {}
+    pub struct KeyRange<'a> {
+        start: &'a [u8],
+        end: Option<&'a [u8]>,
+    }
+}
+pub mod module_iter {
+    use std::ptr::NonNull;
+    use crate::sys::{LogicalModule, LogicalModules};
+    pub use ws_derive::{LogicalModule, LogicalModuleParent};
+    pub struct ModuleIter<'a, P: LogicalModuleParent<'a>> {
+        pub inner_ref: NonNull<P>,
+        pub index: usize,
+        pub current_sub_iter: Option<Box<dyn ModuleIterTrait<'a> + 'a>>,
+        pub phantom: std::marker::PhantomData<&'a P>,
+    }
+    impl<'a, P: LogicalModuleParent<'a>> ModuleIter<'a, P> {
+        pub fn inner_ref(&self) -> &P { unsafe { self.inner_ref.as_ref() } }
+    }
+    pub trait ModuleIterTrait<'a> {
+        fn next_module(&mut self)
+        -> Option<&'a dyn LogicalModule>;
+    }
+    pub trait LogicalModuleParent<'a>: Sized {
+        fn module_iter(&'a self)
+        -> ModuleIter<'a, Self>;
+    }
+}
+pub mod network {
+    pub mod p2p {
+        use std::{cell::UnsafeCell, collections::HashMap, sync::Weak};
+        use crate::{
+            kv::data_router::{self, DataRouter},
+            kv::dist_kv_raft::tikvraft_proxy::RaftMsg,
+            logical_modules_view::{self, P2PModuleLMView},
+            module_iter::*,
+            result::{
+                ErrCvt, NotMatchNodeErr, WSError, WSResult, WsNetworkLogicErr,
+            },
+            sys::{
+                init_module, LogicalModule, LogicalModuleNewArgs,
+                LogicalModules, NodeID,
+            },
+            util::JoinHandleWrapper,
+        };
+        use async_trait::async_trait;
+        use parking_lot::RwLock;
+        use prost::{bytes::Bytes, Message};
+        use super::{p2p_quic::P2PQuicNode, serial::MsgPack};
+        pub trait P2P: Send + LogicalModule {
+            #[must_use]
+            #[allow(clippy :: type_complexity, clippy ::
+            type_repetition_in_bounds)]
+            fn send_for_response<'life0,
+            'async_trait>(&'life0 self, nodeid: NodeID, req_data: Vec<u8>)
+            ->
+                ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                WSResult<Vec<u8>>> + ::core::marker::Send + 'async_trait>>
+            where
+            'life0: 'async_trait,
+            Self: 'async_trait;
+        }
+        pub struct P2PModule {
+            pub logical_modules_view: P2PModuleLMView,
+            dispatch_map: RwLock<HashMap<u32,
+            Box<dyn Fn(Bytes) -> WSResult<()>>>>,
+            p2p: Box<dyn P2P>,
+            name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, P2PModule> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop { match self.index { _ => { return None; } } }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for P2PModule {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl P2PModule {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl LogicalModule for P2PModule {
+            fn inner_new(args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                Self {
+                    logical_modules_view: P2PModuleLMView::new(),
+                    p2p: Box::new({
+                            let ret = <P2PQuicNode>::new(args.clone());
+                            ret
+                        }),
+                    dispatch_map: HashMap::new().into(),
+                    name: {
+                        let res =
+                            ::alloc::fmt::format(::core::fmt::Arguments::new_v1(&["",
+                                                "::P2PModule"],
+                                    &[::core::fmt::ArgumentV1::new_display(&args.parent_name)]));
+                        res
+                    },
+                }
+            }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                Ok(::alloc::vec::Vec::new())
+            }
+            fn name(&self) -> &str { &self.name }
+        }
+        impl P2PModule {
+            pub fn regist_dispatch<M, F>(&self, f: F) where M: MsgPack,
+                F: Fn(M) -> WSResult<()> + 'static + Send {
+                let mut map = self.dispatch_map.write();
+                let old =
+                    map.insert(M::msg_id(),
+                        Box::new(move |data|
+                                {
+                                    let msg =
+                                        M::decode(data).map_err(|err|
+                                                    ErrCvt(err).to_ws_network_logic_err())?;
+                                    f(msg)
+                                }));
+                if !old.is_none() {
+                        ::core::panicking::panic("assertion failed: old.is_none()")
+                    };
+            }
+            pub fn regist_rpc(&self) {}
+            pub fn dispatch(&self, id: u32, data: Bytes) -> WSResult<()> {
+                let read = self.dispatch_map.read();
+                if let Some(cb) = read.get(&id) {
+                        cb(data)?;
+                        Ok(())
+                    } else {
+                       {
+                           use ::tracing::__macro_support::Callsite as _;
+                           static __CALLSITE: ::tracing::callsite::DefaultCallsite =
+                               {
+                                   static META: ::tracing::Metadata<'static> =
+                                       {
+                                           ::tracing_core::metadata::Metadata::new("event src/network/p2p.rs:82",
+                                               "wasm_serverless::network::p2p", ::tracing::Level::WARN,
+                                               ::core::option::Option::Some("src/network/p2p.rs"),
+                                               ::core::option::Option::Some(82u32),
+                                               ::core::option::Option::Some("wasm_serverless::network::p2p"),
+                                               ::tracing_core::field::FieldSet::new(&["message"],
+                                                   ::tracing_core::callsite::Identifier(&__CALLSITE)),
+                                               ::tracing::metadata::Kind::EVENT)
+                                       };
+                                   ::tracing::callsite::DefaultCallsite::new(&META)
+                               };
+                           let enabled =
+                               ::tracing::Level::WARN <=
+                                           ::tracing::level_filters::STATIC_MAX_LEVEL &&
+                                       ::tracing::Level::WARN <=
+                                           ::tracing::level_filters::LevelFilter::current() &&
+                                   {
+                                       let interest = __CALLSITE.interest();
+                                       !interest.is_never() &&
+                                           ::tracing::__macro_support::__is_enabled(__CALLSITE.metadata(),
+                                               interest)
+                                   };
+                           if enabled {
+                                   (|value_set: ::tracing::field::ValueSet|
+                                               {
+                                                   let meta = __CALLSITE.metadata();
+                                                   ::tracing::Event::dispatch(meta, &value_set);
+                                                   ;
+                                               })({
+                                           #[allow(unused_imports)]
+                                           use ::tracing::field::{debug, display, Value};
+                                           let mut iter = __CALLSITE.metadata().fields().iter();
+                                           __CALLSITE.metadata().fields().value_set(&[(&::core::iter::Iterator::next(&mut iter).expect("FieldSet corrupted (this is a bug)"),
+                                                               ::core::option::Option::Some(&::core::fmt::Arguments::new_v1(&["not match id: "],
+                                                                               &[::core::fmt::ArgumentV1::new_display(&id)]) as
+                                                                       &dyn Value))])
+                                       });
+                               } else { ; }
+                       };
+                       Err(WsNetworkLogicErr::MsgIdNotDispatchable(id).into())
+                   }
+            }
+        }
+    }
+    pub mod p2p_client {
+        use super::proto;
+        use crate::{
+            module_iter::*, result::{WSError, WSResult, WsNetworkLogicErr},
+            sys::{
+                LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID,
+            },
+            util::JoinHandleWrapper,
+        };
+        use async_trait::async_trait;
+        use std::sync::Arc;
+        use tokio::task::JoinHandle;
+        pub struct RemoteCommunicator {}
+        impl RemoteCommunicator {}
+        pub struct P2PClient {
+            name: String,
+        }
+        impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, P2PClient> {
+            fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+                loop { match self.index { _ => { return None; } } }
+            }
+        }
+        impl<'a> LogicalModuleParent<'a> for P2PClient {
+            fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+                ModuleIter {
+                    inner_ref: self.into(),
+                    index: 0,
+                    current_sub_iter: None,
+                    phantom: std::marker::PhantomData,
+                }
+            }
+        }
+        impl P2PClient {
+            pub fn new(args: LogicalModuleNewArgs) -> Self {
+                let ret = Self::inner_new(args);
+                ret
+            }
+        }
+        impl P2PClient {
+            pub fn regist_nodeid(&self) {}
+            pub fn get_remote_target(&self, nodeid: NodeID)
+                -> RemoteCommunicator {
+                RemoteCommunicator {}
+            }
+        }
+        impl LogicalModule for P2PClient {
+            fn inner_new(args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                Self {
+                    name: {
+                        let res =
+                            ::alloc::fmt::format(::core::fmt::Arguments::new_v1(&["",
+                                                "::P2PClient"],
+                                    &[::core::fmt::ArgumentV1::new_display(&args.parent_name)]));
+                        res
+                    },
+                }
+            }
+            fn name(&self) -> &str { &self.name }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                Ok(::alloc::vec::Vec::new())
+            }
+        }
+    }
+    pub mod p2p_quic {
+        //! This example demonstrates accepting connections and messages
+        //! on a socket/port and replying on the same socket/port using a
+        //! bidirectional stream.
+        //!
+        //! We implement a simple P2P node that listens for incoming messages
+        //! from an arbitrary number of peers. If a peer sends us "marco" we reply
+        //! with "polo".
+        //!
+        //! Our node accepts a list of SocketAddr for peers on the command-line.
+        //! Upon startup, we send "marco" to each peer in the list and print
+        //! the reply.  If the list is empty, we don't send any message.
+        //!
+        //! We then proceed to listening for new connections/messages.
+        use async_trait::async_trait;
+        use parking_lot::Mutex;
+        use prost::{bytes::Bytes, Message};
+        use qp2p::{Connection, ConnectionIncoming, Endpoint, WireMsg};
+        use std::{
+            collections::HashMap, env, net::{Ipv4Addr, SocketAddr},
+            sync::Arc, vec,
+        };
+        use tokio::task::JoinHandle;
+        use crate::{
+            result::{ErrCvt, WSResult},
+            sys::{
+                BroadcastMsg, BroadcastSender, LogicalModule,
+                LogicalModuleNewArgs, LogicalModules, NodeID,
+            },
+            util::JoinHandleWrapper,
+        };
+        use super::p2p::P2P;
+        type ConnectTaskId = usize;
+        struct P2PQuicNodeLocked {
+            sub_tasks: Vec<JoinHandle<()>>,
+        }
+        struct P2PQuicNodeShared {
+            locked: Mutex<P2PQuicNodeLocked>,
+            btx: BroadcastSender,
+        }
+        pub struct P2PQuicNode {
+            shared: Arc<P2PQuicNodeShared>,
+            name: String,
+        }
+        impl LogicalModule for P2PQuicNode {
+            fn inner_new(args: LogicalModuleNewArgs) -> Self where
+                Self: Sized {
+                Self {
+                    shared: P2PQuicNodeShared {
+                            btx: args.btx,
+                            locked: Mutex::new(P2PQuicNodeLocked {
+                                    sub_tasks: ::alloc::vec::Vec::new(),
+                                }),
+                        }.into(),
+                    name: {
+                        let res =
+                            ::alloc::fmt::format(::core::fmt::Arguments::new_v1(&["",
+                                                "::P2PQuicNode"],
+                                    &[::core::fmt::ArgumentV1::new_display(&args.parent_name)]));
+                        res
+                    },
+                }
+            }
+            fn name(&self) -> &str { &self.name }
+            fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+                let (endpoint, mut incoming_conns) =
+                    Endpoint::builder().addr((Ipv4Addr::LOCALHOST,
+                                            0)).idle_timeout(60 * 60 *
+                                        1_000).server().map_err(|err|
+                                ErrCvt(err).to_ws_network_conn_err())?;
+                let shared = self.shared.clone();
+                let listen_for_new_conn =
+                    tokio::spawn(async move
+                            {
+                            let mut rx = shared.btx.subscribe();
+                            loop {
+                                {
+                                    #[doc(hidden)]
+                                    mod __tokio_select_util {
+                                        pub(super) enum Out<_0, _1> { _0(_0), _1(_1), Disabled, }
+                                        pub(super) type Mask = u8;
+                                    }
+                                    use ::tokio::macros::support::Future;
+                                    use ::tokio::macros::support::Pin;
+                                    use ::tokio::macros::support::Poll::{Ready, Pending};
+                                    const BRANCHES: u32 = 2;
+                                    let mut disabled: __tokio_select_util::Mask =
+                                        Default::default();
+                                    if !true {
+                                            let mask: __tokio_select_util::Mask = 1 << 0;
+                                            disabled |= mask;
+                                        }
+                                    if !true {
+                                            let mask: __tokio_select_util::Mask = 1 << 1;
+                                            disabled |= mask;
+                                        }
+                                    let mut output =
+                                        {
+                                            let mut futures = (incoming_conns.next(), rx.recv());
+                                            let mut futures = &mut futures;
+                                            ::tokio::macros::support::poll_fn(|cx|
+                                                        {
+                                                            let mut is_pending = false;
+                                                            let start =
+                                                                { ::tokio::macros::support::thread_rng_n(BRANCHES) };
+                                                            for i in 0..BRANCHES {
+                                                                let branch;
+
+                                                                #[allow(clippy :: modulo_one)]
+                                                                { branch = (start + i) % BRANCHES; }
+                                                                match branch
+                                                                    {
+                                                                        #[allow(unreachable_code)]
+                                                                        0 => {
+                                                                        let mask = 1 << branch;
+                                                                        if disabled & mask == mask { continue; }
+                                                                        let (fut, ..) = &mut *futures;
+                                                                        let mut fut = unsafe { Pin::new_unchecked(fut) };
+                                                                        let out =
+                                                                            match Future::poll(fut, cx) {
+                                                                                Ready(out) => out,
+                                                                                Pending => { is_pending = true; continue; }
+                                                                            };
+                                                                        disabled |= mask;
+
+                                                                        #[allow(unused_variables)]
+                                                                        #[allow(unused_mut)]
+                                                                        match &out { next_incoming => {} _ => continue, }
+                                                                        return Ready(__tokio_select_util::Out::_0(out));
+                                                                    }
+                                                                        #[allow(unreachable_code)]
+                                                                        1 => {
+                                                                        let mask = 1 << branch;
+                                                                        if disabled & mask == mask { continue; }
+                                                                        let (_, fut, ..) = &mut *futures;
+                                                                        let mut fut = unsafe { Pin::new_unchecked(fut) };
+                                                                        let out =
+                                                                            match Future::poll(fut, cx) {
+                                                                                Ready(out) => out,
+                                                                                Pending => { is_pending = true; continue; }
+                                                                            };
+                                                                        disabled |= mask;
+
+                                                                        #[allow(unused_variables)]
+                                                                        #[allow(unused_mut)]
+                                                                        match &out { received => {} _ => continue, }
+                                                                        return Ready(__tokio_select_util::Out::_1(out));
+                                                                    }
+                                                                    _ =>
+                                                                        ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["internal error: entered unreachable code: "],
+                                                                                &[::core::fmt::ArgumentV1::new_display(&::core::fmt::Arguments::new_v1(&["reaching this means there probably is an off by one bug"],
+                                                                                                        &[]))])),
+                                                                }
+                                                            }
+                                                            if is_pending {
+                                                                    Pending
+                                                                } else { Ready(__tokio_select_util::Out::Disabled) }
+                                                        }).await
+                                        };
+                                    match output {
+                                        __tokio_select_util::Out::_0(next_incoming) => {
+                                            if let Some((connection, incoming)) = next_incoming {
+                                                    handle_connection(shared.clone(), &endpoint, connection,
+                                                            incoming).await;
+                                                } else {
+                                                   shared.btx.send(BroadcastMsg::SysEnd).map_or_else(|v| v,
+                                                       |err|
+                                                           {
+                                                               ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["rx is still here, error: "],
+                                                                       &[::core::fmt::ArgumentV1::new_debug(&err)]))
+                                                           });
+                                               }
+                                        }
+                                        __tokio_select_util::Out::_1(received) => {
+                                            let msg =
+                                                match received {
+                                                    Ok(msg) => msg,
+                                                    Err(e) => {
+                                                        ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["tx should live longer than rx, error: "],
+                                                                &[::core::fmt::ArgumentV1::new_debug(&e)]));
+                                                    }
+                                                };
+                                            match msg { BroadcastMsg::SysEnd => { break; } }
+                                        }
+                                        __tokio_select_util::Out::Disabled =>
+                                            ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["all branches are disabled and there is no else branch"],
+                                                    &[])),
+                                        _ =>
+                                            ::core::panicking::panic_fmt(::core::fmt::Arguments::new_v1(&["internal error: entered unreachable code: "],
+                                                    &[::core::fmt::ArgumentV1::new_display(&::core::fmt::Arguments::new_v1(&["failed to match bind"],
+                                                                            &[]))])),
+                                    }
+                                }
+                            }
+                        });
+                Ok(<[_]>::into_vec(#[rustc_box] ::alloc::boxed::Box::new([listen_for_new_conn.into()])))
+            }
+        }
+        async fn handle_connection(shared: Arc<P2PQuicNodeShared>,
+            endpoint: &Endpoint, connection: Connection,
+            mut incoming: ConnectionIncoming) {
+            {
+                ::std::io::_print(::core::fmt::Arguments::new_v1(&["\n---\n"],
+                        &[]));
+            };
+            {
+                ::std::io::_print(::core::fmt::Arguments::new_v1(&["Listening on: ",
+                                    "\n"],
+                        &[::core::fmt::ArgumentV1::new_debug(&endpoint.local_addr())]));
+            };
+            {
+                ::std::io::_print(::core::fmt::Arguments::new_v1(&["---\n\n"],
+                        &[]));
+            };
+            let handle =
+                tokio::spawn(async move
+                        {
+                        let src = connection.remote_address();
+                        while let Ok(Some(WireMsg((_, _, bytes)))) =
+                                incoming.next().await {
+                            {
+                                ::std::io::_print(::core::fmt::Arguments::new_v1(&["Received from ",
+                                                    " --> ", "\n"],
+                                        &[::core::fmt::ArgumentV1::new_debug(&src),
+                                                    ::core::fmt::ArgumentV1::new_debug(&bytes)]));
+                            };
+                            {
+                                ::std::io::_print(::core::fmt::Arguments::new_v1(&["\n"],
+                                        &[]));
+                            };
+                        }
+                    });
+            shared.locked.lock().sub_tasks.push(handle);
+        }
+        impl P2P for P2PQuicNode {
+            #[allow(clippy :: async_yields_async, clippy ::
+            diverging_sub_expression, clippy :: let_unit_value, clippy ::
+            no_effect_underscore_binding, clippy :: shadow_same, clippy ::
+            type_complexity, clippy :: type_repetition_in_bounds, clippy ::
+            used_underscore_binding)]
+            fn send_for_response<'life0,
+                'async_trait>(&'life0 self, nodeid: NodeID, req_data: Vec<u8>)
+                ->
+                    ::core::pin::Pin<Box<dyn ::core::future::Future<Output =
+                    WSResult<Vec<u8>>> + ::core::marker::Send + 'async_trait>>
+                where 'life0: 'async_trait, Self: 'async_trait {
+                Box::pin(async move
+                        {
+                        if let ::core::option::Option::Some(__ret) =
+                                    ::core::option::Option::None::<WSResult<Vec<u8>>> {
+                                return __ret;
+                            }
+                        let __self = self;
+                        let nodeid = nodeid;
+                        let req_data = req_data;
+                        let __ret: WSResult<Vec<u8>> = { Ok(Vec::new()) };
+
+                        #[allow(unreachable_code)]
+                        __ret
+                    })
+            }
+        }
+    }
+    pub mod serial {
+        use super::proto;
+        use crate::{kv::KeyRange, sys::NodeID};
+        pub trait MsgPack: prost::Message + Default {
+            fn msg_id()
+            -> u32;
+        }
+        impl MsgPack for raft::prelude::Message {
+            fn msg_id() -> u32 { 0 }
+        }
+    }
+    pub mod proto {
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct KeyRange {
+            #[prost(uint64, tag = "1")]
+            pub start: u64,
+            #[prost(uint64, tag = "2")]
+            pub end: u64,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for KeyRange {
+            #[inline]
+            fn clone(&self) -> KeyRange {
+                KeyRange {
+                    start: ::core::clone::Clone::clone(&self.start),
+                    end: ::core::clone::Clone::clone(&self.end),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for KeyRange { }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for KeyRange {
+            #[inline]
+            fn eq(&self, other: &KeyRange) -> bool {
+                self.start == other.start && self.end == other.end
+            }
+        }
+        impl ::prost::Message for KeyRange {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if self.start != 0u64 {
+                        ::prost::encoding::uint64::encode(1u32, &self.start, buf);
+                    }
+                if self.end != 0u64 {
+                        ::prost::encoding::uint64::encode(2u32, &self.end, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "KeyRange";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.start;
+                        ::prost::encoding::uint64::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "start"); error })
+                    }
+                    2u32 => {
+                        let mut value = &mut self.end;
+                        ::prost::encoding::uint64::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "end"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                        if self.start != 0u64 {
+                                ::prost::encoding::uint64::encoded_len(1u32, &self.start)
+                            } else { 0 } +
+                    if self.end != 0u64 {
+                            ::prost::encoding::uint64::encoded_len(2u32, &self.end)
+                        } else { 0 }
+            }
+            fn clear(&mut self) { self.start = 0u64; self.end = 0u64; }
+        }
+        impl ::core::default::Default for KeyRange {
+            fn default() -> Self { KeyRange { start: 0u64, end: 0u64 } }
+        }
+        impl ::core::fmt::Debug for KeyRange {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("KeyRange");
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.start)
+                            };
+                        builder.field("start", &wrapper)
+                    };
+                ;
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.end)
+                            };
+                        builder.field("end", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct KvPair {
+            #[prost(uint64, tag = "1")]
+            pub key: u64,
+            #[prost(bytes = "vec", tag = "2")]
+            pub value: ::prost::alloc::vec::Vec<u8>,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for KvPair {
+            #[inline]
+            fn clone(&self) -> KvPair {
+                KvPair {
+                    key: ::core::clone::Clone::clone(&self.key),
+                    value: ::core::clone::Clone::clone(&self.value),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for KvPair { }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for KvPair {
+            #[inline]
+            fn eq(&self, other: &KvPair) -> bool {
+                self.key == other.key && self.value == other.value
+            }
+        }
+        impl ::prost::Message for KvPair {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if self.key != 0u64 {
+                        ::prost::encoding::uint64::encode(1u32, &self.key, buf);
+                    }
+                if self.value != b"" as &[u8] {
+                        ::prost::encoding::bytes::encode(2u32, &self.value, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "KvPair";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.key;
+                        ::prost::encoding::uint64::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "key"); error })
+                    }
+                    2u32 => {
+                        let mut value = &mut self.value;
+                        ::prost::encoding::bytes::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "value"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                        if self.key != 0u64 {
+                                ::prost::encoding::uint64::encoded_len(1u32, &self.key)
+                            } else { 0 } +
+                    if self.value != b"" as &[u8] {
+                            ::prost::encoding::bytes::encoded_len(2u32, &self.value)
+                        } else { 0 }
+            }
+            fn clear(&mut self) { self.key = 0u64; self.value.clear(); }
+        }
+        impl ::core::default::Default for KvPair {
+            fn default() -> Self {
+                KvPair {
+                    key: 0u64,
+                    value: ::core::default::Default::default(),
+                }
+            }
+        }
+        impl ::core::fmt::Debug for KvPair {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("KvPair");
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.key)
+                            };
+                        builder.field("key", &wrapper)
+                    };
+                ;
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.value)
+                            };
+                        builder.field("value", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct GetRequest {
+            #[prost(message, optional, tag = "1")]
+            pub key_range: ::core::option::Option<KeyRange>,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for GetRequest {
+            #[inline]
+            fn clone(&self) -> GetRequest {
+                GetRequest {
+                    key_range: ::core::clone::Clone::clone(&self.key_range),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for GetRequest { }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for GetRequest {
+            #[inline]
+            fn eq(&self, other: &GetRequest) -> bool {
+                self.key_range == other.key_range
+            }
+        }
+        impl ::prost::Message for GetRequest {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if let Some(ref msg) = self.key_range {
+                        ::prost::encoding::message::encode(1u32, msg, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "GetRequest";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.key_range;
+                        ::prost::encoding::message::merge(wire_type,
+                                value.get_or_insert_with(::core::default::Default::default),
+                                buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "key_range"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                    self.key_range.as_ref().map_or(0,
+                        |msg| ::prost::encoding::message::encoded_len(1u32, msg))
+            }
+            fn clear(&mut self) {
+                self.key_range = ::core::option::Option::None;
+            }
+        }
+        impl ::core::default::Default for GetRequest {
+            fn default() -> Self {
+                GetRequest { key_range: ::core::default::Default::default() }
+            }
+        }
+        impl ::core::fmt::Debug for GetRequest {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("GetRequest");
+                let builder =
+                    {
+                        let wrapper = &self.key_range;
+                        builder.field("key_range", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct GetFromNodeRequest {
+            #[prost(message, optional, tag = "1")]
+            pub key_range: ::core::option::Option<KeyRange>,
+            #[prost(uint64, tag = "2")]
+            pub node_id: u64,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for GetFromNodeRequest {
+            #[inline]
+            fn clone(&self) -> GetFromNodeRequest {
+                GetFromNodeRequest {
+                    key_range: ::core::clone::Clone::clone(&self.key_range),
+                    node_id: ::core::clone::Clone::clone(&self.node_id),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for GetFromNodeRequest { }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for GetFromNodeRequest {
+            #[inline]
+            fn eq(&self, other: &GetFromNodeRequest) -> bool {
+                self.key_range == other.key_range &&
+                    self.node_id == other.node_id
+            }
+        }
+        impl ::prost::Message for GetFromNodeRequest {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if let Some(ref msg) = self.key_range {
+                        ::prost::encoding::message::encode(1u32, msg, buf);
+                    }
+                if self.node_id != 0u64 {
+                        ::prost::encoding::uint64::encode(2u32, &self.node_id, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "GetFromNodeRequest";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.key_range;
+                        ::prost::encoding::message::merge(wire_type,
+                                value.get_or_insert_with(::core::default::Default::default),
+                                buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "key_range"); error })
+                    }
+                    2u32 => {
+                        let mut value = &mut self.node_id;
+                        ::prost::encoding::uint64::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "node_id"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                        self.key_range.as_ref().map_or(0,
+                            |msg| ::prost::encoding::message::encoded_len(1u32, msg)) +
+                    if self.node_id != 0u64 {
+                            ::prost::encoding::uint64::encoded_len(2u32, &self.node_id)
+                        } else { 0 }
+            }
+            fn clear(&mut self) {
+                self.key_range = ::core::option::Option::None;
+                self.node_id = 0u64;
+            }
+        }
+        impl ::core::default::Default for GetFromNodeRequest {
+            fn default() -> Self {
+                GetFromNodeRequest {
+                    key_range: ::core::default::Default::default(),
+                    node_id: 0u64,
+                }
+            }
+        }
+        impl ::core::fmt::Debug for GetFromNodeRequest {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("GetFromNodeRequest");
+                let builder =
+                    {
+                        let wrapper = &self.key_range;
+                        builder.field("key_range", &wrapper)
+                    };
+                ;
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.node_id)
+                            };
+                        builder.field("node_id", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct GetResponse {
+            #[prost(message, repeated, tag = "1")]
+            pub kvs: ::prost::alloc::vec::Vec<KvPair>,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for GetResponse {
+            #[inline]
+            fn clone(&self) -> GetResponse {
+                GetResponse { kvs: ::core::clone::Clone::clone(&self.kvs) }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for GetResponse { }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for GetResponse {
+            #[inline]
+            fn eq(&self, other: &GetResponse) -> bool {
+                self.kvs == other.kvs
+            }
+        }
+        impl ::prost::Message for GetResponse {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                for msg in &self.kvs {
+                    ::prost::encoding::message::encode(1u32, msg, buf);
+                }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "GetResponse";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.kvs;
+                        ::prost::encoding::message::merge_repeated(wire_type, value,
+                                buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "kvs"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                    ::prost::encoding::message::encoded_len_repeated(1u32,
+                        &self.kvs)
+            }
+            fn clear(&mut self) { self.kvs.clear(); }
+        }
+        impl ::core::default::Default for GetResponse {
+            fn default() -> Self {
+                GetResponse { kvs: ::core::default::Default::default() }
+            }
+        }
+        impl ::core::fmt::Debug for GetResponse {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("GetResponse");
+                let builder =
+                    { let wrapper = &self.kvs; builder.field("kvs", &wrapper) };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct RouteOfKeyRangeRequest {
+            #[prost(message, optional, tag = "1")]
+            pub key_range: ::core::option::Option<KeyRange>,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for RouteOfKeyRangeRequest {
+            #[inline]
+            fn clone(&self) -> RouteOfKeyRangeRequest {
+                RouteOfKeyRangeRequest {
+                    key_range: ::core::clone::Clone::clone(&self.key_range),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for RouteOfKeyRangeRequest {
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for RouteOfKeyRangeRequest {
+            #[inline]
+            fn eq(&self, other: &RouteOfKeyRangeRequest) -> bool {
+                self.key_range == other.key_range
+            }
+        }
+        impl ::prost::Message for RouteOfKeyRangeRequest {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if let Some(ref msg) = self.key_range {
+                        ::prost::encoding::message::encode(1u32, msg, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "RouteOfKeyRangeRequest";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.key_range;
+                        ::prost::encoding::message::merge(wire_type,
+                                value.get_or_insert_with(::core::default::Default::default),
+                                buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "key_range"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                    self.key_range.as_ref().map_or(0,
+                        |msg| ::prost::encoding::message::encoded_len(1u32, msg))
+            }
+            fn clear(&mut self) {
+                self.key_range = ::core::option::Option::None;
+            }
+        }
+        impl ::core::default::Default for RouteOfKeyRangeRequest {
+            fn default() -> Self {
+                RouteOfKeyRangeRequest {
+                    key_range: ::core::default::Default::default(),
+                }
+            }
+        }
+        impl ::core::fmt::Debug for RouteOfKeyRangeRequest {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("RouteOfKeyRangeRequest");
+                let builder =
+                    {
+                        let wrapper = &self.key_range;
+                        builder.field("key_range", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        pub struct RouteOfKeyRangeResponse {
+            #[prost(uint64, tag = "1")]
+            pub node_id: u64,
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::clone::Clone for RouteOfKeyRangeResponse {
+            #[inline]
+            fn clone(&self) -> RouteOfKeyRangeResponse {
+                RouteOfKeyRangeResponse {
+                    node_id: ::core::clone::Clone::clone(&self.node_id),
+                }
+            }
+        }
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        #[automatically_derived]
+        impl ::core::marker::StructuralPartialEq for RouteOfKeyRangeResponse {
+        }
+        #[automatically_derived]
+        #[allow(clippy :: derive_partial_eq_without_eq)]
+        impl ::core::cmp::PartialEq for RouteOfKeyRangeResponse {
+            #[inline]
+            fn eq(&self, other: &RouteOfKeyRangeResponse) -> bool {
+                self.node_id == other.node_id
+            }
+        }
+        impl ::prost::Message for RouteOfKeyRangeResponse {
+            #[allow(unused_variables)]
+            fn encode_raw<B>(&self, buf: &mut B) where
+                B: ::prost::bytes::BufMut {
+                if self.node_id != 0u64 {
+                        ::prost::encoding::uint64::encode(1u32, &self.node_id, buf);
+                    }
+            }
+            #[allow(unused_variables)]
+            fn merge_field<B>(&mut self, tag: u32,
+                wire_type: ::prost::encoding::WireType, buf: &mut B,
+                ctx: ::prost::encoding::DecodeContext)
+                -> ::core::result::Result<(), ::prost::DecodeError> where
+                B: ::prost::bytes::Buf {
+                const STRUCT_NAME: &'static str = "RouteOfKeyRangeResponse";
+                match tag {
+                    1u32 => {
+                        let mut value = &mut self.node_id;
+                        ::prost::encoding::uint64::merge(wire_type, value, buf,
+                                ctx).map_err(|mut error|
+                                { error.push(STRUCT_NAME, "node_id"); error })
+                    }
+                    _ =>
+                        ::prost::encoding::skip_field(wire_type, tag, buf, ctx),
+                }
+            }
+            #[inline]
+            fn encoded_len(&self) -> usize {
+                0 +
+                    if self.node_id != 0u64 {
+                            ::prost::encoding::uint64::encoded_len(1u32, &self.node_id)
+                        } else { 0 }
+            }
+            fn clear(&mut self) { self.node_id = 0u64; }
+        }
+        impl ::core::default::Default for RouteOfKeyRangeResponse {
+            fn default() -> Self { RouteOfKeyRangeResponse { node_id: 0u64 } }
+        }
+        impl ::core::fmt::Debug for RouteOfKeyRangeResponse {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter)
+                -> ::core::fmt::Result {
+                let mut builder = f.debug_struct("RouteOfKeyRangeResponse");
+                let builder =
+                    {
+                        let wrapper =
+                            {
+                                fn ScalarWrapper<T>(v: T) -> T { v }
+                                ScalarWrapper(&self.node_id)
+                            };
+                        builder.field("node_id", &wrapper)
+                    };
+                ;
+                builder.finish()
+            }
+        }
+    }
+}
+pub mod result {
+    use camelpaste::paste;
+    use prost::DecodeError;
+    use qp2p::EndpointError;
+    use thiserror::Error;
+    pub type WSResult<T> = Result<T, WSError>;
+    pub enum NotMatchNodeErr { NotRaft(String), }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for NotMatchNodeErr {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                NotMatchNodeErr::NotRaft(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "NotRaft", &__self_0),
+            }
+        }
+    }
+    pub enum WsNetworkLogicErr {
+        DecodeError(DecodeError),
+        MsgIdNotDispatchable(u32),
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for WsNetworkLogicErr {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                WsNetworkLogicErr::DecodeError(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "DecodeError", &__self_0),
+                WsNetworkLogicErr::MsgIdNotDispatchable(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "MsgIdNotDispatchable", &__self_0),
+            }
+        }
+    }
+    pub enum WsNetworkConnErr { EndPointError(EndpointError), }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for WsNetworkConnErr {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                WsNetworkConnErr::EndPointError(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "EndPointError", &__self_0),
+            }
+        }
+    }
+    pub enum WSError {
+
+        #[error("Network logic error: {0:?}")]
+        WsNetworkLogicErr(WsNetworkLogicErr),
+
+        #[error("Network connection error: {0:?}")]
+        WsNetworkConnErr(WsNetworkConnErr),
+    }
+    #[allow(unused_qualifications)]
+    impl std::error::Error for WSError { }
+    #[allow(unused_qualifications)]
+    impl ::core::fmt::Display for WSError {
+        fn fmt(&self, __formatter: &mut ::core::fmt::Formatter)
+            -> ::core::fmt::Result {
+
+            #[allow(unused_variables, deprecated, clippy ::
+            used_underscore_binding)]
+            match self {
+                WSError::WsNetworkLogicErr(_0) =>
+                    __formatter.write_fmt(::core::fmt::Arguments::new_v1(&["Network logic error: "],
+                            &[::core::fmt::ArgumentV1::new_debug(&_0)])),
+                WSError::WsNetworkConnErr(_0) =>
+                    __formatter.write_fmt(::core::fmt::Arguments::new_v1(&["Network connection error: "],
+                            &[::core::fmt::ArgumentV1::new_debug(&_0)])),
+            }
+        }
+    }
+    #[automatically_derived]
+    impl ::core::fmt::Debug for WSError {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+            match self {
+                WSError::WsNetworkLogicErr(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "WsNetworkLogicErr", &__self_0),
+                WSError::WsNetworkConnErr(__self_0) =>
+                    ::core::fmt::Formatter::debug_tuple_field1_finish(f,
+                        "WsNetworkConnErr", &__self_0),
+            }
+        }
+    }
+    impl From<WsNetworkLogicErr> for WSError {
+        fn from(e: WsNetworkLogicErr) -> Self {
+            WSError::WsNetworkLogicErr(e)
+        }
+    }
+    impl From<WsNetworkConnErr> for WSError {
+        fn from(e: WsNetworkConnErr) -> Self { WSError::WsNetworkConnErr(e) }
+    }
+    pub struct ErrCvt<T>(pub T);
+    macro_rules! impl_err_convertor {
+        ($t : ty, $sub_t : ty, $sub_tt : ty) =>
+        {
+            paste!
+            {
+                impl ErrCvt < $t >
+                {
+                    pub fn [< to_ $sub_t : snake >] (self) -> WSError
+                    { WSError :: $sub_t($sub_t :: $sub_tt(self.0)) }
+                }
+            }
+        } ;
+    }
+    impl ErrCvt<DecodeError> {
+        pub fn to_ws_network_logic_err(self) -> WSError {
+            WSError::WsNetworkLogicErr(WsNetworkLogicErr::DecodeError(self.0))
+        }
+    }
+    impl ErrCvt<EndpointError> {
+        pub fn to_ws_network_conn_err(self) -> WSError {
+            WSError::WsNetworkConnErr(WsNetworkConnErr::EndPointError(self.0))
+        }
+    }
+}
+mod sys {
+    use crate::module_iter::*;
+    use async_trait::async_trait;
+    use std::{cell::RefCell, sync::{Arc, Weak}};
+    use tokio::{select, task::JoinHandle};
+    use crate::{
+        kv::{
+            data_router::DataRouter, data_router_client::DataRouterClient,
+            dist_kv_raft::{tikvraft_proxy::RaftModule, RaftDistKV},
+            kv_client::KVClient,
+        },
+        module_iter::LogicalModuleParent,
+        network::{
+            p2p::{self, P2PModule, P2P},
+            p2p_client::{self, P2PClient},
+            p2p_quic::P2PQuicNode,
+        },
+        result::WSResult, util::JoinHandleWrapper,
+    };
+    pub struct Sys {
+        pub logical_modules: Arc<LogicalModules>,
+        sub_tasks: RefCell<Vec<JoinHandleWrapper>>,
+    }
+    impl Sys {
+        pub fn new() -> Sys {
+            Sys {
+                logical_modules: LogicalModules::new(LogicalNodeConfig {
+                        as_scheduler: true,
+                        as_data_router: true,
+                        as_kv: true,
+                    }),
+                sub_tasks: Vec::new().into(),
+            }
+        }
+        pub async fn wait_for_end(&self) {
+            if let Err(err) = self.logical_modules.start(self) {}
+            for task in self.sub_tasks.borrow_mut().iter_mut() {
+                task.join().await;
+            }
+        }
+    }
+    pub type NodeID = usize;
+    pub struct LogicalNodeConfig {
+        as_scheduler: bool,
+        as_data_router: bool,
+        as_kv: bool,
+    }
+    pub struct LogicalModuleNewArgs {
+        pub parent_name: String,
+        pub btx: BroadcastSender,
+        pub logical_models: Option<Weak<LogicalModules>>,
+    }
+    #[automatically_derived]
+    impl ::core::clone::Clone for LogicalModuleNewArgs {
+        #[inline]
+        fn clone(&self) -> LogicalModuleNewArgs {
+            LogicalModuleNewArgs {
+                parent_name: ::core::clone::Clone::clone(&self.parent_name),
+                btx: ::core::clone::Clone::clone(&self.btx),
+                logical_models: ::core::clone::Clone::clone(&self.logical_models),
+            }
+        }
+    }
+    impl LogicalModuleNewArgs {
+        pub fn expand_parent_name(&mut self, this_name: &str) {
+            let name =
+                {
+                    let res =
+                        ::alloc::fmt::format(::core::fmt::Arguments::new_v1(&["",
+                                            "::"],
+                                &[::core::fmt::ArgumentV1::new_display(&self.parent_name),
+                                            ::core::fmt::ArgumentV1::new_display(&this_name)]));
+                    res
+                };
+            self.parent_name = name;
+        }
+    }
+    pub enum LogicalModuleState { Running, Preparing(String), }
+    pub struct LogicalModuleWaiter {
+        ok: bool,
+        rx: Vec<tokio::sync::broadcast::Receiver<LogicalModuleState>>,
+    }
+    impl LogicalModuleWaiter {
+        pub fn ok(&self) -> bool { true }
+        pub fn stop(&self) -> bool { false }
+        pub async fn wait_for_ok(&mut self) {}
+        pub async fn wait_for_wrong(&self) {}
+        pub fn select_wrong(&self) -> bool { false }
+        pub fn sync_wait_for_ok(&self) {}
+    }
+    pub trait TickStateMachine {
+        fn tick(&mut self);
+    }
+    fn run_with_sync_waiter_wrapper<T: TickStateMachine>(mut t: T,
+        waiter: LogicalModuleWaiter) {
+        loop {
+            if waiter.ok() {
+                    loop { t.tick(); if waiter.select_wrong() { break; } }
+                } else if waiter.stop() {
+                   break;
+               } else { waiter.sync_wait_for_ok(); }
+        }
+    }
+    pub trait LogicalModule {
+        fn inner_new(args: LogicalModuleNewArgs)
+        -> Self
+        where
+        Self: Sized;
+        fn start(&self)
+        -> WSResult<Vec<JoinHandleWrapper>>;
+        fn name(&self)
+        -> &str;
+    }
+    pub enum BroadcastMsg { SysEnd, }
+    #[automatically_derived]
+    impl ::core::clone::Clone for BroadcastMsg {
+        #[inline]
+        fn clone(&self) -> BroadcastMsg { BroadcastMsg::SysEnd }
+    }
+    pub type BroadcastSender = tokio::sync::broadcast::Sender<BroadcastMsg>;
+    macro_rules! module_spec {
+        ($name : ident, $type : ty) =>
+        {
+            impl LogicalModules
+            { pub fn $name < 'a > (& 'a self) -> & 'a $type { & self.$name } }
+        } ;
+    }
+    macro_rules! init_module {
+        ($t : ty, $args : ident) =>
+        { { let ret = < $t > :: new($args.clone()) ; ret } ; } ;
+    }
+    pub(crate) use init_module;
+    pub struct LogicalModules {
+        #[sub]
+        pub kv_client: KVClient,
+        #[sub]
+        pub data_router_client: DataRouterClient,
+        #[sub]
+        pub p2p_client: P2PClient,
+        #[sub]
+        pub p2p: P2PModule,
+        #[sub]
+        pub data_router: Option<DataRouter>,
+    }
+    impl<'a> ModuleIterTrait<'a> for ModuleIter<'a, LogicalModules> {
+        fn next_module(&mut self) -> Option<&'a dyn LogicalModule> {
+            loop {
+                match self.index {
+                    0usize => {
+                        let sub = &unsafe { self.inner_ref.as_ref() }.kv_client;
+                        if let Some(sub_iter) = &mut self.current_sub_iter {
+                                if let Some(sub) = sub_iter.next_module() {
+                                        return Some(sub);
+                                    } else {
+                                       self.index += 1;
+                                       self.current_sub_iter = None;
+                                       return Some(sub);
+                                   }
+                            } else {
+                               self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                               if let Some(sub_sub) =
+                                           self.current_sub_iter.as_mut().unwrap().next_module() {
+                                       return Some(sub_sub);
+                                   } else {
+                                      self.index += 1;
+                                      self.current_sub_iter = None;
+                                      return Some(sub)
+                                  }
+                           }
+                    }
+                    1usize => {
+                        let sub =
+                            &unsafe { self.inner_ref.as_ref() }.data_router_client;
+                        if let Some(sub_iter) = &mut self.current_sub_iter {
+                                if let Some(sub) = sub_iter.next_module() {
+                                        return Some(sub);
+                                    } else {
+                                       self.index += 1;
+                                       self.current_sub_iter = None;
+                                       return Some(sub);
+                                   }
+                            } else {
+                               self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                               if let Some(sub_sub) =
+                                           self.current_sub_iter.as_mut().unwrap().next_module() {
+                                       return Some(sub_sub);
+                                   } else {
+                                      self.index += 1;
+                                      self.current_sub_iter = None;
+                                      return Some(sub)
+                                  }
+                           }
+                    }
+                    2usize => {
+                        let sub = &unsafe { self.inner_ref.as_ref() }.p2p_client;
+                        if let Some(sub_iter) = &mut self.current_sub_iter {
+                                if let Some(sub) = sub_iter.next_module() {
+                                        return Some(sub);
+                                    } else {
+                                       self.index += 1;
+                                       self.current_sub_iter = None;
+                                       return Some(sub);
+                                   }
+                            } else {
+                               self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                               if let Some(sub_sub) =
+                                           self.current_sub_iter.as_mut().unwrap().next_module() {
+                                       return Some(sub_sub);
+                                   } else {
+                                      self.index += 1;
+                                      self.current_sub_iter = None;
+                                      return Some(sub)
+                                  }
+                           }
+                    }
+                    3usize => {
+                        let sub = &unsafe { self.inner_ref.as_ref() }.p2p;
+                        if let Some(sub_iter) = &mut self.current_sub_iter {
+                                if let Some(sub) = sub_iter.next_module() {
+                                        return Some(sub);
+                                    } else {
+                                       self.index += 1;
+                                       self.current_sub_iter = None;
+                                       return Some(sub);
+                                   }
+                            } else {
+                               self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                               if let Some(sub_sub) =
+                                           self.current_sub_iter.as_mut().unwrap().next_module() {
+                                       return Some(sub_sub);
+                                   } else {
+                                      self.index += 1;
+                                      self.current_sub_iter = None;
+                                      return Some(sub)
+                                  }
+                           }
+                    }
+                    4usize => {
+                        if let Some(sub_iter) = &mut self.current_sub_iter {
+                                if let Some(sub) = sub_iter.next_module() {
+                                        return Some(sub);
+                                    } else {
+                                       self.index += 1;
+                                       self.current_sub_iter = None;
+                                       return Some(unsafe {
+                                                               self.inner_ref.as_ref()
+                                                           }.data_router.as_ref().unwrap());
+                                   }
+                            } else {
+                               if let Some(sub) =
+                                           &unsafe { self.inner_ref.as_ref() }.data_router {
+                                       self.current_sub_iter = Some(Box::new(sub.module_iter()));
+                                       if let Some(sub_sub) =
+                                                   self.current_sub_iter.as_mut().unwrap().next_module() {
+                                               return Some(sub_sub);
+                                           } else { self.index += 1; return Some(sub) }
+                                   } else {
+                                      self.index += 1;
+                                      self.current_sub_iter = None;
+                                      continue;
+                                  }
+                           }
+                    }
+                    _ => { return None; }
+                }
+            }
+        }
+    }
+    impl<'a> LogicalModuleParent<'a> for LogicalModules {
+        fn module_iter(&'a self) -> ModuleIter<'a, Self> {
+            ModuleIter {
+                inner_ref: self.into(),
+                index: 0,
+                current_sub_iter: None,
+                phantom: std::marker::PhantomData,
+            }
+        }
+    }
+    impl LogicalModules {
+        pub fn kv_client<'a>(&'a self) -> &'a KVClient { &self.kv_client }
+    }
+    impl LogicalModules {
+        pub fn data_router_client<'a>(&'a self) -> &'a DataRouterClient {
+            &self.data_router_client
+        }
+    }
+    impl LogicalModules {
+        pub fn p2p_client<'a>(&'a self) -> &'a P2PClient { &self.p2p_client }
+    }
+    impl LogicalModules {
+        pub fn p2p<'a>(&'a self) -> &'a P2PModule { &self.p2p }
+    }
+    impl LogicalModules {
+        pub fn data_router<'a>(&'a self) -> &'a Option<DataRouter> {
+            &self.data_router
+        }
+    }
+    impl LogicalModules {
+        pub fn new(config: LogicalNodeConfig) -> Arc<LogicalModules> {
+            let (broadcast_tx, _broadcast_rx) =
+                tokio::sync::broadcast::channel::<BroadcastMsg>(1);
+            let args =
+                LogicalModuleNewArgs {
+                    btx: broadcast_tx,
+                    logical_models: None,
+                    parent_name: "".to_owned(),
+                };
+            let p2p = { let ret = <P2PModule>::new(args.clone()); ret };
+            let data_router =
+                if config.as_data_router {
+                        Some({ let ret = <DataRouter>::new(args.clone()); ret })
+                    } else { None };
+            let p2p_client =
+                { let ret = <P2PClient>::new(args.clone()); ret };
+            let kv_client = { let ret = <KVClient>::new(args.clone()); ret };
+            let data_router_client =
+                { let ret = <DataRouterClient>::new(args.clone()); ret };
+            let arc =
+                LogicalModules {
+                    kv_client,
+                    data_router_client,
+                    p2p_client,
+                    p2p,
+                    data_router,
+                };
+            let mut iter = arc.module_iter();
+            while let Some(next) = iter.next_module() {
+                {
+                    use ::tracing::__macro_support::Callsite as _;
+                    static __CALLSITE: ::tracing::callsite::DefaultCallsite =
+                        {
+                            static META: ::tracing::Metadata<'static> =
+                                {
+                                    ::tracing_core::metadata::Metadata::new("event src/sys.rs:318",
+                                        "wasm_serverless::sys", ::tracing::Level::INFO,
+                                        ::core::option::Option::Some("src/sys.rs"),
+                                        ::core::option::Option::Some(318u32),
+                                        ::core::option::Option::Some("wasm_serverless::sys"),
+                                        ::tracing_core::field::FieldSet::new(&["message"],
+                                            ::tracing_core::callsite::Identifier(&__CALLSITE)),
+                                        ::tracing::metadata::Kind::EVENT)
+                                };
+                            ::tracing::callsite::DefaultCallsite::new(&META)
+                        };
+                    let enabled =
+                        ::tracing::Level::INFO <=
+                                    ::tracing::level_filters::STATIC_MAX_LEVEL &&
+                                ::tracing::Level::INFO <=
+                                    ::tracing::level_filters::LevelFilter::current() &&
+                            {
+                                let interest = __CALLSITE.interest();
+                                !interest.is_never() &&
+                                    ::tracing::__macro_support::__is_enabled(__CALLSITE.metadata(),
+                                        interest)
+                            };
+                    if enabled {
+                            (|value_set: ::tracing::field::ValueSet|
+                                        {
+                                            let meta = __CALLSITE.metadata();
+                                            ::tracing::Event::dispatch(meta, &value_set);
+                                            ;
+                                        })({
+                                    #[allow(unused_imports)]
+                                    use ::tracing::field::{debug, display, Value};
+                                    let mut iter = __CALLSITE.metadata().fields().iter();
+                                    __CALLSITE.metadata().fields().value_set(&[(&::core::iter::Iterator::next(&mut iter).expect("FieldSet corrupted (this is a bug)"),
+                                                        ::core::option::Option::Some(&::core::fmt::Arguments::new_v1(&["module itered "],
+                                                                        &[::core::fmt::ArgumentV1::new_display(&next.name())]) as
+                                                                &dyn Value))])
+                                });
+                        } else { ; }
+                }
+            }
+            drop(iter);
+            let arc = Arc::new(arc);
+            arc.p2p.setup_logical_modules_view(Arc::downgrade(&arc));
+            if let Some(v) = arc.data_router.as_ref() {
+                    v.raft_kv.raft_module.setup_logical_modules_view(Arc::downgrade(&arc));
+                }
+            arc
+        }
+        pub fn start(&self, sys: &Sys) -> WSResult<()> {
+            sys.sub_tasks.borrow_mut().append(&mut self.p2p.start()?);
+            sys.sub_tasks.borrow_mut().append(&mut self.p2p_client.start()?);
+            sys.sub_tasks.borrow_mut().append(&mut self.kv_client.start()?);
+            sys.sub_tasks.borrow_mut().append(&mut self.data_router_client.start()?);
+            if let Some(data_router) = &self.data_router {
+                    sys.sub_tasks.borrow_mut().append(&mut data_router.start()?);
+                }
+            Ok(())
+        }
+    }
+}
+pub mod util {
+    pub enum JoinHandleWrapper {
+        Task(Option<tokio::task::JoinHandle<()>>),
+        Thread(Option<std::thread::JoinHandle<()>>),
+    }
+    impl From<tokio::task::JoinHandle<()>> for JoinHandleWrapper {
+        fn from(handle: tokio::task::JoinHandle<()>) -> Self {
+            Self::Task(handle.into())
+        }
+    }
+    impl From<std::thread::JoinHandle<()>> for JoinHandleWrapper {
+        fn from(handle: std::thread::JoinHandle<()>) -> Self {
+            Self::Thread(handle.into())
+        }
+    }
+    impl JoinHandleWrapper {
+        pub async fn join(&mut self) {
+            match self {
+                Self::Task(handle) => handle.take().unwrap().await.unwrap(),
+                Self::Thread(handle) => {
+                    let handle = handle.take().unwrap();
+                    tokio::task::spawn_blocking(||
+                                    handle.join().unwrap()).await.unwrap()
+                }
+            }
+        }
+    }
+}
+fn main() {
+    let body =
+        async {
+            tracing_subscriber::fmt::init();
+            Sys::new().wait_for_end().await;
+        };
+
+    #[allow(clippy :: expect_used, clippy :: diverging_sub_expression)]
+    {
+        return tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed building the Runtime").block_on(body);
+    }
+}

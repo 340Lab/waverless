@@ -1,34 +1,43 @@
+use crate::{config::Config, module_iter::*, module_view::setup_views};
 use async_trait::async_trait;
 use std::{
     cell::RefCell,
+    net::SocketAddr,
     sync::{Arc, Weak},
 };
-use tokio::task::JoinHandle;
+use tokio::{select, task::JoinHandle};
 
 use crate::{
     kv::{
-        data_router::DataRouter, data_router_client::DataRouterClient,
-        dist_kv_raft::tikvraft_proxy::RaftModule, kv_client::KVClient,
+        data_router::DataRouter,
+        data_router_client::DataRouterClient,
+        dist_kv_raft::{tikvraft_proxy::TiKVRaftModule, RaftDistKV},
+        kv_client::KVClient,
     },
+    module_iter::LogicalModuleParent,
     network::{
         p2p::{self, P2PModule, P2P},
         p2p_client::{self, P2PClient},
+        p2p_quic::P2PQuicNode,
     },
     result::WSResult,
+    util::JoinHandleWrapper,
 };
 
 pub struct Sys {
     pub logical_modules: Arc<LogicalModules>,
-    sub_tasks: RefCell<Vec<JoinHandle<()>>>,
+    sub_tasks: RefCell<Vec<JoinHandleWrapper>>,
 }
 
 impl Sys {
-    pub fn new() -> Sys {
+    pub fn new(config: Config) -> Sys {
         Sys {
             logical_modules: LogicalModules::new(LogicalNodeConfig {
                 as_scheduler: true,
                 as_data_router: true,
                 as_kv: true,
+                peers: config.peers.clone(),
+                this: config.this,
             }),
             sub_tasks: Vec::new().into(),
         }
@@ -38,12 +47,7 @@ impl Sys {
             // log::error!("start logical nodes error: {:?}", err);
         }
         for task in self.sub_tasks.borrow_mut().iter_mut() {
-            match task.await {
-                Ok(_) => {}
-                Err(err) => {
-                    // log::error!("join task error: {:?}", err);
-                }
-            }
+            task.join().await;
         }
     }
 }
@@ -54,26 +58,36 @@ pub struct LogicalNodeConfig {
     as_scheduler: bool,
     as_data_router: bool,
     as_kv: bool,
+    peers: Vec<SocketAddr>,
+    this: SocketAddr,
 }
 
+#[derive(Clone)]
 pub struct LogicalModuleNewArgs {
+    pub parent_name: String,
     pub btx: BroadcastSender,
     pub logical_models: Option<Weak<LogicalModules>>,
+    pub peers_this: Option<(Vec<SocketAddr>, SocketAddr)>,
 }
-impl Clone for LogicalModuleNewArgs {
-    fn clone(&self) -> Self {
-        Self {
-            btx: self.btx.clone(),
-            logical_models: self.logical_models.clone(),
-        }
+
+impl LogicalModuleNewArgs {
+    pub fn expand_parent_name(&mut self, this_name: &str) {
+        let name = format!("{}::{}", self.parent_name, this_name);
+        self.parent_name = name;
     }
 }
 
+// #[async_trait]
 pub trait LogicalModule {
-    fn new(args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized;
-    fn start(&self) -> WSResult<Vec<JoinHandle<()>>>;
+    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>>;
+
+    fn name(&self) -> &str;
+
+    // async fn listen_async_signal(&self) -> tokio::sync::broadcast::Receiver<LogicalModuleState>;
+    // fn listen_sync_signal(&self) -> tokio::sync::broadcast::Receiver<LogicalModuleState>;
 }
 
 #[derive(Clone)]
@@ -82,60 +96,45 @@ pub enum BroadcastMsg {
 }
 
 pub type BroadcastSender = tokio::sync::broadcast::Sender<BroadcastMsg>;
-// pub type BroadcastReceiver = tokio::sync::broadcast::Receiver<BroadcastMsg>;
 
+#[derive(LogicalModuleParent)]
 pub struct LogicalModules {
-    kv_client: KVClient,                  // each module need a kv service
-    data_router_client: DataRouterClient, // kv_client_need a data_router service
-    p2p_client: P2PClient,                // modules need a client to call p2p service
-
-    p2p: P2PModule, // network basic service
+    #[sub]
+    pub kv_client: KVClient, // each module need a kv service
+    #[sub]
+    pub data_router_client: DataRouterClient, // kv_client_need a data_router service
+    #[sub]
+    pub p2p_client: P2PClient, // modules need a client to call p2p service
+    #[parent]
+    pub p2p: P2PModule, // network basic service
     // pub scheduler_node: Option<SchedulerNode>, // scheduler service
-    data_router: Option<DataRouter>, // data_router service
-                                     // pub kv_node: Option<KVNode>,               // kv service
+    #[parent]
+    pub data_router: Option<DataRouter>, // data_router service
+                                         // pub kv_node: Option<KVNode>,               // kv service
 }
-
-macro_rules! make_path {
-    ($name:ident) => {
-        $name
-    };
-    ($p:ident, $($ps:ident),+) => {
-        raft_kv.raft_module
-        // concat_idents!($($ps).+,.,make_path!($ps))
-    };
-}
-
-macro_rules! module_getter {
-    ($name:ident, $type:ty) => {
-        impl LogicalModules {
-            pub fn $name<'a>(&'a self) -> &'a $type {
-                &self.$name
-            }
-        }
-    };
-    ($name:ident, $type:ty, $p:ident) => {
-        impl LogicalModules {
-            pub fn $name<'a>(&'a self) -> &'a $type {
-                &self.$p.$name
-            }
-        }
-    };
-}
-
-module_getter!(kv_client, KVClient);
-module_getter!(data_router_client, DataRouterClient);
-module_getter!(p2p_client, P2PClient);
-module_getter!(p2p, P2PModule);
-module_getter!(data_router, Option<DataRouter>);
 
 impl LogicalModules {
+    // pub fn iter<'a(&'a self) -> LogicalModuleIter<'a> {
+    //     LogicalModuleIter {
+    //         logical_modules: self,
+    //         index: 0,
+    //     }
+    // }
+
     pub fn new(config: LogicalNodeConfig) -> Arc<LogicalModules> {
         let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<BroadcastMsg>(1);
         let args = LogicalModuleNewArgs {
             btx: broadcast_tx,
-            logical_models: todo!(),
+            logical_models: None,
+            parent_name: "".to_owned(),
+            peers_this: None,
         };
-        let p2p = P2PModule::new(args.clone());
+
+        let p2p = {
+            let mut args = args.clone();
+            args.peers_this = Some((config.peers.clone(), config.this));
+            P2PModule::new(args)
+        };
         let data_router = if config.as_data_router {
             Some(DataRouter::new(args.clone()))
         } else {
@@ -161,7 +160,7 @@ impl LogicalModules {
         //     None
         // };
 
-        let arc = Arc::new(LogicalModules {
+        let arc = LogicalModules {
             kv_client,
             data_router_client,
             p2p_client,
@@ -170,17 +169,27 @@ impl LogicalModules {
             // scheduler_node,
             data_router,
             // kv_node,
-        });
-        arc.p2p.setup_logical_modules_view(Arc::downgrade(&arc));
-        if let Some(v) = arc.data_router.as_ref() {
-            v.raft_kv
-                .raft_module
-                .setup_logical_modules_view(Arc::downgrade(&arc));
+        };
+
+        let mut iter = arc.module_iter();
+        while let Some(next) = iter.next_module() {
+            tracing::info!("module itered {}", next.name())
         }
+        drop(iter);
+
+        let arc = Arc::new(arc);
+
+        setup_views(&arc);
         arc
     }
 
     pub fn start(&self, sys: &Sys) -> WSResult<()> {
+        if let Some(data_router) = &self.data_router {
+            sys.sub_tasks.borrow_mut().append(&mut data_router.start()?);
+        }
+        sys.sub_tasks
+            .borrow_mut()
+            .append(&mut self.data_router_client.start()?);
         sys.sub_tasks.borrow_mut().append(&mut self.p2p.start()?);
         sys.sub_tasks
             .borrow_mut()
@@ -188,12 +197,6 @@ impl LogicalModules {
         sys.sub_tasks
             .borrow_mut()
             .append(&mut self.kv_client.start()?);
-        sys.sub_tasks
-            .borrow_mut()
-            .append(&mut self.data_router_client.start()?);
-        if let Some(data_router) = &self.data_router {
-            sys.sub_tasks.borrow_mut().append(&mut data_router.start()?);
-        }
         Ok(())
     }
 }
