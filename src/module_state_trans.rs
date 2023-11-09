@@ -32,7 +32,24 @@ impl LogicalModuleWaiter {
         //     rx.recv().await;
         // }
     }
-    pub fn select_wrong(&self) -> bool {
+    pub fn select_wrong(&mut self) -> bool {
+        for r in &mut self.rx {
+            if let Ok(msg) = r.try_recv() {
+                match msg {
+                    ModuleSignal::Preparing(reason) => {
+                        tracing::info!(
+                            "thread received preparing signal, reason: {}, pause running",
+                            reason
+                        );
+                        self.ok = false;
+                        return true;
+                    }
+                    ModuleSignal::Running => {
+                        continue;
+                    }
+                }
+            }
+        }
         false
     }
     pub fn sync_wait_for_ok(&mut self) {
@@ -41,6 +58,7 @@ impl LogicalModuleWaiter {
                 match rx.blocking_recv() {
                     Ok(res) => match res {
                         ModuleSignal::Preparing(reason) => {
+                            tracing::info!("thread received preparing signal, reason: {}, continue waiting for ok", reason);
                             continue;
                         }
                         ModuleSignal::Running => {
@@ -55,28 +73,28 @@ impl LogicalModuleWaiter {
     }
 }
 
-pub trait TickStateMachine {
-    fn tick(&mut self);
-}
+// pub trait TickStateMachine {
+//     fn tick(&mut self);
+// }
 
-fn run_with_sync_waiter_wrapper<T: TickStateMachine>(mut t: T, mut waiter: LogicalModuleWaiter) {
-    loop {
-        if waiter.ok() {
-            // user code begin
-            loop {
-                t.tick();
-                if waiter.select_wrong() {
-                    break;
-                }
-            }
-            // user code end
-        } else if waiter.stop() {
-            break;
-        } else {
-            waiter.sync_wait_for_ok();
-        }
-    }
-}
+// fn run_with_sync_waiter_wrapper<T: TickStateMachine>(mut t: T, mut waiter: LogicalModuleWaiter) {
+//     loop {
+//         if waiter.ok() {
+//             // user code begin
+//             loop {
+//                 t.tick();
+//                 if waiter.select_wrong() {
+//                     break;
+//                 }
+//             }
+//             // user code end
+//         } else if waiter.stop() {
+//             break;
+//         } else {
+//             waiter.sync_wait_for_ok();
+//         }
+//     }
+// }
 
 // async mod
 // async fn test_waiter() {

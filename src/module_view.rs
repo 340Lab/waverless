@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    kv::{data_router::DataRouter, dist_kv_raft::tikvraft_proxy::TiKVRaftModule},
+    kv::{data_router::DataRouter, dist_kv_raft::RaftModule},
     network::{p2p::P2PModule, p2p_quic::P2PQuicNode},
     sys::LogicalModules,
 };
@@ -86,9 +86,10 @@ macro_rules! logical_modules_view {
 }
 
 // every module should be seen
-logical_modules_view!(P2PModule, data_router, Option<DataRouter>);
+logical_modules_view_iter!(P2PModule, data_router, Option<DataRouter>);
+logical_modules_view!(P2PModule, p2p, P2PModule);
 logical_modules_view!(P2PQuicNode, p2p, P2PModule);
-logical_modules_view!(TiKVRaftModule, p2p, P2PModule);
+logical_modules_view!(RaftModule, p2p, P2PModule);
 
 pub fn setup_views(arc: &Arc<LogicalModules>) {
     arc.p2p.setup_logical_modules_view(Arc::downgrade(arc));

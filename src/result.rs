@@ -1,7 +1,10 @@
+use async_raft::InitializeError;
 use camelpaste::paste;
 use prost::DecodeError;
-use qp2p::EndpointError;
+use qp2p::{EndpointError, SendError};
 use thiserror::Error;
+
+use crate::sys::NodeID;
 
 pub type WSResult<T> = Result<T, WSError>;
 
@@ -14,11 +17,26 @@ pub enum NotMatchNodeErr {
 pub enum WsNetworkLogicErr {
     DecodeError(DecodeError),
     MsgIdNotDispatchable(u32),
+    InvaidNodeID(NodeID),
 }
 
 #[derive(Debug)]
 pub enum WsNetworkConnErr {
     EndPointError(EndpointError),
+    SendError(SendError),
+    ConnectionNotEstablished(NodeID),
+    RPCTimout(NodeID),
+    ConnectionExpired(NodeID),
+}
+
+#[derive(Debug)]
+pub enum WsRaftErr {
+    InitializeError(async_raft::error::InitializeError),
+}
+
+#[derive(Debug)]
+pub enum WsSerialErr {
+    BincodeErr(Box<bincode::ErrorKind>),
 }
 
 #[derive(Error, Debug)]
@@ -28,6 +46,15 @@ pub enum WSError {
 
     #[error("Network connection error: {0:?}")]
     WsNetworkConnErr(WsNetworkConnErr),
+
+    #[error("Raft error: {0:?}")]
+    WsRaftErr(WsRaftErr),
+
+    #[error("Serial error: {0:?}")]
+    WsSerialErr(WsSerialErr),
+
+    #[error("Not Implemented")]
+    NotImplemented,
 }
 
 impl From<WsNetworkLogicErr> for WSError {
@@ -39,6 +66,18 @@ impl From<WsNetworkLogicErr> for WSError {
 impl From<WsNetworkConnErr> for WSError {
     fn from(e: WsNetworkConnErr) -> Self {
         WSError::WsNetworkConnErr(e)
+    }
+}
+
+impl From<WsRaftErr> for WSError {
+    fn from(e: WsRaftErr) -> Self {
+        WSError::WsRaftErr(e)
+    }
+}
+
+impl From<WsSerialErr> for WSError {
+    fn from(e: WsSerialErr) -> Self {
+        WSError::WsSerialErr(e)
     }
 }
 
@@ -58,3 +97,5 @@ macro_rules! impl_err_convertor {
 
 impl_err_convertor!(DecodeError, WsNetworkLogicErr, DecodeError);
 impl_err_convertor!(EndpointError, WsNetworkConnErr, EndPointError);
+impl_err_convertor!(SendError, WsNetworkConnErr, SendError);
+impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);

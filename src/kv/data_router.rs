@@ -9,6 +9,7 @@ use crate::{
     util::JoinHandleWrapper,
 };
 
+use async_trait::async_trait;
 use tokio::task::JoinHandle;
 
 use super::dist_kv_raft::RaftDistKV;
@@ -20,6 +21,7 @@ pub struct DataRouter {
     name: String,
 }
 
+#[async_trait]
 impl LogicalModule for DataRouter {
     fn inner_new(mut args: LogicalModuleNewArgs) -> Self
     where
@@ -31,12 +33,12 @@ impl LogicalModule for DataRouter {
             raft_kv: RaftDistKV::new(args),
         }
     }
-    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+    async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         // 核心任务，
         //  1. keyrange路径查询，分配
         //  2. 与其他data router通信，维护路由表
         let mut tasks = vec![];
-        tasks.append(&mut self.raft_kv.start()?);
+        tasks.append(&mut self.raft_kv.start().await?);
 
         let main_task = tokio::spawn(async move {});
         tasks.push(main_task.into());

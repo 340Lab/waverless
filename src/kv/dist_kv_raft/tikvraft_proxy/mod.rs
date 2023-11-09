@@ -1,6 +1,6 @@
 use prost::bytes::Bytes;
 use raft::{
-    eraftpb::{Entry, EntryType},
+    eraftpb::{ConfChangeSingle, ConfChangeType, ConfChangeV2, Entry, EntryType},
     prelude::{ConfChange, Message},
     raw_node::RawNode,
     storage::MemStorage,
@@ -25,7 +25,7 @@ use crate::{
     network::serial::MsgPack,
     result::WSResult,
     sync_loop,
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, Sys},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID, Sys},
     util::JoinHandleWrapper,
 };
 
@@ -70,8 +70,9 @@ impl LogicalModule for TiKVRaftModule {
             });
         let listen_for_net = self.logical_modules_view.p2p().listen();
         let waiter = LogicalModuleWaiter::new(vec![listen_for_net]);
+        let view = self.logical_modules_view.clone();
         let raft_thread = std::thread::spawn(move || {
-            new_tick_thread(rx, waiter);
+            new_tick_thread(view, rx, waiter);
         });
         Ok(vec![raft_thread.into()])
     }
@@ -80,10 +81,10 @@ impl LogicalModule for TiKVRaftModule {
     }
 }
 
-pub fn new_node() -> RawNode<MemStorage> {
+pub fn new_node(id: NodeID) -> RawNode<MemStorage> {
     // Select some defaults, then change what we need.
     let config = Config {
-        id: 1,
+        id: id as u64,
         ..Default::default()
     };
     // Initialize logger.
@@ -107,25 +108,59 @@ struct RaftThreadState {
     remaining_timeout: Duration,
     timeout: Duration,
     rx: std::sync::mpsc::Receiver<RaftMsg>,
+    view: TiKVRaftModuleLMView,
+    proprosed_join: bool,
 }
 
 impl RaftThreadState {
-    fn new(rx: std::sync::mpsc::Receiver<RaftMsg>) -> Self {
-        let node = new_node();
+    fn new(rx: std::sync::mpsc::Receiver<RaftMsg>, view: TiKVRaftModuleLMView) -> Self {
+        let mut node = new_node(view.p2p().this_node.1);
         let timeout = Duration::from_millis(100);
+
         Self {
             node,
             remaining_timeout: timeout,
             timeout,
             rx,
+            view,
+            proprosed_join: false,
         }
     }
 
     fn tick(&mut self) {
         let now = Instant::now();
         if self.node.has_ready() {
-            let mut ready = self.node.ready();
-            handle_ready(&mut self.rx, self.remaining_timeout, &mut self.node, ready);
+            let ready = self.node.ready();
+
+            // propose when fisrt ready
+            if !self.proprosed_join {
+                if self.node.raft.state == StateRole::Leader {
+                    tracing::info!("proprose join");
+                    self.proprosed_join = true;
+                    let mut steps = vec![];
+                    for p in &self.view.p2p().peers {
+                        steps.push(ConfChangeSingle {
+                            change_type: ConfChangeType::AddNode.into(),
+                            node_id: p.1 as u64,
+                        });
+                    }
+                    let mut cc = ConfChangeV2::default();
+                    cc.set_changes(steps.into());
+                    self.node
+                        .propose_conf_change(vec![], cc)
+                        .unwrap_or_else(|err| {
+                            tracing::error!("propose conf change error: {:?}", err);
+                            // panic!("propose conf change error: {:?}", err);
+                        });
+                }
+            }
+            handle_ready(
+                &self.view,
+                &mut self.rx,
+                self.remaining_timeout,
+                &mut self.node,
+                ready,
+            );
         }
 
         // Tick raft node
@@ -141,22 +176,39 @@ impl RaftThreadState {
     }
 }
 
-pub fn new_tick_thread(rx: std::sync::mpsc::Receiver<RaftMsg>, mut waiter: LogicalModuleWaiter) {
-    let mut state = RaftThreadState::new(rx);
+pub fn new_tick_thread(
+    view: TiKVRaftModuleLMView,
+    rx: std::sync::mpsc::Receiver<RaftMsg>,
+    mut waiter: LogicalModuleWaiter,
+) {
+    let mut state = RaftThreadState::new(rx, view);
 
     sync_loop!("TiKVRaftModule::raft_tick", waiter, { state.tick() });
 }
 
 fn handle_ready(
+    view: &TiKVRaftModuleLMView,
     rx: &mut std::sync::mpsc::Receiver<RaftMsg>,
     remaining_timeout: Duration,
     node: &mut RawNode<MemStorage>,
     mut ready: Ready,
 ) {
-    fn handle_messages(msgs: Vec<Message>) {}
+    fn handle_messages(view: &TiKVRaftModuleLMView, msgs: Vec<raft::prelude::Message>) {
+        // Send messages to other peers.
+        for msg in &msgs {
+            let to = msg.to;
+            tracing::info!("raft msg to: {:?}", to);
+            // view.p2p().;
+        }
+    }
     fn handle_committed_entries(node: &mut RawNode<MemStorage>, entries: Vec<Entry>) {
         let mut _last_apply_index = 0;
+        if entries.len() == 0 {
+            tracing::info!("no committed entries");
+            return;
+        }
         for entry in entries {
+            tracing::info!("handle committed entry {:?}", entry);
             // TODO:
             // Mostly, you need to save the last apply index to resume applying
             // after restart. Here we just ignore this because we use a Memory storage.
@@ -204,10 +256,12 @@ fn handle_ready(
 
     // 1.Send messages to other peers.
     if !ready.messages().is_empty() {
-        handle_messages(ready.take_messages())
+        tracing::info!("Send messages to other peers.");
+        handle_messages(view, ready.take_messages());
     }
 
     // 2.select peers msgs
+    tracing::info!("select peers msgs");
     match rx.recv_timeout(remaining_timeout) {
         Ok(RaftMsg::Propose { id, callback }) => {
             // TODO: figure out what propose is
@@ -227,6 +281,7 @@ fn handle_ready(
 
     // 3.This is a snapshot, we need to apply the snapshot at first.
     if !ready.snapshot().is_empty() {
+        tracing::info!("apply snapshot");
         node.mut_store()
             .wl()
             .apply_snapshot(ready.snapshot().clone())
@@ -234,26 +289,30 @@ fn handle_ready(
     }
 
     // 4.There are some newly committed log entries which you must apply to the state machine
+    tracing::info!("handle committed entries");
     handle_committed_entries(node, ready.take_committed_entries());
 
     // 5.Send persisted messages to other peers.
     if !ready.persisted_messages().is_empty() {
+        tracing::info!("Send persisted messages to other peers.");
         for msg in ready.take_persisted_messages() {}
     }
 
     // 6.advance the Raft
+    tracing::info!("advance the Raft");
     let mut light_rd = node.advance(ready);
     // Like step 1 and 3, you can use functions to make them behave the same.
-    handle_messages(light_rd.take_messages());
+    handle_messages(view, light_rd.take_messages());
     handle_committed_entries(node, light_rd.take_committed_entries());
     node.advance_apply();
 
     // 7.New entries not appended
     // TODO: make sure the logic here is correct
+    tracing::info!("New entries not appended");
     let mut ready = node.ready();
     if !ready.entries().is_empty() {
         // Append entries to the Raft log
-        node.mut_store().wl().append(ready.entries()).unwrap();
+        node.mut_store().wl().append(&ready.entries()).unwrap();
     }
 
     // The node may vote for a new leader,
@@ -261,6 +320,7 @@ fn handle_ready(
     //  We must persist the changed HardState:
     if let Some(hs) = ready.hs() {
         // Raft HardState changed, and we need to persist it.
+        tracing::info!("Raft HardState changed, and we need to persist it.");
         node.mut_store().wl().set_hardstate(hs.clone());
     }
 }

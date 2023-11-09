@@ -40,6 +40,7 @@ impl KVClient {
     }
 }
 
+#[async_trait]
 impl LogicalModule for KVClient {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
@@ -49,7 +50,7 @@ impl LogicalModule for KVClient {
             name: format!("{}::{}", args.parent_name, Self::self_name()),
         }
     }
-    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+    async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         Ok(vec![])
     }
     fn name(&self) -> &str {
