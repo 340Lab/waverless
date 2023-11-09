@@ -212,19 +212,19 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         // If a stop point was specified, delete from start until the given stop point.
         if let Some(stop) = stop.as_ref() {
             for key in start..*stop {
-                log.remove(&key);
+                let _ = log.remove(&key);
             }
             return Ok(());
         }
         // Else, just split off the remainder.
-        log.split_off(&start);
+        let _ = log.split_off(&start);
         Ok(())
     }
 
     #[tracing::instrument(level = "trace", skip(self, entry))]
     async fn append_entry_to_log(&self, entry: &Entry<ClientRequest>) -> Result<()> {
         let mut log = self.log.write().await;
-        log.insert(entry.index, entry.clone());
+        let _ = log.insert(entry.index, entry.clone());
         Ok(())
     }
 
@@ -232,7 +232,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
     async fn replicate_to_log(&self, entries: &[Entry<ClientRequest>]) -> Result<()> {
         let mut log = self.log.write().await;
         for entry in entries {
-            log.insert(entry.index, entry.clone());
+            let _ = log.insert(entry.index, entry.clone());
         }
         Ok(())
     }
@@ -253,7 +253,8 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         let previous = sm
             .client_status
             .insert(data.client.clone(), data.status.clone());
-        sm.client_serial_responses
+        let _ = sm
+            .client_serial_responses
             .insert(data.client.clone(), (data.serial, previous.clone()));
         Ok(ClientResponse(previous))
     }
@@ -271,7 +272,8 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
             let previous = sm
                 .client_status
                 .insert(data.client.clone(), data.status.clone());
-            sm.client_serial_responses
+            let _ = sm
+                .client_serial_responses
                 .insert(data.client.clone(), (data.serial, previous.clone()));
         }
         Ok(())
@@ -312,7 +314,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
                 .map(|entry| entry.term)
                 .ok_or_else(|| anyhow::anyhow!(ERR_INCONSISTENT_LOG))?;
             *log = log.split_off(&last_applied_log);
-            log.insert(
+            let _ = log.insert(
                 last_applied_log,
                 Entry::new_snapshot_pointer(
                     last_applied_log,
@@ -385,7 +387,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
                 }
                 None => log.clear(),
             }
-            log.insert(
+            let _ = log.insert(
                 index,
                 Entry::new_snapshot_pointer(index, term, id, membership_config),
             );

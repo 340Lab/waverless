@@ -243,7 +243,7 @@ impl AsyncRaftModule {
             .regist_rpc::<proto::raft::VoteRequest, proto::raft::VoteResponse, _>(
                 |nid: NodeID, a, task_id, c| {
                     let view = a.logical_modules_view.clone();
-                    tokio::spawn(async move {
+                    let _ = tokio::spawn(async move {
                         tracing::info!(
                             "handling vote request: node:{} task:{} req:{:?}",
                             nid,
@@ -285,7 +285,7 @@ impl AsyncRaftModule {
             .regist_rpc::<proto::raft::AppendEntriesRequest, proto::raft::AppendEntriesResponse, _>(
                 |nid: NodeID, p2p, task_id, req| {
                     let view = p2p.logical_modules_view.clone();
-                    tokio::spawn(async move {
+                    let _ = tokio::spawn(async move {
                         tracing::info!(
                             "handling append entries request: node:{} task:{} req:{:?}",
                             nid,
@@ -357,8 +357,8 @@ impl RaftNetwork<ClientRequest> for RaftRouter {
     /// Send an InstallSnapshot RPC to the target Raft node (§7).
     async fn install_snapshot(
         &self,
-        target: u64,
-        rpc: InstallSnapshotRequest,
+        _target: u64,
+        _rpc: InstallSnapshotRequest,
     ) -> Result<InstallSnapshotResponse> {
         // tracing::info!("install_snapshot: target: {}, rpc: {:?}", target, rpc);
         // ... snip ...

@@ -1,12 +1,12 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap};
 
 use async_trait::async_trait;
-use tokio::task::JoinHandle;
+
 
 use crate::{
     module_iter::*,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -19,7 +19,7 @@ pub struct DataRouterClient {
 }
 
 impl DataRouterClient {
-    pub fn get_route_of_key_range(&self, key: KeyRange) -> WSResult<BTreeMap<KeyRange, NodeID>> {
+    pub fn get_route_of_key_range(&self, _key: KeyRange) -> WSResult<BTreeMap<KeyRange, NodeID>> {
         Ok(BTreeMap::new())
     }
 }

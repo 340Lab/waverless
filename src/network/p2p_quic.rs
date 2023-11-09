@@ -15,31 +15,26 @@
 use async_trait::async_trait;
 
 use parking_lot::{Mutex, RwLock};
-use prost::{bytes::Bytes, Message};
+use prost::bytes::Bytes;
 use qp2p::{Connection, ConnectionIncoming, Endpoint, WireMsg};
 use std::{
-    collections::{HashMap, VecDeque},
-    env,
-    io::Read,
-    net::{Ipv4Addr, SocketAddr},
+    collections::HashMap,
+    net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
     vec,
 };
-use tokio::{select, sync::Notify, task::JoinHandle};
+use tokio::task::JoinHandle;
 use ws_derive::LogicalModule;
 
 use crate::{
     module_iter::*,
-    module_state_trans::ModuleSignal,
     module_view::P2PQuicNodeLMView,
     result::{ErrCvt, WSResult, WsNetworkConnErr, WsSerialErr},
-    sys::{
-        BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID,
-    },
+    sys::{BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -48,15 +43,8 @@ use super::p2p::{MsgId, P2PKernel, P2PModule, TaskId};
 // #[derive(Default, Ord, PartialEq, PartialOrd, Eq, Clone, Copy)]
 // struct XId(pub [u8; 32]);
 
-type ConnectTaskId = usize;
-
 struct P2PQuicNodeLocked {
     sub_tasks: Vec<JoinHandle<()>>,
-}
-
-struct ConnectionStuff {
-    task_end_signal: Option<tokio::sync::broadcast::Sender<()>>,
-    conflict_connection: Option<(Connection, ConnectionIncoming)>,
 }
 
 struct P2PQuicNodeShared {
@@ -70,7 +58,7 @@ struct P2PQuicNodeShared {
 impl P2PQuicNodeShared {
     async fn reserve_peer_conn(&self, peer: SocketAddr) {
         if !self.peer_connections.read().contains_key(&peer) {
-            self.peer_connections.write().insert(
+            let _ = self.peer_connections.write().insert(
                 peer,
                 Arc::new((tokio::sync::RwLock::new(Vec::new()), AtomicUsize::new(0))),
             );
@@ -93,7 +81,7 @@ impl P2PQuicNode {
 
 #[async_trait]
 impl LogicalModule for P2PQuicNode {
-    fn inner_new(mut args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
@@ -182,7 +170,9 @@ impl LogicalModule for P2PQuicNode {
                             new_handle_connection_task(&view, shared.clone(), endpoint.clone(), connection, incoming);
                         }else{
                             // no more connections, system shutdown
-                            shared.btx.send(BroadcastMsg::SysEnd).map_or_else(|v|v,|err|{panic!("rx is still here, error: {:?}",err)});
+                            let _ =shared.btx.send(BroadcastMsg::SysEnd).unwrap_or_else(|err|{
+                                panic!("send to btx failed, error: {:?}",err);
+                            });
                         }
                     }
                     received=rx.recv() => {
@@ -273,18 +263,23 @@ fn new_handle_connection_task(
     shared: Arc<P2PQuicNodeShared>,
     endpoint: Endpoint,
     connection: Connection,
-    mut incoming: ConnectionIncoming,
+    incoming: ConnectionIncoming,
 ) {
     let view = view.clone();
-    tokio::spawn(async move {
-        handle_connection(&view, shared, &endpoint, connection, incoming).await;
-    });
+    shared
+        .clone()
+        .locked
+        .lock()
+        .sub_tasks
+        .push(tokio::spawn(async move {
+            handle_connection(&view, shared, &endpoint, connection, incoming).await;
+        }));
 }
 
 async fn handle_connection(
     view: &P2PQuicNodeLMView,
     shared: Arc<P2PQuicNodeShared>,
-    endpoint: &Endpoint,
+    _endpoint: &Endpoint,
     connection: Connection,
     mut incoming: ConnectionIncoming,
 ) {
@@ -377,7 +372,7 @@ fn serialize_msg_id_task_id(msg_id: MsgId, task_id: TaskId) -> Bytes {
 
 #[async_trait]
 impl P2PKernel for P2PQuicNode {
-    async fn send_for_response(&self, nodeid: NodeID, req_data: Vec<u8>) -> WSResult<Vec<u8>> {
+    async fn send_for_response(&self, _nodeid: NodeID, _req_data: Vec<u8>) -> WSResult<Vec<u8>> {
         Ok(Vec::new())
     }
     async fn send(
