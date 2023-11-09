@@ -51,8 +51,19 @@ struct P2PQuicNodeShared {
     locked: Mutex<P2PQuicNodeLocked>,
     btx: BroadcastSender,
     // shared_connection_map: tokio::sync::Mutex<HashMap<SocketAddr, ConnectionStuff>>,
-    peer_connections:
-        RwLock<HashMap<SocketAddr, Arc<(tokio::sync::RwLock<Vec<Connection>>, AtomicUsize)>>>,
+    peer_connections: RwLock<
+        HashMap<
+            SocketAddr,
+            Arc<(
+                // all the active connections to this peer
+                tokio::sync::RwLock<Vec<Connection>>,
+                // the round robin index for the above vector
+                AtomicUsize,
+                // the number of active connections to this peer, avoid locking the above vector to call len()
+                AtomicUsize,
+            )>,
+        >,
+    >,
 }
 
 impl P2PQuicNodeShared {
@@ -60,7 +71,11 @@ impl P2PQuicNodeShared {
         if !self.peer_connections.read().contains_key(&peer) {
             let _ = self.peer_connections.write().insert(
                 peer,
-                Arc::new((tokio::sync::RwLock::new(Vec::new()), AtomicUsize::new(0))),
+                Arc::new((
+                    tokio::sync::RwLock::new(Vec::new()),
+                    AtomicUsize::new(0),
+                    AtomicUsize::new(0),
+                )),
             );
         }
     }
@@ -308,6 +323,7 @@ async fn handle_connection(
         .clone();
     let conn_id = connection.id();
     peer_conns.0.write().await.push(connection);
+    let _ = peer_conns.2.fetch_add(1, Ordering::Relaxed);
 
     loop {
         let res = incoming.next().await;
@@ -348,6 +364,7 @@ async fn handle_connection(
     }
 
     peer_conns.0.write().await.retain(|v| v.id() != conn_id);
+    let _ = peer_conns.2.fetch_sub(1, Ordering::Relaxed);
 
     // loop over incoming messages
 
@@ -390,10 +407,13 @@ impl P2PKernel for P2PQuicNode {
         };
         if let Some(peer_conns) = peerconns {
             // round robin
-            let all_count = peer_conns.0.read().await.len();
+            let all_count = peer_conns.2.load(Ordering::Relaxed);
             for _ in 0..all_count {
                 // length might change
                 let reading_conns = peer_conns.0.read().await;
+                if reading_conns.len() == 0 {
+                    break;
+                }
                 let idx = peer_conns.1.fetch_add(1, Ordering::Relaxed) % reading_conns.len();
 
                 let bytes = unsafe {
@@ -430,6 +450,7 @@ impl P2PKernel for P2PQuicNode {
             //     ))
             //     .await
             //     .map_err(|err| ErrCvt(err).to_ws_network_conn_err())?;
+            // tracing::info!("active peer conn count {:?}", all_count);
             Err(WsNetworkConnErr::ConnectionExpired(node).into())
         } else {
             Err(WsNetworkConnErr::ConnectionNotEstablished(node).into())
