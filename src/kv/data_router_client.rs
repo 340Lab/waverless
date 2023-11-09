@@ -35,7 +35,7 @@ impl LogicalModule for DataRouterClient {
             name: args.parent_name.clone(),
         }
     }
-    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+    async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         Ok(vec![])
     }
     fn name(&self) -> &str {

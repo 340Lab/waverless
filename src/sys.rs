@@ -9,15 +9,12 @@ use tokio::{select, task::JoinHandle};
 
 use crate::{
     kv::{
-        data_router::DataRouter,
-        data_router_client::DataRouterClient,
-        dist_kv_raft::{tikvraft_proxy::TiKVRaftModule, RaftDistKV},
+        data_router::DataRouter, data_router_client::DataRouterClient, dist_kv_raft::RaftDistKV,
         kv_client::KVClient,
     },
     module_iter::LogicalModuleParent,
     network::{
-        p2p::{self, P2PModule, P2P},
-        p2p_client::{self, P2PClient},
+        p2p::{self, P2PKernel, P2PModule},
         p2p_quic::P2PQuicNode,
     },
     result::WSResult,
@@ -43,8 +40,8 @@ impl Sys {
         }
     }
     pub async fn wait_for_end(&self) {
-        if let Err(err) = self.logical_modules.start(self) {
-            // log::error!("start logical nodes error: {:?}", err);
+        if let Err(err) = self.logical_modules.start(self).await {
+            tracing::error!("start logical nodes error: {:?}", err);
         }
         for task in self.sub_tasks.borrow_mut().iter_mut() {
             task.join().await;
@@ -52,14 +49,14 @@ impl Sys {
     }
 }
 
-pub type NodeID = usize;
+pub type NodeID = u32;
 
 pub struct LogicalNodeConfig {
     as_scheduler: bool,
     as_data_router: bool,
     as_kv: bool,
-    peers: Vec<SocketAddr>,
-    this: SocketAddr,
+    peers: Vec<(SocketAddr, NodeID)>,
+    this: (SocketAddr, NodeID),
 }
 
 #[derive(Clone)]
@@ -67,7 +64,7 @@ pub struct LogicalModuleNewArgs {
     pub parent_name: String,
     pub btx: BroadcastSender,
     pub logical_models: Option<Weak<LogicalModules>>,
-    pub peers_this: Option<(Vec<SocketAddr>, SocketAddr)>,
+    pub peers_this: Option<(Vec<(SocketAddr, NodeID)>, (SocketAddr, NodeID))>,
 }
 
 impl LogicalModuleNewArgs {
@@ -77,12 +74,12 @@ impl LogicalModuleNewArgs {
     }
 }
 
-// #[async_trait]
+#[async_trait]
 pub trait LogicalModule {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized;
-    fn start(&self) -> WSResult<Vec<JoinHandleWrapper>>;
+    async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>>;
 
     fn name(&self) -> &str;
 
@@ -103,8 +100,8 @@ pub struct LogicalModules {
     pub kv_client: KVClient, // each module need a kv service
     #[sub]
     pub data_router_client: DataRouterClient, // kv_client_need a data_router service
-    #[sub]
-    pub p2p_client: P2PClient, // modules need a client to call p2p service
+    // #[sub]
+    // pub p2p_client: P2PClient, // modules need a client to call p2p service
     #[parent]
     pub p2p: P2PModule, // network basic service
     // pub scheduler_node: Option<SchedulerNode>, // scheduler service
@@ -140,7 +137,7 @@ impl LogicalModules {
         } else {
             None
         };
-        let p2p_client = P2PClient::new(args.clone());
+
         let kv_client = KVClient::new(args.clone());
         let data_router_client = DataRouterClient::new(args.clone());
 
@@ -163,8 +160,7 @@ impl LogicalModules {
         let arc = LogicalModules {
             kv_client,
             data_router_client,
-            p2p_client,
-
+            // p2p_client,
             p2p,
             // scheduler_node,
             data_router,
@@ -183,20 +179,24 @@ impl LogicalModules {
         arc
     }
 
-    pub fn start(&self, sys: &Sys) -> WSResult<()> {
+    pub async fn start(&self, sys: &Sys) -> WSResult<()> {
         if let Some(data_router) = &self.data_router {
-            sys.sub_tasks.borrow_mut().append(&mut data_router.start()?);
+            sys.sub_tasks
+                .borrow_mut()
+                .append(&mut data_router.start().await?);
         }
         sys.sub_tasks
             .borrow_mut()
-            .append(&mut self.data_router_client.start()?);
-        sys.sub_tasks.borrow_mut().append(&mut self.p2p.start()?);
+            .append(&mut self.data_router_client.start().await?);
         sys.sub_tasks
             .borrow_mut()
-            .append(&mut self.p2p_client.start()?);
+            .append(&mut self.p2p.start().await?);
+        // sys.sub_tasks
+        //     .borrow_mut()
+        //     .append(&mut self.p2p_client.start().await?);
         sys.sub_tasks
             .borrow_mut()
-            .append(&mut self.kv_client.start()?);
+            .append(&mut self.kv_client.start().await?);
         Ok(())
     }
 }
