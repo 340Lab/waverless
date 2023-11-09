@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-use crate::sys::{LogicalModule, LogicalModules};
+use crate::sys::{LogicalModule};
 pub use ws_derive::{LogicalModule, LogicalModuleParent};
 
 pub struct ModuleIter<'a, P: LogicalModuleParent<'a>> {

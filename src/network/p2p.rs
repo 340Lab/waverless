@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU32, Ordering},
         Arc,
     },
     time::Duration,
@@ -13,19 +13,17 @@ use super::{
     p2p_quic::P2PQuicNode,
 };
 use crate::{
-    kv::data_router::{self, DataRouter},
     module_iter::*,
     module_state_trans::ModuleSignal,
-    module_view::{self, P2PModuleLMView},
-    network::proto,
-    result::{ErrCvt, NotMatchNodeErr, WSError, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID},
+    module_view::P2PModuleLMView,
+    result::{ErrCvt, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
+    sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
 };
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use prost::{bytes::Bytes, Message};
+use prost::bytes::Bytes;
 
 pub type TaskId = u32;
 pub type MsgId = u32;
@@ -186,9 +184,11 @@ impl P2PModule {
         let taskid: TaskId = self.next_task_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = tokio::sync::oneshot::channel::<Box<dyn MsgPack>>();
         if self.rpc_holder.read().get(&(r.msg_id(), node_id)).is_none() {
-            self.rpc_holder
+            let res = self
+                .rpc_holder
                 .write()
                 .insert((r.msg_id(), node_id), Default::default());
+            assert!(res.is_none());
         }
         let inner_lock = self
             .rpc_holder
@@ -196,7 +196,7 @@ impl P2PModule {
             .get(&(r.msg_id(), node_id))
             .unwrap()
             .clone();
-        let hold_lock = inner_lock.lock().await;
+        let _hold_lock = inner_lock.lock().await;
         // tracing::info!("holding lock msg:{} node:{}", r.msg_id(), node_id);
 
         assert!(self
@@ -216,7 +216,11 @@ impl P2PModule {
                 }
             }
             Err(err) => {
-                self.waiting_tasks.write().remove(&(taskid, node_id));
+                let _ = self
+                    .waiting_tasks
+                    .write()
+                    .remove(&(taskid, node_id))
+                    .unwrap();
                 // tracing::info!("1stop holding lock msg:{} node:{}", r.msg_id(), node_id);
                 return Err(err);
             }
@@ -232,7 +236,8 @@ impl P2PModule {
                 panic!("waiting for response failed: {:?}", err);
             }),
             Err(err) => {
-                self.waiting_tasks.write().remove(&(taskid, node_id));
+                // maybe removed or not
+                let _ = self.waiting_tasks.write().remove(&(taskid, node_id));
                 // let _ = self.p2p_kernel.close(node_id).await;
                 if node_id == 3 {
                     tracing::warn!("rpc timeout: {:?} to node {}", err, node_id);

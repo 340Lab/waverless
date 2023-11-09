@@ -10,12 +10,12 @@ use super::{
 use crate::{
     module_iter::*,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, Sys},
+    sys::{LogicalModule, LogicalModuleNewArgs, Sys},
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::task::JoinHandle;
+
+
 
 pub type RaftModule = async_raft_proxy::AsyncRaftModule;
 
@@ -51,14 +51,14 @@ impl LogicalModule for RaftDistKV {
 
 #[async_trait]
 impl DistKV for RaftDistKV {
-    async fn get<'a>(&'a self, sys: &Sys, key_range: KeyRange<'a>) -> WSResult<Option<Vec<u8>>> {
+    async fn get<'a>(&'a self, _sys: &Sys, _key_range: KeyRange<'a>) -> WSResult<Option<Vec<u8>>> {
         Ok(None)
     }
     async fn set(
         &self,
-        sys: &Sys,
-        kvs: Vec<(Vec<u8>, Vec<u8>)>,
-        opts: SetOptions,
+        _sys: &Sys,
+        _kvs: Vec<(Vec<u8>, Vec<u8>)>,
+        _opts: SetOptions,
     ) -> WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> {
         Ok(None)
     }

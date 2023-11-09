@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::{
     module_view::RaftModuleLMView,
-    network::{p2p::P2PKernel, proto},
     result::{ErrCvt, WSResult},
     sys::{LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
@@ -13,7 +12,7 @@ pub mod storage;
 
 use self::storage::{ClientRequest, ClientResponse};
 use crate::sys::LogicalModule;
-use async_raft::{raft::VoteRequest, Config, Raft};
+use async_raft::{Config, Raft};
 use async_trait::async_trait;
 use network::RaftRouter;
 use parking_lot::RwLock;
@@ -67,7 +66,7 @@ impl LogicalModule for AsyncRaftModule {
         // runs the Raft core logic. Keep this Raft instance around
         // for calling API methods based on events in your app.
         let raft = Raft::new(node_id as u64, config, network, storage);
-        self.raft_module.write().replace(raft);
+        assert!(self.raft_module.write().replace(raft).is_none());
 
         self.regist_rpc();
         self.raft()

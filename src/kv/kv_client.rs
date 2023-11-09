@@ -1,12 +1,12 @@
-use std::{collections::BTreeMap, sync::Arc};
+
 
 use async_trait::async_trait;
-use tokio::task::JoinHandle;
+
 
 use crate::{
     module_iter::*,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModules, NodeID, Sys},
+    sys::{LogicalModule, LogicalModuleNewArgs, NodeID, Sys},
     util::JoinHandleWrapper,
 };
 
@@ -23,18 +23,18 @@ pub struct KVClient {
 impl KVClient {
     pub fn get(
         &self,
-        sys: &Sys,
-        node_id: NodeID,
-        key_range: KeyRange,
+        _sys: &Sys,
+        _node_id: NodeID,
+        _key_range: KeyRange,
     ) -> WSResult<Option<Vec<u8>>> {
         Ok(None)
     }
     pub fn set(
         &self,
-        sys: &Sys,
-        node_id: NodeID,
-        kvs: &[(&[u8], &[u8])],
-        opts: SetOptions,
+        _sys: &Sys,
+        _node_id: NodeID,
+        _kvs: &[(&[u8], &[u8])],
+        _opts: SetOptions,
     ) -> WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> {
         Ok(None)
     }
@@ -60,7 +60,7 @@ impl LogicalModule for KVClient {
 
 #[async_trait]
 impl DistKV for KVClient {
-    async fn get<'a>(&'a self, sys: &Sys, key_range: KeyRange<'a>) -> WSResult<Option<Vec<u8>>> {
+    async fn get<'a>(&'a self, _sys: &Sys, _key_range: KeyRange<'a>) -> WSResult<Option<Vec<u8>>> {
         // 1. get the node id of the key by DataRouterClientNode
         // let routemap: BTreeMap<KeyRange, NodeID> = sys
         //     .logical_nodes
@@ -73,9 +73,9 @@ impl DistKV for KVClient {
     }
     async fn set(
         &self,
-        sys: &Sys,
-        kvs: Vec<(Vec<u8>, Vec<u8>)>,
-        opts: SetOptions,
+        _sys: &Sys,
+        _kvs: Vec<(Vec<u8>, Vec<u8>)>,
+        _opts: SetOptions,
     ) -> WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>> {
         Ok(None)
     }

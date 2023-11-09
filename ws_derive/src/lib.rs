@@ -1,8 +1,15 @@
-use std::fmt::format;
+#![allow(clippy::all)]
+#![deny(
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    clippy::unnecessary_mut_passed,
+    unused_results
+)]
 
 use proc_macro::{self, TokenStream};
-use quote::{format_ident, quote};
-use syn::{parse_macro_input, Attribute, DeriveInput, Type};
+use quote::quote;
+use syn::{parse_macro_input, DeriveInput, Type};
 
 fn path_is_option(path: &syn::Path) -> bool {
     path.segments.len() == 1 && path.segments[0].ident == "Option"
@@ -23,7 +30,7 @@ pub fn logical_module_parent_macro_derive(input: TokenStream) -> TokenStream {
             let mut is_sub = false;
             let mut is_parent = false;
 
-            let mut subtype = 0;
+            // let mut subtype = 0;
             if f.attrs
                 .iter()
                 .find(|v| v.path.segments[0].ident.to_string() == "sub")
@@ -153,7 +160,7 @@ pub fn logical_module_parent_macro_derive(input: TokenStream) -> TokenStream {
         }
     }
 
-    let iter_name = format_ident!("Iterator{}", ident);
+    // let iter_name = format_ident!("Iterator{}", ident);
 
     // 实现 comment 方法
     let output = quote! {

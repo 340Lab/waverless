@@ -1,11 +1,16 @@
+#![allow(clippy::all)]
+#![deny(
+    unused_imports,
+    unused_variables,
+    unused_mut,
+    clippy::unnecessary_mut_passed,
+    unused_results
+)]
+
 use clap::Parser;
 use cmd_arg::CmdArgs;
-use kv::dist_kv_raft;
+
 use sys::Sys;
-use tokio::task::block_in_place;
-use tracing_subscriber::{
-    prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
-};
 
 #[macro_use]
 pub mod module_view;

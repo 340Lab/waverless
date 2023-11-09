@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+qp2p = "0.36.4"                                     #{ path = "qp2p" }                           
+tokio = { version = "1.32.0", features = ["full"] }
 thiserror = "1.0.50"
 async-trait = "0.1.74"
-qp2p = { path = "qp2p" }                            #"0.36.4"
-tokio = { version = "1.32.0", features = ["full"] }
 prost = "0.11"
 parking_lot = "0.11.1"
 # raft = { version = "0.7.0", default-features = false, features = [
