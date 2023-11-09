@@ -71,7 +71,7 @@ macro_rules! logical_modules_view {
                 }
             }
             impl $t{
-                #[must_use]
+
                 pub fn setup_logical_modules_view(&self, logical_modules: std::sync::Weak<LogicalModules>){
                     unsafe {
                         *self.logical_modules_view.inner.get() = Some(logical_modules);
@@ -88,7 +88,9 @@ macro_rules! logical_modules_view {
 // every module should be seen
 logical_modules_view_iter!(P2PModule, data_router, Option<DataRouter>);
 logical_modules_view!(P2PModule, p2p, P2PModule);
+
 logical_modules_view!(P2PQuicNode, p2p, P2PModule);
+
 logical_modules_view!(RaftModule, p2p, P2PModule);
 
 pub fn setup_views(arc: &Arc<LogicalModules>) {
