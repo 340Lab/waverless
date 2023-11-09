@@ -11,6 +11,9 @@ use clap::Parser;
 use cmd_arg::CmdArgs;
 
 use sys::Sys;
+use tracing_subscriber::{
+    prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
+};
 
 #[macro_use]
 pub mod module_view;
@@ -30,38 +33,39 @@ pub mod util;
 
 #[tokio::main]
 async fn main() {
-    // let my_filter = tracing_subscriber::filter::filter_fn(|v| {
-    //     // println!("{}", v.module_path().unwrap());
-    //     // println!("{}", v.name());
-    //     // if v.module_path().unwrap().contains("quinn_proto") {
-    //     //     return false;
-    //     // }
+    let my_filter = tracing_subscriber::filter::filter_fn(|v| {
+        // println!("{}", v.module_path().unwrap());
+        // println!("{}", v.name());
+        // if v.module_path().unwrap().contains("quinn_proto") {
+        //     return false;
+        // }
 
-    //     // if v.module_path().unwrap().contains("qp2p::wire_msg") {
-    //     //     return false;
-    //     // }
+        // if v.module_path().unwrap().contains("qp2p::wire_msg") {
+        //     return false;
+        // }
 
-    //     // println!("{}", v.target());
-    //     if v.module_path().unwrap().contains("async_raft") {
-    //         return false;
-    //     }
+        // println!("{}", v.target());
+        // if v.module_path().unwrap().contains("async_raft") {
+        //     return false;
+        // }
 
-    //     // if v.module_path().unwrap().contains("less::network::p2p") {
-    //     //     return false;
-    //     // }
+        // if v.module_path().unwrap().contains("less::network::p2p") {
+        //     return false;
+        // }
 
-    //     v.level() == &tracing::Level::ERROR
-    //         || v.level() == &tracing::Level::WARN
-    //         || v.level() == &tracing::Level::INFO
-    //     // v.level() != &tracing::Level::TRACE //&& v.level() != &tracing::Level::INFO
-    //     // true
-    // });
-    // let my_layer = tracing_subscriber::fmt::layer();
-    // tracing_subscriber::registry()
-    //     .with(my_layer.with_filter(my_filter))
-    //     .init();
+        // v.level() == &tracing::Level::ERROR
+        //     || v.level() == &tracing::Level::WARN
+        //     || v.level() == &tracing::Level::INFO
+        // v.level() == &tracing::Level::TRACE
+        v.level() == &tracing::Level::INFO
+        // true
+    });
+    let my_layer = tracing_subscriber::fmt::layer();
+    tracing_subscriber::registry()
+        .with(my_layer.with_filter(my_filter))
+        .init();
 
-    tracing_subscriber::fmt::init();
+    // tracing_subscriber::fmt::init();
 
     let args = CmdArgs::parse();
     let config = config::read_config(args.config_file);

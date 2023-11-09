@@ -244,16 +244,16 @@ impl AsyncRaftModule {
                 |nid: NodeID, a, task_id, c| {
                     let view = a.logical_modules_view.clone();
                     let _ = tokio::spawn(async move {
-                        tracing::info!(
-                            "handling vote request: node:{} task:{} req:{:?}",
-                            nid,
-                            task_id,
-                            c
-                        );
+                        // tracing::info!(
+                        //     "handling vote request: node:{} task:{} req:{:?}",
+                        //     nid,
+                        //     task_id,
+                        //     c
+                        // );
                         if let Some(router) = view.data_router() {
                             match router.raft_kv.raft_module.raft().vote(c.into()).await {
                                 Ok(res) => {
-                                    tracing::info!("handled vote request success: {:?}", res);
+                                    // tracing::info!("handled vote request success: {:?}", res);
                                     if let Err(err) = view
                                         .p2p()
                                         .send_resp(
@@ -286,12 +286,12 @@ impl AsyncRaftModule {
                 |nid: NodeID, p2p, task_id, req| {
                     let view = p2p.logical_modules_view.clone();
                     let _ = tokio::spawn(async move {
-                        tracing::info!(
-                            "handling append entries request: node:{} task:{} req:{:?}",
-                            nid,
-                            task_id,
-                            req
-                        );
+                        // tracing::info!(
+                        //     "handling append entries request: node:{} task:{} req:{:?}",
+                        //     nid,
+                        //     task_id,
+                        //     req
+                        // );
                         if let Some(router) = view.data_router() {
                             match router
                                 .raft_kv
@@ -301,10 +301,10 @@ impl AsyncRaftModule {
                                 .await
                             {
                                 Ok(res) => {
-                                    tracing::info!(
-                                        "handled append entries request success: {:?}",
-                                        res
-                                    );
+                                    // tracing::info!(
+                                    //     "handled append entries request success: {:?}",
+                                    //     res
+                                    // );
                                     if let Err(err) = view
                                         .p2p()
                                         .send_resp(

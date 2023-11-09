@@ -55,7 +55,7 @@ impl LogicalModule for AsyncRaftModule {
         // RaftNetwork & RaftStorage impls.
         let config = Arc::new(
             Config::build("primary-raft-group".into())
-                // .heartbeat_interval(100)
+                .heartbeat_interval(100)
                 .validate()
                 .expect("failed to build Raft config"),
         );
