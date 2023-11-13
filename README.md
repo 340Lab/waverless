@@ -32,6 +32,8 @@ An distributed serverless framework based on wasm runtime.
 ### Wasm
 - [WasmEdge](https://wasmedge.org/)
 
+  `curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- -v 0.13.2`
+
 ### KV for route
 - async-raft
 
@@ -39,3 +41,11 @@ An distributed serverless framework based on wasm runtime.
 - Router cluster with raft for load balancing.
 - Erasure coding for reliability.
 
+## Dev Guide
+- Code counter
+
+  `tokei src`
+
+
+## Notes
+- `source /Users/hello/.zshenv`

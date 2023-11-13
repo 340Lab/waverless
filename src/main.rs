@@ -23,6 +23,7 @@ pub mod error_collector;
 mod kv;
 // pub mod module_iter;
 // pub mod module_state_trans;
+pub mod http_handler;
 pub mod network;
 pub mod result;
 mod sys;
