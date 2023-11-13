@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    module_view::RaftModuleLMView,
     result::{ErrCvt, WSResult},
-    sys::{LogicalModuleNewArgs, NodeID},
+    sys::{LogicalModuleNewArgs, MetaKVView, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -24,8 +23,7 @@ pub type MemRaft = Raft<ClientRequest, ClientResponse, RaftRouter, MemStore>;
 
 #[derive(LogicalModule)]
 pub struct AsyncRaftModule {
-    name: String,
-    pub logical_modules_view: RaftModuleLMView,
+    view: MetaKVView,
     raft_module: RwLock<Option<MemRaft>>,
 }
 
@@ -37,20 +35,19 @@ impl AsyncRaftModule {
 
 #[async_trait]
 impl LogicalModule for AsyncRaftModule {
-    fn inner_new(mut args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        args.expand_parent_name(Self::self_name());
         Self {
-            logical_modules_view: RaftModuleLMView::new(),
-            name: args.parent_name,
+            view: MetaKVView::new(args.logical_modules_ref.clone()),
             raft_module: RwLock::new(None),
         }
     }
 
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        let node_id: NodeID = self.logical_modules_view.p2p().this_node.1;
+        tracing::info!("start");
+        let node_id: NodeID = self.view.p2p().nodes_config.this.0;
         // Build our Raft runtime config, then instantiate our
         // RaftNetwork & RaftStorage impls.
         let config = Arc::new(
@@ -59,8 +56,11 @@ impl LogicalModule for AsyncRaftModule {
                 .validate()
                 .expect("failed to build Raft config"),
         );
-        let network = Arc::new(RaftRouter::new(self.logical_modules_view.clone()));
-        let storage = Arc::new(MemStore::new(node_id as u64));
+        let network = Arc::new(RaftRouter::new(self.view.clone()));
+        let storage: Arc<MemStore> = {
+            let view = self.view.clone();
+            Arc::new(MemStore::new(node_id as u64, view))
+        };
 
         // Create a new Raft node, which spawns an async task which
         // runs the Raft core logic. Keep this Raft instance around
@@ -71,11 +71,12 @@ impl LogicalModule for AsyncRaftModule {
         self.regist_rpc();
         self.raft()
             .initialize(
-                self.logical_modules_view
+                self.view
                     .p2p()
-                    .nodeid2addr
+                    .nodes_config
+                    .get_meta_kv_nodes()
                     .iter()
-                    .map(|(nid, _)| *nid as u64)
+                    .map(|&p| p as u64)
                     .collect(),
             )
             .await
@@ -100,9 +101,5 @@ impl LogicalModule for AsyncRaftModule {
         //     new_tick_thread(view, rx, waiter);
         // });
         Ok(vec![])
-    }
-
-    fn name(&self) -> &str {
-        &self.name
     }
 }

@@ -1,6 +1,14 @@
 // We use anyhow::Result in our impl below.
-use super::{storage::ClientRequest, AsyncRaftModule};
-use crate::{module_view::RaftModuleLMView, network::proto, result::WSError, sys::NodeID};
+use super::{
+    storage::{ClientRequest, OpeType},
+    AsyncRaftModule,
+};
+use crate::{
+    kv::raft_kv::RaftKVNode,
+    network::proto,
+    result::WSError,
+    sys::{MetaKVView, NodeID},
+};
 use anyhow::Result;
 use async_raft::{
     raft::{
@@ -15,11 +23,11 @@ use async_trait::async_trait;
 /// A type which emulates a network transport and implements the `RaftNetwork` trait.
 pub struct RaftRouter {
     // ... some internal state ...
-    view: RaftModuleLMView,
+    view: MetaKVView,
 }
 
 impl RaftRouter {
-    pub fn new(view: RaftModuleLMView) -> Self {
+    pub fn new(view: MetaKVView) -> Self {
         Self { view }
     }
 }
@@ -60,6 +68,8 @@ impl From<proto::raft::log_entry::EntryNormal> for EntryNormal<ClientRequest> {
                 client: v.client,
                 serial: v.serial,
                 status: v.status,
+                ope_type: OpeType::Delete,
+                operation: vec![],
             },
         }
     }
@@ -238,53 +248,50 @@ impl From<AppendEntriesResponse> for proto::raft::AppendEntriesResponse {
 
 impl AsyncRaftModule {
     pub fn regist_rpc(&self) {
-        self.logical_modules_view
-            .p2p()
-            .regist_rpc::<proto::raft::VoteRequest, proto::raft::VoteResponse, _>(
-                |nid: NodeID, a, task_id, c| {
-                    let view = a.logical_modules_view.clone();
-                    let _ = tokio::spawn(async move {
-                        // tracing::info!(
-                        //     "handling vote request: node:{} task:{} req:{:?}",
-                        //     nid,
-                        //     task_id,
-                        //     c
-                        // );
-                        if let Some(router) = view.data_router() {
-                            match router.raft_kv.raft_module.raft().vote(c.into()).await {
-                                Ok(res) => {
-                                    // tracing::info!("handled vote request success: {:?}", res);
-                                    if let Err(err) = view
-                                        .p2p()
-                                        .send_resp(
-                                            nid,
-                                            task_id,
-                                            proto::raft::VoteResponse::from(res),
-                                        )
-                                        .await
-                                    {
-                                        tracing::error!("send vote response error: {:?}", err);
-                                    }
-                                }
-                                Err(err) => {
-                                    tracing::error!("handle vote request error: {:?}", err);
+        let self_view = self.view.clone();
+        self.view.p2p().regist_rpc::<proto::raft::VoteRequest, _>(
+            move |nid: NodeID, _p2p, task_id, c| {
+                let self_view = self_view.clone();
+                let _ = tokio::spawn(async move {
+                    // tracing::info!(
+                    //     "handling vote request: node:{} task:{} req:{:?}",
+                    //     nid,
+                    //     task_id,
+                    //     c
+                    // );
+                    if let Some(raft_meta) = self_view.meta_kv() {
+                        let reft_meta = raft_meta.downcast_ref::<RaftKVNode>().unwrap();
+                        match reft_meta.raft_inner.raft().vote(c.into()).await {
+                            Ok(res) => {
+                                // tracing::info!("handled vote request success: {:?}", res);
+                                if let Err(err) = self_view
+                                    .p2p()
+                                    .send_resp(nid, task_id, proto::raft::VoteResponse::from(res))
+                                    .await
+                                {
+                                    tracing::error!("send vote response error: {:?}", err);
                                 }
                             }
-                        } else {
-                            tracing::error!(
-                                "raft module is in data router, but data router is not set"
-                            );
+                            Err(err) => {
+                                tracing::error!("handle vote request error: {:?}", err);
+                            }
                         }
-                    });
+                    } else {
+                        tracing::error!(
+                            "raft module is in data router, but data router is not set"
+                        );
+                    }
+                });
 
-                    Ok(())
-                },
-            );
-        self.logical_modules_view
+                Ok(())
+            },
+        );
+        let self_view = self.view.clone();
+        self.view
             .p2p()
-            .regist_rpc::<proto::raft::AppendEntriesRequest, proto::raft::AppendEntriesResponse, _>(
-                |nid: NodeID, p2p, task_id, req| {
-                    let view = p2p.logical_modules_view.clone();
+            .regist_rpc::<proto::raft::AppendEntriesRequest, _>(
+                move |nid: NodeID, _p2p, task_id, req| {
+                    let self_view = self_view.clone();
                     let _ = tokio::spawn(async move {
                         // tracing::info!(
                         //     "handling append entries request: node:{} task:{} req:{:?}",
@@ -292,20 +299,15 @@ impl AsyncRaftModule {
                         //     task_id,
                         //     req
                         // );
-                        if let Some(router) = view.data_router() {
-                            match router
-                                .raft_kv
-                                .raft_module
-                                .raft()
-                                .append_entries(req.into())
-                                .await
-                            {
+                        if let Some(raft_meta) = self_view.meta_kv() {
+                            let reft_meta = raft_meta.downcast_ref::<RaftKVNode>().unwrap();
+                            match reft_meta.raft_inner.raft().append_entries(req.into()).await {
                                 Ok(res) => {
                                     // tracing::info!(
                                     //     "handled append entries request success: {:?}",
                                     //     res
                                     // );
-                                    if let Err(err) = view
+                                    if let Err(err) = self_view
                                         .p2p()
                                         .send_resp(
                                             nid,

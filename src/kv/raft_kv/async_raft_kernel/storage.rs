@@ -6,13 +6,27 @@ use async_raft::async_trait::async_trait;
 use async_raft::raft::{Entry, EntryPayload, MembershipConfig};
 use async_raft::storage::{CurrentSnapshotData, HardState, InitialState};
 use async_raft::{AppData, AppDataResponse, NodeId, RaftStorage};
+use prost::Message;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 
+use crate::kv::dist_kv::SetOptions;
+use crate::network::proto;
+use crate::network::proto::kv::kv_request::{KvDeleteRequest, KvPutRequest};
+use crate::network::proto::kv::{KeyRange, KvPairs};
+use crate::sys::MetaKVView;
+
 const ERR_INCONSISTENT_LOG: &str =
     "a query was received which was expecting data to be in place which does not exist in the log";
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum OpeType {
+    Set,
+    Delete,
+}
 
 /// The application data request type which the `MemStore` works with.
 ///
@@ -28,6 +42,23 @@ pub struct ClientRequest {
     /// be an enum representing all of the various types of requests / operations which a client
     /// can perform.
     pub status: String,
+
+    pub ope_type: OpeType,
+
+    pub operation: Vec<u8>,
+}
+
+impl ClientRequest {
+    pub fn proto_ope(&self) -> proto::kv::kv_request::Op {
+        match self.ope_type {
+            OpeType::Set => proto::kv::kv_request::Op::Set(KvPutRequest {
+                kvs: KvPairs::decode(self.operation.as_slice()).unwrap().into(),
+            }),
+            OpeType::Delete => proto::kv::kv_request::Op::Delete(KvDeleteRequest {
+                range: Some(KeyRange::decode(self.operation.as_slice()).unwrap()),
+            }),
+        }
+    }
 }
 
 impl AppData for ClientRequest {}
@@ -80,11 +111,12 @@ pub struct MemStore {
     hs: RwLock<Option<HardState>>,
     /// The current snapshot.
     current_snapshot: RwLock<Option<MemStoreSnapshot>>,
+    view: MetaKVView,
 }
 
 impl MemStore {
     /// Create a new `MemStore` instance.
-    pub fn new(id: NodeId) -> Self {
+    pub fn new(id: NodeId, view: MetaKVView) -> Self {
         let log = RwLock::new(BTreeMap::new());
         let sm = RwLock::new(MemStoreStateMachine::default());
         let hs = RwLock::new(None);
@@ -95,30 +127,31 @@ impl MemStore {
             sm,
             hs,
             current_snapshot,
+            view,
         }
     }
 
     /// Create a new `MemStore` instance with some existing state (for testing).
-    #[cfg(test)]
-    pub fn new_with_state(
-        id: NodeId,
-        log: BTreeMap<u64, Entry<ClientRequest>>,
-        sm: MemStoreStateMachine,
-        hs: Option<HardState>,
-        current_snapshot: Option<MemStoreSnapshot>,
-    ) -> Self {
-        let log = RwLock::new(log);
-        let sm = RwLock::new(sm);
-        let hs = RwLock::new(hs);
-        let current_snapshot = RwLock::new(current_snapshot);
-        Self {
-            id,
-            log,
-            sm,
-            hs,
-            current_snapshot,
-        }
-    }
+    // #[cfg(test)]
+    // pub fn new_with_state(
+    //     id: NodeId,
+    //     log: BTreeMap<u64, Entry<ClientRequest>>,
+    //     sm: MemStoreStateMachine,
+    //     hs: Option<HardState>,
+    //     current_snapshot: Option<MemStoreSnapshot>,
+    // ) -> Self {
+    //     let log = RwLock::new(log);
+    //     let sm = RwLock::new(sm);
+    //     let hs = RwLock::new(hs);
+    //     let current_snapshot = RwLock::new(current_snapshot);
+    //     Self {
+    //         id,
+    //         log,
+    //         sm,
+    //         hs,
+    //         current_snapshot,
+    //     }
+    // }
 
     /// Get a handle to the log for testing purposes.
     pub async fn get_log(&self) -> RwLockWriteGuard<'_, BTreeMap<u64, Entry<ClientRequest>>> {
@@ -237,6 +270,24 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         Ok(())
     }
 
+    /// Apply the given log entry to the state machine.
+    ///
+    /// The Raft protocol guarantees that only logs which have been _committed_, that is, logs which
+    /// have been replicated to a majority of the cluster, will be applied to the state machine.
+    ///
+    /// This is where the business logic of interacting with your application's state machine
+    /// should live. This is 100% application specific. Perhaps this is where an application
+    /// specific transaction is being started, or perhaps committed. This may be where a key/value
+    /// is being stored. This may be where an entry is being appended to an immutable log.
+    ///
+    /// Error handling for this method is note worthy. If an error is returned from a call to this
+    /// method, the error will be inspected, and if the error is an instance of
+    /// `RaftStorage::ShutdownError`, then Raft will go into shutdown in order to preserve the
+    /// safety of the data and avoid corruption. Any other errors will be propagated back up to the
+    /// `Raft.client_write` call point.
+    ///
+    /// It is important to note that even in cases where an application specific error is returned,
+    /// implementations should still record that the entry has been applied to the state machine.
     #[tracing::instrument(level = "trace", skip(self, data))]
     async fn apply_entry_to_state_machine(
         &self,
@@ -244,19 +295,48 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         data: &ClientRequest,
     ) -> Result<ClientResponse> {
         let mut sm = self.sm.write().await;
-        sm.last_applied_log = *index;
-        if let Some((serial, res)) = sm.client_serial_responses.get(&data.client) {
-            if serial == &data.serial {
-                return Ok(ClientResponse(res.clone()));
+        // persist logs from [last_applied_log+1,index]
+        // {
+        //     let log = self.log.read().await;
+        //     for (_log_idx, entry) in log.range(sm.last_applied_log + 1..*index + 1) {
+        //         let kvs = entry.payload;
+        match data.proto_ope() {
+            proto::kv::kv_request::Op::Set(kvs) => {
+                let _ = self
+                    .view
+                    .local_kv()
+                    .as_ref()
+                    .unwrap()
+                    .set(
+                        kvs.clone().kvs.unwrap().kvs,
+                        SetOptions { consistent: true },
+                    )
+                    .await;
+
+                tracing::info!(
+                    "node {} set {:?}",
+                    self.view.p2p().nodes_config.this.0,
+                    kvs.clone().kvs.unwrap().kvs
+                );
             }
+            _ => {}
         }
-        let previous = sm
-            .client_status
-            .insert(data.client.clone(), data.status.clone());
-        let _ = sm
-            .client_serial_responses
-            .insert(data.client.clone(), (data.serial, previous.clone()));
-        Ok(ClientResponse(previous))
+        // }
+        // }
+
+        sm.last_applied_log = *index;
+        // if let Some((serial, res)) = sm.client_serial_responses.get(&data.client) {
+        //     if serial == &data.serial {
+        //         return Ok(ClientResponse(res.clone()));
+        //     }
+        // }
+        // let previous = sm
+        //     .client_status
+        //     .insert(data.client.clone(), data.status.clone());
+        // let _ = sm
+        //     .client_serial_responses
+        //     .insert(data.client.clone(), (data.serial, previous.clone()));
+        Ok(ClientResponse(None))
     }
 
     #[tracing::instrument(level = "trace", skip(self, entries))]

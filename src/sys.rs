@@ -1,42 +1,49 @@
-use crate::{config::Config, module_iter::*, module_view::setup_views};
-use async_trait::async_trait;
-use std::{
-    cell::RefCell,
-    net::SocketAddr,
-    sync::{Arc, Weak},
-};
-
 use crate::{
-    kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KVClient},
-    module_iter::LogicalModuleParent,
+    config::NodesConfig,
+    kv::{
+        dist_kv::KVNode,
+        kv_client::{local_kv_client::LocalKVClient, meta_kv_client::MetaKVClient, KVClient},
+        local_kv::local_kv::LocalKVNode,
+        raft_kv::RaftKVNode,
+        // raft_kv::RaftKVNode,
+    },
     network::p2p::P2PModule,
+    // module_iter::*,
+    // module_view::setup_views,
+};
+use crate::{
+    // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KVClient},
+    // module_iter::LogicalModuleParent,
+    // network::p2p::P2PModule,
     result::WSResult,
     util::JoinHandleWrapper,
 };
+use async_trait::async_trait;
+use lazy_static::lazy_static;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Weak,
+};
+use tokio::sync::Mutex;
 
 pub struct Sys {
     pub logical_modules: Arc<LogicalModules>,
-    sub_tasks: RefCell<Vec<JoinHandleWrapper>>,
+    sub_tasks: Mutex<Vec<JoinHandleWrapper>>,
 }
 
 impl Sys {
-    pub fn new(config: Config) -> Sys {
+    pub fn new(config: NodesConfig) -> Sys {
         Sys {
-            logical_modules: LogicalModules::new(LogicalNodeConfig {
-                as_scheduler: true,
-                as_data_router: true,
-                as_kv: true,
-                peers: config.peers.clone(),
-                this: config.this,
-            }),
+            logical_modules: LogicalModules::new(config),
             sub_tasks: Vec::new().into(),
         }
     }
-    pub async fn wait_for_end(&self) {
+    pub async fn wait_for_end(&mut self) {
         if let Err(err) = self.logical_modules.start(self).await {
-            tracing::error!("start logical nodes error: {:?}", err);
+            panic!("start logical nodes error: {:?}", err);
         }
-        for task in self.sub_tasks.borrow_mut().iter_mut() {
+        tracing::info!("modules all started, waiting for end");
+        for task in self.sub_tasks.lock().await.iter_mut() {
             task.join().await;
         }
     }
@@ -44,20 +51,13 @@ impl Sys {
 
 pub type NodeID = u32;
 
-pub struct LogicalNodeConfig {
-    as_scheduler: bool,
-    as_data_router: bool,
-    as_kv: bool,
-    peers: Vec<(SocketAddr, NodeID)>,
-    this: (SocketAddr, NodeID),
-}
-
 #[derive(Clone)]
 pub struct LogicalModuleNewArgs {
+    pub logical_modules_ref: LogicalModulesRef,
     pub parent_name: String,
     pub btx: BroadcastSender,
     pub logical_models: Option<Weak<LogicalModules>>,
-    pub peers_this: Option<(Vec<(SocketAddr, NodeID)>, (SocketAddr, NodeID))>,
+    pub nodes_config: NodesConfig,
 }
 
 impl LogicalModuleNewArgs {
@@ -68,14 +68,11 @@ impl LogicalModuleNewArgs {
 }
 
 #[async_trait]
-pub trait LogicalModule {
+pub trait LogicalModule: Send + Sync + 'static {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized;
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>>;
-
-    fn name(&self) -> &str;
-
     // async fn listen_async_signal(&self) -> tokio::sync::broadcast::Receiver<LogicalModuleState>;
     // fn listen_sync_signal(&self) -> tokio::sync::broadcast::Receiver<LogicalModuleState>;
 }
@@ -87,20 +84,182 @@ pub enum BroadcastMsg {
 
 pub type BroadcastSender = tokio::sync::broadcast::Sender<BroadcastMsg>;
 
-#[derive(LogicalModuleParent)]
-pub struct LogicalModules {
-    #[sub]
-    pub kv_client: KVClient, // each module need a kv service
-    #[sub]
-    pub data_router_client: DataRouterClient, // kv_client_need a data_router service
-    // #[sub]
-    // pub p2p_client: P2PClient, // modules need a client to call p2p service
-    #[parent]
-    pub p2p: P2PModule, // network basic service
-    // pub scheduler_node: Option<SchedulerNode>, // scheduler service
-    #[parent]
-    pub data_router: Option<DataRouter>, // data_router service
-                                         // pub kv_node: Option<KVNode>,               // kv service
+// #[derive(LogicalModuleParent)]
+
+// 使用trait的目的是为了接口干净
+// #[derive(ModuleView)]
+
+macro_rules! logical_modules_ref_impl {
+    ($module:ident,$type:ty) => {
+        impl LogicalModulesRef {
+            pub fn $module(&self) -> &$type {
+                unsafe {
+                    (*self.inner.as_ref().unwrap().as_ptr())
+                        .$module
+                        .as_ref()
+                        .unwrap()
+                }
+            }
+        }
+    };
+}
+
+macro_rules! logical_modules_refs {
+    ($module:ident,$t:ty) => {
+        logical_modules_ref_impl!($module,$t);
+    };
+    ($module:ident,$t:ty,$($modules:ident,$ts:ty),+) => {
+        // logical_modules_ref_impl!($module,$t);
+        logical_modules_refs!($module,$t);
+        logical_modules_refs!($($modules,$ts),+);
+    };
+}
+
+macro_rules! count_modules {
+    ($module:ident,$t:ty) => {1usize};
+    ($module:ident,$t:ty,$($modules:ident,$ts:ty),+) => {1usize + count_modules!($($modules,$ts),+)};
+}
+
+macro_rules! logical_modules {
+    // outter struct
+    ($($modules:ident,$ts:ty),+)=>{
+        #[derive(Default)]
+        pub struct LogicalModules {
+            $(pub $modules: Option<$ts>),+
+        }
+
+        logical_modules_refs!($($modules,$ts),+);
+        lazy_static! {
+            /// This is an example for using doc comment attributes
+            static ref ALL_MODULES_COUNT: usize = count_modules!($($modules,$ts),+);
+        }
+        // $(impl $modules(&self)->&$ts{
+        //     self.$modules.as_ref().unwrap()
+        // })*
+    }
+}
+lazy_static! {
+    static ref SETTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static ref STARTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
+}
+
+// pub struct LogicalModules {
+//     // #[sub]
+//     // pub kv_client: KVClient, // each module need a kv service
+//     // #[sub]
+//     // #[view()]
+//     // pub data_router_client: DataRouterClient, // kv_client_need a data_router service
+//     // #[sub]
+//     // pub p2p_client: P2PClient, // modules need a client to call p2p service
+//     // #[parent]
+//     // pub p2p: P2PModule, // network basic service
+//     // pub scheduler_node: Option<SchedulerNode>, // scheduler service
+//     // pub general_kv_client: GKV::KVClient,
+//     // pub general_kv: Option<GKV>,
+//     // #[view(p2p, local_kv_client)]
+//     // pub raft: Option<Box<dyn Raft>>,
+//     pub meta_kv_client: Box<dyn KVClient>, // get set key range
+//     // #[view(p2p, raft)]
+//     // pub meta_kv: Option<Box<dyn KVNode>>, // run the raft or other consensus algorithm, handle meta_kv request
+//     /// get set by metakv or generalkv directly
+//     pub local_kv_client: Box<dyn KVClient>,
+//     // handle request, local storage operations
+//     pub local_kv: Option<Box<dyn KVNode>>,
+//     // #[parent]
+//     // pub data_router: Option<DataRouter>, // data_router service
+//     // pub kv_node: Option<KVNode>,               // kv service
+// }
+
+#[derive(Clone)]
+pub struct LogicalModulesRef {
+    inner: Option<Weak<LogicalModules>>,
+}
+
+impl LogicalModulesRef {
+    pub fn new(inner: Arc<LogicalModules>) -> LogicalModulesRef {
+        let inner = Arc::downgrade(&inner);
+        LogicalModulesRef { inner: Some(inner) }
+    }
+}
+// impl LogicalModulesRef {
+//     fn setup(&mut self, modules: Arc<LogicalModules>) {
+//         self.inner = Some(Arc::downgrade(&modules));
+//     }
+// }
+
+macro_rules! logical_module_view_impl {
+    ($module:ident,$module_name:ident,$type:ty) => {
+        impl $module {
+            pub fn $module_name(&self) -> &$type {
+                self.inner.$module_name()
+            }
+        }
+    };
+    ($module:ident) => {
+        #[derive(Clone)]
+        pub struct $module {
+            inner: LogicalModulesRef,
+        }
+        impl $module {
+            pub fn new(inner: LogicalModulesRef) -> Self {
+                $module { inner }
+            }
+            // fn setup(&mut self, modules: Arc<LogicalModules>) {
+            //     self.inner.setup(modules);
+            // }
+        }
+    };
+}
+
+macro_rules! start_module_opt {
+    ($self:ident,$sys:ident,$opt:ident) => {
+        let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        if let Some($opt) = $self.$opt.as_ref().unwrap() {
+            $sys.sub_tasks.lock().await.append(&mut $opt.start().await?);
+        }
+    };
+}
+
+macro_rules! start_module {
+    ($self:ident,$sys:ident,$opt:ident) => {
+        let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        $sys.sub_tasks
+            .lock()
+            .await
+            .append(&mut $self.$opt.as_ref().unwrap().start().await?);
+    };
+}
+
+logical_modules!(
+    meta_kv_client,
+    Box<dyn KVClient>,
+    meta_kv,
+    Option<Box<dyn KVNode>>,
+    local_kv_client,
+    Box<dyn KVClient>,
+    local_kv,
+    Option<Box<dyn KVNode>>,
+    p2p,
+    P2PModule // p2p_kernel,
+              // Box<dyn P2PKernel>
+);
+
+logical_module_view_impl!(MetaKVClientView);
+logical_module_view_impl!(MetaKVClientView, meta_kv_client, Box<dyn KVClient>);
+logical_module_view_impl!(MetaKVClientView, meta_kv, Option<Box<dyn KVNode>>);
+logical_module_view_impl!(MetaKVClientView, p2p, P2PModule);
+
+logical_module_view_impl!(MetaKVView);
+logical_module_view_impl!(MetaKVView, p2p, P2PModule);
+logical_module_view_impl!(MetaKVView, meta_kv, Option<Box<dyn KVNode>>);
+logical_module_view_impl!(MetaKVView, local_kv, Option<Box<dyn KVNode>>);
+
+logical_module_view_impl!(P2PView);
+logical_module_view_impl!(P2PView, p2p, P2PModule);
+
+fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
+    let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+    unsafe { &mut *(Arc::downgrade(modules).as_ptr() as *mut LogicalModules) }
 }
 
 impl LogicalModules {
@@ -111,85 +270,57 @@ impl LogicalModules {
     //     }
     // }
 
-    pub fn new(config: LogicalNodeConfig) -> Arc<LogicalModules> {
+    pub fn new(config: NodesConfig) -> Arc<LogicalModules> {
         let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<BroadcastMsg>(1);
+        let arc = Arc::new(LogicalModules::default());
         let args = LogicalModuleNewArgs {
             btx: broadcast_tx,
             logical_models: None,
             parent_name: "".to_owned(),
-            peers_this: None,
+            nodes_config: config.clone(),
+            logical_modules_ref: LogicalModulesRef {
+                inner: Arc::downgrade(&arc).into(),
+            },
         };
 
-        let p2p = {
-            let mut args = args.clone();
-            args.peers_this = Some((config.peers.clone(), config.this));
-            P2PModule::new(args)
-        };
-        let data_router = if config.as_data_router {
-            Some(DataRouter::new(args.clone()))
-        } else {
-            None
-        };
-
-        let kv_client = KVClient::new(args.clone());
-        let data_router_client = DataRouterClient::new(args.clone());
-
-        // let scheduler_node =
-        // if config.as_scheduler {
-        //     Some(SchedulerNode::new())
-        // } else
-        // {
-        //     None
-        // };
-
-        // let kv_node =
-        // if config.as_kv {
-        //     Some(KVNode::new())
-        // } else
-        // {
-        //     None
-        // };
-
-        let arc = LogicalModules {
-            kv_client,
-            data_router_client,
-            // p2p_client,
-            p2p,
-            // scheduler_node,
-            data_router,
-            // kv_node,
-        };
-
-        let mut iter = arc.module_iter();
-        while let Some(next) = iter.next_module() {
-            tracing::info!("module itered {}", next.name())
-        }
-        drop(iter);
-
-        let arc = Arc::new(arc);
-
-        setup_views(&arc);
+        modules_mut_ref(&arc).local_kv = Some(Some(Box::new(LocalKVNode::new(args.clone()))));
+        modules_mut_ref(&arc).local_kv_client = Some(Box::new(LocalKVClient::new(args.clone())));
+        modules_mut_ref(&arc).meta_kv_client = Some(Box::new(MetaKVClient::new(args.clone())));
+        modules_mut_ref(&arc).meta_kv = Some(Some(Box::new(RaftKVNode::new(args.clone()))));
+        modules_mut_ref(&arc).p2p = Some(P2PModule::new(args.clone()));
+        // modules_mut_ref(&arc).p2p_kernel = Some(Box::new(P2PQuicNode::new(args.clone())));
+        // setup_views(&arc);
         arc
     }
+}
 
+impl LogicalModules {
     pub async fn start(&self, sys: &Sys) -> WSResult<()> {
-        if let Some(data_router) = &self.data_router {
-            sys.sub_tasks
-                .borrow_mut()
-                .append(&mut data_router.start().await?);
-        }
-        sys.sub_tasks
-            .borrow_mut()
-            .append(&mut self.data_router_client.start().await?);
-        sys.sub_tasks
-            .borrow_mut()
-            .append(&mut self.p2p.start().await?);
-        // sys.sub_tasks
-        //     .borrow_mut()
-        //     .append(&mut self.p2p_client.start().await?);
-        sys.sub_tasks
-            .borrow_mut()
-            .append(&mut self.kv_client.start().await?);
+        start_module_opt!(self, sys, local_kv);
+        start_module!(self, sys, p2p);
+        start_module_opt!(self, sys, meta_kv);
+        start_module!(self, sys, local_kv_client);
+        start_module!(self, sys, meta_kv_client);
+        // start_module!(self, sys, p2p_kernel);
+
+        // let all_modules_count = ALL_MODULES_COUNT.add(0);
+        // assert_eq!(
+        //     all_modules_count,
+        //     SETTED_MODULES_COUNT.load(Ordering::SeqCst),
+        // );
+
+        // assert_eq!(
+        //     all_modules_count,
+        //     STARTED_MODULES_COUNT.load(Ordering::SeqCst)
+        // );
+
+        // tracing::info!(
+        //     "all:{}, setted:{}, started:{}",
+        //     all_modules_count,
+        //     SETTED_MODULES_COUNT.load(Ordering::SeqCst),
+        //     STARTED_MODULES_COUNT.load(Ordering::SeqCst)
+        // );
+
         Ok(())
     }
 }

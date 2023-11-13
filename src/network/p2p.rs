@@ -13,9 +13,8 @@ use super::{
     p2p_quic::P2PQuicNode,
 };
 use crate::{
-    module_iter::*,
-    module_state_trans::ModuleSignal,
-    module_view::P2PModuleLMView,
+    config::NodesConfig,
+    // module_view::P2PModuleLMView,
     result::{ErrCvt, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
@@ -24,6 +23,7 @@ use crate::{
 use async_trait::async_trait;
 use parking_lot::{Mutex, RwLock};
 use prost::bytes::Bytes;
+use ws_derive::LogicalModule;
 
 pub type TaskId = u32;
 pub type MsgId = u32;
@@ -40,9 +40,9 @@ pub trait P2PKernel: LogicalModule {
     ) -> WSResult<()>;
 }
 
-#[derive(LogicalModuleParent, LogicalModule)]
+#[derive(LogicalModule)]
 pub struct P2PModule {
-    pub logical_modules_view: P2PModuleLMView,
+    // pub logical_modules_view: P2PModuleLMView,
     dispatch_map: RwLock<
         HashMap<
             u32,
@@ -51,16 +51,12 @@ pub struct P2PModule {
     >,
     waiting_tasks: crossbeam_skiplist::SkipMap<
         (TaskId, NodeID),
-        Mutex<Option<(tokio::sync::oneshot::Sender<Box<dyn MsgPack>>)>>,
+        Mutex<Option<tokio::sync::oneshot::Sender<Box<dyn MsgPack>>>>,
     >,
     rpc_holder: RwLock<HashMap<(MsgId, NodeID), Arc<tokio::sync::Mutex<()>>>>,
-    #[sub]
     pub p2p_kernel: P2PQuicNode,
-    name: String,
-    pub state_trans_tx: tokio::sync::broadcast::Sender<ModuleSignal>,
-    pub peers: Vec<(SocketAddr, NodeID)>,
-    pub this_node: (SocketAddr, NodeID),
-    pub nodeid2addr: HashMap<NodeID, SocketAddr>,
+    // pub state_trans_tx: tokio::sync::broadcast::Sender<ModuleSignal>,
+    pub nodes_config: NodesConfig,
     pub next_task_id: AtomicU32,
 }
 
@@ -70,28 +66,19 @@ pub struct P2PModule {
 
 #[async_trait]
 impl LogicalModule for P2PModule {
-    fn inner_new(mut args: LogicalModuleNewArgs) -> Self
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        let (peers, this) = args.peers_this.take().unwrap();
-        args.expand_parent_name(Self::self_name());
-        let (tx, _rx) = tokio::sync::broadcast::channel(10);
+        let nodes_config = args.nodes_config.clone();
+        // args.expand_parent_name(Self::self_name());
+        // let (tx, _rx) = tokio::sync::broadcast::channel(10);
         Self {
-            logical_modules_view: P2PModuleLMView::new(),
             p2p_kernel: P2PQuicNode::new(args.clone()),
             dispatch_map: HashMap::new().into(),
             waiting_tasks: Default::default(),
             rpc_holder: HashMap::new().into(),
-            name: args.parent_name,
-            state_trans_tx: tx,
-            nodeid2addr: peers
-                .iter()
-                .chain(Some(&this))
-                .map(|(addr, id)| (*id, *addr))
-                .collect(),
-            peers,
-            this_node: this,
+            nodes_config,
             next_task_id: AtomicU32::new(0),
         }
     }
@@ -100,16 +87,23 @@ impl LogicalModule for P2PModule {
         let sub = self.p2p_kernel.start().await?;
         Ok(sub)
     }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
 }
 
 impl P2PModule {
-    pub fn listen(&self) -> tokio::sync::broadcast::Receiver<ModuleSignal> {
-        self.state_trans_tx.subscribe()
+    pub fn find_peer_id(&self, addr: &SocketAddr) -> Option<NodeID> {
+        self.nodes_config.peers.iter().find_map(
+            |(id, peer)| {
+                if peer.addr == *addr {
+                    Some(*id)
+                } else {
+                    None
+                }
+            },
+        )
     }
+    // pub fn listen(&self) -> tokio::sync::broadcast::Receiver<ModuleSignal> {
+    //     self.state_trans_tx.subscribe()
+    // }
 
     // 消息回来时，调用记录的回调函数
     pub fn regist_dispatch<M, F>(&self, m: M, f: F)
@@ -130,15 +124,15 @@ impl P2PModule {
     }
 
     // 自动完成response的匹配
-    pub fn regist_rpc<REQ, RESP, F>(&self, req_handler: F)
+    pub fn regist_rpc<REQ, F>(&self, req_handler: F)
     where
-        REQ: MsgPack + Default,
-        RESP: MsgPack + Default,
+        REQ: RPCReq,
+        // RESP: MsgPack + Default,
         F: Fn(NodeID, &P2PModule, TaskId, REQ) -> WSResult<()> + Send + Sync + 'static,
     {
         self.regist_dispatch(REQ::default(), req_handler);
         // self.p2p.regist_rpc();
-        self.regist_dispatch(RESP::default(), |nid, this, taskid, v| {
+        self.regist_dispatch(REQ::Resp::default(), |nid, this, taskid, v| {
             let cb = this.waiting_tasks.remove(&(taskid, nid));
             if let Some(pack) = cb {
                 pack.value()
@@ -269,10 +263,10 @@ impl P2PModule {
         }
     }
     pub fn get_addr_by_id(&self, id: NodeID) -> WSResult<SocketAddr> {
-        self.nodeid2addr
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| WsNetworkLogicErr::InvaidNodeID(id).into())
+        self.nodes_config.peers.get(&id).map_or_else(
+            || Err(WsNetworkLogicErr::InvaidNodeID(id).into()),
+            |v| Ok(v.addr),
+        )
     }
 }
 

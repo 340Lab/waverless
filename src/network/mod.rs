@@ -1,7 +1,7 @@
-pub mod p2p;
-// pub mod p2p_client;
 pub mod msg_pack;
+pub mod p2p;
 pub mod p2p_quic;
+
 pub mod proto {
     pub mod kv {
         include!(concat!(env!("OUT_DIR"), "/kv.rs"));

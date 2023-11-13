@@ -1,7 +1,5 @@
 // Manage the key routing node information
 
-
-
 use crate::{
     module_iter::*,
     result::WSResult,
@@ -11,13 +9,12 @@ use crate::{
 
 use async_trait::async_trait;
 
+use super::raft_kv::RaftKVNode;
 
-use super::dist_kv_raft::RaftDistKV;
-
-#[derive(LogicalModuleParent, LogicalModule)]
+#[derive(LogicalModule)]
 pub struct DataRouter {
-    #[parent]
-    pub raft_kv: RaftDistKV,
+    // #[parent]
+    // pub raft_kv: RaftKV,
     name: String,
 }
 
@@ -30,7 +27,7 @@ impl LogicalModule for DataRouter {
         args.expand_parent_name(Self::self_name());
         Self {
             name: args.parent_name.clone(),
-            raft_kv: RaftDistKV::new(args),
+            raft_kv: RaftKVNode::new(args),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
