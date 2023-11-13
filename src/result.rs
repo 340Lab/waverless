@@ -1,4 +1,4 @@
-use async_raft::InitializeError;
+use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
 use prost::DecodeError;
 use qp2p::{EndpointError, SendError};
@@ -32,6 +32,7 @@ pub enum WsNetworkConnErr {
 #[derive(Debug)]
 pub enum WsRaftErr {
     InitializeError(async_raft::error::InitializeError),
+    RaftError(RaftError),
 }
 
 #[derive(Debug)]
@@ -99,3 +100,4 @@ impl_err_convertor!(DecodeError, WsNetworkLogicErr, DecodeError);
 impl_err_convertor!(EndpointError, WsNetworkConnErr, EndPointError);
 impl_err_convertor!(SendError, WsNetworkConnErr, SendError);
 impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);
+impl_err_convertor!(RaftError, WsRaftErr, RaftError);

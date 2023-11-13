@@ -1,9 +1,6 @@
-
-
 use downcast_rs::{impl_downcast, Downcast};
 
 use super::{p2p::MsgId, proto};
-
 
 // pub struct MsgCoder<M: prost::Message> {}
 
@@ -37,8 +34,20 @@ impl MsgPack for proto::raft::AppendEntriesResponse {
     }
 }
 
-pub trait RPCReq: MsgPack {
-    type Resp: MsgPack;
+impl MsgPack for proto::kv::MetaKvRequest {
+    fn msg_id(&self) -> MsgId {
+        4
+    }
+}
+
+impl MsgPack for proto::kv::MetaKvResponse {
+    fn msg_id(&self) -> MsgId {
+        5
+    }
+}
+
+pub trait RPCReq: MsgPack + Default {
+    type Resp: MsgPack + Default;
 }
 
 impl RPCReq for proto::raft::VoteRequest {
@@ -47,6 +56,10 @@ impl RPCReq for proto::raft::VoteRequest {
 
 impl RPCReq for proto::raft::AppendEntriesRequest {
     type Resp = proto::raft::AppendEntriesResponse;
+}
+
+impl RPCReq for proto::kv::MetaKvRequest {
+    type Resp = proto::kv::MetaKvResponse;
 }
 
 // impl MsgId for raft::prelude::Message {

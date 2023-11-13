@@ -1,8 +1,7 @@
 use async_trait::async_trait;
+use downcast_rs::{impl_downcast, Downcast};
 
-use crate::{result::WSResult, sys::Sys};
-
-use super::KeyRange;
+use super::kv_client::KVClient;
 
 pub struct SetOptions {
     pub consistent: bool,
@@ -19,12 +18,7 @@ impl SetOptions {
 }
 
 #[async_trait]
-pub trait DistKV {
-    async fn get<'a>(&'a self, sys: &Sys, key_range: KeyRange<'a>) -> WSResult<Option<Vec<u8>>>;
-    async fn set(
-        &self,
-        sys: &Sys,
-        kvs: Vec<(Vec<u8>, Vec<u8>)>,
-        opts: SetOptions,
-    ) -> WSResult<Option<Vec<(Vec<u8>, Vec<u8>)>>>;
+pub trait KVNode: KVClient + Downcast {
+    async fn ready(&self) -> bool;
 }
+impl_downcast!(KVNode);

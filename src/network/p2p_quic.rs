@@ -31,10 +31,9 @@ use tokio::task::JoinHandle;
 use ws_derive::LogicalModule;
 
 use crate::{
-    module_iter::*,
-    module_view::P2PQuicNodeLMView,
+    // module_view::P2PQuicNodeLMView,
     result::{ErrCvt, WSResult, WsNetworkConnErr, WsSerialErr},
-    sys::{BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID},
+    sys::{BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID, P2PView},
     util::JoinHandleWrapper,
 };
 
@@ -81,11 +80,10 @@ impl P2PQuicNodeShared {
     }
 }
 
-#[derive(LogicalModuleParent, LogicalModule)]
+#[derive(LogicalModule)]
 pub struct P2PQuicNode {
-    pub logical_modules_view: P2PQuicNodeLMView,
+    pub logical_modules_view: P2PView,
     shared: Arc<P2PQuicNodeShared>,
-    name: String,
 }
 
 impl P2PQuicNode {
@@ -101,38 +99,37 @@ impl LogicalModule for P2PQuicNode {
         Self: Sized,
     {
         Self {
-            logical_modules_view: P2PQuicNodeLMView::new(),
+            logical_modules_view: P2PView::new(args.logical_modules_ref.clone()),
             shared: P2PQuicNodeShared {
                 btx: args.btx,
                 locked: Mutex::new(P2PQuicNodeLocked { sub_tasks: vec![] }),
                 peer_connections: HashMap::new().into(),
             }
             .into(),
-            name: format!("{}::{}", args.parent_name, Self::self_name()),
+            // name: format!("{}::{}", args.parent_name, Self::self_name()),
         }
     }
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        let this_addr = self.p2p_base().nodes_config.this.1.addr;
         // create an endpoint for us to listen on and send from.
         let (endpoint, mut incoming_conns) = Endpoint::builder()
-            .addr(self.p2p_base().this_node.0)
+            .addr(this_addr)
             .keep_alive_interval(Duration::from_millis(100))
             // timeout of send or receive or connect, bigger than interval
             .idle_timeout(2 * 1_000 /* 3600s = 1h */)
             .server()
-            .map_err(|err| ErrCvt(err).to_ws_network_conn_err())?;
+            .map_err(|err| {
+                tracing::error!("addr: {}, err: {}", this_addr, err);
+                ErrCvt(err).to_ws_network_conn_err()
+            })?;
 
         let shared = self.shared.clone();
-        let this_addr = self.p2p_base().this_node.0;
 
         let mut net_tasks: Vec<JoinHandleWrapper> = vec![];
 
-        for (peer, n) in &self.p2p_base().peers {
+        for (n, n_config) in &self.p2p_base().nodes_config.peers {
             let endpoint = endpoint.clone();
-            let addr = *peer;
+            let addr = n_config.addr;
             let shared = shared.clone();
             let view = self.logical_modules_view.clone();
             let n = n.clone();
@@ -274,7 +271,7 @@ impl LogicalModule for P2PQuicNode {
 // }
 
 fn new_handle_connection_task(
-    view: &P2PQuicNodeLMView,
+    view: &P2PView,
     shared: Arc<P2PQuicNodeShared>,
     endpoint: Endpoint,
     connection: Connection,
@@ -292,7 +289,7 @@ fn new_handle_connection_task(
 }
 
 async fn handle_connection(
-    view: &P2PQuicNodeLMView,
+    view: &P2PView,
     shared: Arc<P2PQuicNodeShared>,
     _endpoint: &Endpoint,
     connection: Connection,
@@ -306,13 +303,13 @@ async fn handle_connection(
 
     // let handle = tokio::spawn(async move {
     let remote_addr = connection.remote_address();
-    let remote_id = view
-        .p2p()
-        .peers
-        .iter()
-        .find(|v| v.0 == remote_addr)
-        .unwrap()
-        .1;
+    let remote_id = view.p2p().find_peer_id(&remote_addr).unwrap_or_else(|| {
+        panic!(
+            "remote_addr {:?} not found in peer_id_map {:?}",
+            remote_addr,
+            view.p2p().nodes_config
+        );
+    });
 
     shared.reserve_peer_conn(remote_addr).await;
     let peer_conns = shared
@@ -332,9 +329,6 @@ async fn handle_connection(
                 if let Some(WireMsg((head, _, bytes))) = msg {
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
-                            if view.p2p().this_node.1 == 3 && remote_id == 1 {
-                                // println!("Received from {remote_addr:?} --> {bytes:?}");
-                            }
                             // println!("Received from {remote_addr:?} --> {bytes:?}");
                             view.p2p().dispatch(remote_id, msg_id, task_id, bytes);
                             // if bytes == *MSG_MARCO {
