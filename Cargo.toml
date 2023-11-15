@@ -41,3 +41,13 @@ wasmedge-sdk = { version = "0.10.1", features = ["async"] }
 
 [build-dependencies]
 prost-build = { version = "0.12" }
+
+[profile.test]
+# 0: no optimizations
+# 1: basic optimizations
+# 2: some optimizations
+# 3: all optimizations
+# "s": optimize for binary size
+# "z": optimize for binary size, but also turn off loop vectorization.
+opt-level = 3           # Use slightly better optimizations.
+overflow-checks = false # Disable integer overflow checks.

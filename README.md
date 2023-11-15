@@ -32,7 +32,9 @@ An distributed serverless framework based on wasm runtime.
 ### Wasm
 - [WasmEdge](https://wasmedge.org/)
 
-  `curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- -v 0.13.2`
+  `curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- -v 0.13.3`
+
+  `cargo build -p wasm-app --target wasm32-wasi --release`
 
 ### KV for route
 - async-raft
@@ -49,3 +51,10 @@ An distributed serverless framework based on wasm runtime.
 
 ## Notes
 - `source /Users/hello/.zshenv`
+- `source /home/pa/.bashrc`
+
+- proxy
+  ```
+  export https_proxy=http://192.168.232.1:23333
+  export http_proxy=http://192.168.232.1:23333
+  ```

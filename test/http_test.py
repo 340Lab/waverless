@@ -1,10 +1,13 @@
 import requests
 from pprint import pprint
+import time; 
 
-res = requests.post('http://localhost:3001/hahahah',
+ms = time.time()*1000.0 
+res = requests.post('http://localhost:3001/fn2',
                     json={'after_which': 0,
                           'order_by': 0,
                           'tags': [],
                           'search_str': "",
                           'price_range': []}, verify=False)
-pprint(res)
+ms_ret = time.time()*1000.0 
+print(res,ms_ret-ms)

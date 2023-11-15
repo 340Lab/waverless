@@ -3,7 +3,7 @@ package kv;
 
 message KeyRange {
   bytes start=1;
-  optional bytes end=2;
+  bytes end=2;
 }
 
 message KVPair {
@@ -35,7 +35,7 @@ message KVPairs{
 
 message KVResponse{
   message KVPairOpt{
-    optional KVPair kv=1;
+    KVPair kv=1;
   }
   repeated KVPairOpt kvs=1;
 }

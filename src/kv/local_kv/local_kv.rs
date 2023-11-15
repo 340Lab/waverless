@@ -26,9 +26,9 @@ pub struct LocalKVNode {
 
 #[async_trait]
 impl KVClient for LocalKVNode {
-    async fn get(&self, mut key_range: KeyRange) -> WSResult<Vec<KvPair>> {
+    async fn get(&self, key_range: KeyRange) -> WSResult<Vec<KvPair>> {
         let mut res = vec![];
-        if let Some(_end) = key_range.end.take() {
+        if key_range.end.len() > 0 {
         } else {
             let map = self.map.read().await;
             if let Some(kv) = map.get_key_value(&key_range.start) {
