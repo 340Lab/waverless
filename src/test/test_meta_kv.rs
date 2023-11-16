@@ -43,7 +43,7 @@ async fn test_meta_kv() {
                     let res = meta
                         .get(KeyRange {
                             start: "test".as_bytes().to_owned(),
-                            end: None,
+                            end: vec![],
                         })
                         .await
                         .unwrap();

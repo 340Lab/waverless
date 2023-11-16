@@ -6,20 +6,21 @@ An distributed serverless framework based on wasm runtime.
 
 ## Roadmap
 ### System
-- RPC communication between nodes.
-- Metadata management.
-    - IP of each nodes
-    - location of each nodes
-    - status of each nodes (cpu, mem, task)
-    - status of each task
-    - all deployed application
-        - img location
-        - function computing graph
-- Basic scaler and scheduler
+
+- x Basic P2P and RPC based on quic
+
+- Basic scheduler
+
+  - single master - multiple worker
+
 - Different application type
+
 - Propagation delay simulation
+
 - Metric (work with the metadata system)
+
 - General storage api
+
 - Cache for storage api
 
 ### Frontend
@@ -32,6 +33,14 @@ An distributed serverless framework based on wasm runtime.
 ### Wasm
 - [WasmEdge](https://wasmedge.org/)
 
+  `curl -sSf https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh | bash -s -- -v 0.13.3`
+
+  `rustup target add wasm32-wasi`
+
+  `cargo build -p --target wasm32-wasi --release`
+
+
+
 ### KV for route
 - async-raft
 
@@ -39,3 +48,18 @@ An distributed serverless framework based on wasm runtime.
 - Router cluster with raft for load balancing.
 - Erasure coding for reliability.
 
+## Dev Guide
+- Code counter
+
+  `tokei src`
+
+
+## Notes
+- `source /Users/hello/.zshenv`
+- `source /home/pa/.bashrc`
+
+- proxy
+  ```
+  export https_proxy=http://192.168.232.1:23333
+  export http_proxy=http://192.168.232.1:23333
+  ```

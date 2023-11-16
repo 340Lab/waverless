@@ -24,6 +24,7 @@ mod kv;
 // pub mod module_iter;
 // pub mod module_state_trans;
 pub mod network;
+pub mod request_router;
 pub mod result;
 mod sys;
 pub mod util;
