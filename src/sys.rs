@@ -8,6 +8,7 @@ use crate::{
         // raft_kv::RaftKVNode,
     },
     network::p2p::P2PModule,
+    schedule::{http_handler::RequestHandler, master::ScheMaster, worker::ScheWorker},
     // module_iter::*,
     // module_view::setup_views,
 };
@@ -240,8 +241,10 @@ logical_modules!(
     local_kv,
     Option<Box<dyn KVNode>>,
     p2p,
-    P2PModule // p2p_kernel,
-              // Box<dyn P2PKernel>
+    P2PModule, // p2p_kernel,
+    // Box<dyn P2PKernel>
+    request_handler,
+    Box<dyn RequestHandler>
 );
 
 logical_module_view_impl!(MetaKVClientView);
@@ -256,6 +259,16 @@ logical_module_view_impl!(MetaKVView, local_kv, Option<Box<dyn KVNode>>);
 
 logical_module_view_impl!(P2PView);
 logical_module_view_impl!(P2PView, p2p, P2PModule);
+
+logical_module_view_impl!(ScheMasterView);
+logical_module_view_impl!(ScheMasterView, p2p, P2PModule);
+
+logical_module_view_impl!(ScheWorkerView);
+logical_module_view_impl!(ScheWorkerView, p2p, P2PModule);
+
+logical_module_view_impl!(RequestHandlerView);
+logical_module_view_impl!(RequestHandlerView, p2p, P2PModule);
+logical_module_view_impl!(RequestHandlerView, request_handler, Box<dyn RequestHandler>);
 
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
     let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -288,19 +301,25 @@ impl LogicalModules {
         modules_mut_ref(&arc).meta_kv_client = Some(Box::new(MetaKVClient::new(args.clone())));
         modules_mut_ref(&arc).meta_kv = Some(Some(Box::new(RaftKVNode::new(args.clone()))));
         modules_mut_ref(&arc).p2p = Some(P2PModule::new(args.clone()));
+        modules_mut_ref(&arc).request_handler = Some(if config.this.1.is_master() {
+            Box::new(ScheMaster::new(args.clone()))
+        } else if config.this.1.is_worker() {
+            Box::new(ScheWorker::new(args.clone()))
+        } else {
+            panic!("unknown request_handler node type");
+        });
         // modules_mut_ref(&arc).p2p_kernel = Some(Box::new(P2PQuicNode::new(args.clone())));
         // setup_views(&arc);
         arc
     }
-}
 
-impl LogicalModules {
     pub async fn start(&self, sys: &Sys) -> WSResult<()> {
         start_module_opt!(self, sys, local_kv);
         start_module!(self, sys, p2p);
         start_module_opt!(self, sys, meta_kv);
         start_module!(self, sys, local_kv_client);
         start_module!(self, sys, meta_kv_client);
+        start_module!(self, sys, request_handler);
         // start_module!(self, sys, p2p_kernel);
 
         // let all_modules_count = ALL_MODULES_COUNT.add(0);

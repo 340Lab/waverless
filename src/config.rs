@@ -28,13 +28,23 @@ pub struct NodeConfig {
     pub addr: SocketAddr,
     pub spec: HashSet<String>,
 }
+
+impl NodeConfig {
+    pub fn is_master(&self) -> bool {
+        self.spec.contains("master")
+    }
+    pub fn is_worker(&self) -> bool {
+        self.spec.contains("worker")
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct YamlConfig {
     pub nodes: HashMap<NodeID, NodeConfig>,
-    pub this: NodeID,
+    // pub this: NodeID,
 }
 
-pub fn read_config(file_path: impl AsRef<Path>) -> NodesConfig {
+pub fn read_config(this_id: NodeID, file_path: impl AsRef<Path>) -> NodesConfig {
     let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
         panic!("open config file failed, err: {:?}", err);
     });
@@ -43,10 +53,7 @@ pub fn read_config(file_path: impl AsRef<Path>) -> NodesConfig {
     });
 
     NodesConfig {
-        this: (
-            yaml_config.this,
-            yaml_config.nodes.remove(&yaml_config.this).unwrap(),
-        ),
+        this: (this_id, yaml_config.nodes.remove(&this_id).unwrap()),
         peers: yaml_config.nodes,
     }
 }

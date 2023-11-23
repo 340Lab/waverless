@@ -46,6 +46,18 @@ impl MsgPack for proto::kv::MetaKvResponse {
     }
 }
 
+impl MsgPack for proto::sche::UserRequest {
+    fn msg_id(&self) -> MsgId {
+        6
+    }
+}
+
+impl MsgPack for proto::sche::UserResponse {
+    fn msg_id(&self) -> MsgId {
+        7
+    }
+}
+
 pub trait RPCReq: MsgPack + Default {
     type Resp: MsgPack + Default;
 }
@@ -60,6 +72,10 @@ impl RPCReq for proto::raft::AppendEntriesRequest {
 
 impl RPCReq for proto::kv::MetaKvRequest {
     type Resp = proto::kv::MetaKvResponse;
+}
+
+impl RPCReq for proto::sche::UserRequest {
+    type Resp = proto::sche::UserResponse;
 }
 
 // impl MsgId for raft::prelude::Message {

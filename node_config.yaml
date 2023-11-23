@@ -1,12 +1,10 @@
-this: 1
-
 nodes: 
   1: 
-    addr: 127.0.0.1:2001
-    spec: [meta,sche(2002)]
+    addr: 127.0.0.1:2000
+    spec: [meta,master]
   2: 
     addr: 127.0.0.1:3000
-    spec: [meta,sche(3002)]
+    spec: [meta,worker]
   3: 
     addr: 127.0.0.1:4000
-    spec: [meta,sche(4002)]
+    spec: [meta,worker]

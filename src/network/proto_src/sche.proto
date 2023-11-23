@@ -1,0 +1,12 @@
+syntax = "proto3";
+package sche;
+
+message UserRequest{
+    string fn_name = 1;
+    string args = 2;
+}
+
+message UserResponse{
+    uint32 status = 1;
+    string result = 2;
+}
