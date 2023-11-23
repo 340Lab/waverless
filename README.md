@@ -6,18 +6,19 @@ An distributed serverless framework based on wasm runtime.
 
 ## Roadmap
 ### System
+test
 
 - x Basic P2P and RPC based on quic
 
-- Basic scheduler
+- x Basic scheduler single master - multiple worker
 
-  - single master - multiple worker
+- Metric, collecting infos of each nodes
+
+- Bench test, comprehensive tests are necessary for writing paper.
 
 - Different application type
 
 - Propagation delay simulation
-
-- Metric (work with the metadata system)
 
 - General storage api
 
