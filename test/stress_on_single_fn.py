@@ -1,3 +1,4 @@
+import random
 from locust import HttpUser, task, between
 
 
@@ -8,4 +9,4 @@ class MyUser(HttpUser):
     @task
     def my_task(self):
         # self.client.post("/path", json={"key": "value"})  # 发送POST请求
-        self.client.post("/fn2")
+        self.client.get("/fn{}".format(random.randint(1, 10)))

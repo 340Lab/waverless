@@ -24,8 +24,8 @@ mod kv;
 // pub mod module_iter;
 // pub mod module_state_trans;
 pub mod network;
-pub mod request_router;
 pub mod result;
+pub mod schedule;
 mod sys;
 pub mod util;
 
@@ -42,7 +42,7 @@ async fn main() {
     // tracing_subscriber::fmt::init();
 
     let args = CmdArgs::parse();
-    let config = config::read_config(args.config_file);
+    let config = config::read_config(args.this_id, "node_config.yaml");
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
     Sys::new(config).wait_for_end().await;
@@ -62,6 +62,10 @@ pub fn start_tracing() {
 
         // println!("{}", v.target());
         if v.module_path().unwrap().contains("async_raft") {
+            return false;
+        }
+
+        if v.module_path().unwrap().contains("hyper") {
             return false;
         }
 
@@ -85,7 +89,7 @@ pub fn start_tracing() {
 pub fn new_test_systems() -> Vec<Sys> {
     let mut systems = vec![];
     for i in 1..4 {
-        let config = config::read_config(format!("node{}_config.yaml", i));
+        let config = config::read_config(i, "node_config.yaml");
         tracing::info!("config: {:?}", config);
         systems.push(Sys::new(config));
     }
