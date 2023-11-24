@@ -13,4 +13,8 @@ pub mod proto {
     pub mod sche {
         include!(concat!(env!("OUT_DIR"), "/sche.rs"));
     }
+
+    pub mod metric {
+        include!(concat!(env!("OUT_DIR"), "/metric.rs"));
+    }
 }

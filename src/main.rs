@@ -20,9 +20,9 @@ use tracing_subscriber::{
 pub mod cmd_arg;
 pub mod config;
 pub mod error_collector;
+pub mod event;
 mod kv;
-// pub mod module_iter;
-// pub mod module_state_trans;
+pub mod metric;
 pub mod network;
 pub mod result;
 pub mod schedule;
@@ -61,12 +61,13 @@ pub fn start_tracing() {
         // }
 
         // println!("{}", v.target());
-        if v.module_path().unwrap().contains("async_raft") {
-            return false;
-        }
-
-        if v.module_path().unwrap().contains("hyper") {
-            return false;
+        if let Some(mp) = v.module_path() {
+            if mp.contains("async_raft") {
+                return false;
+            }
+            if mp.contains("hyper") {
+                return false;
+            }
         }
 
         // if v.module_path().unwrap().contains("less::network::p2p") {
