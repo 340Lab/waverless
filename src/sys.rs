@@ -7,10 +7,11 @@ use crate::{
         raft_kv::RaftKVNode,
         // raft_kv::RaftKVNode,
     },
-    network::p2p::P2PModule,
-    schedule::{http_handler::RequestHandler, master::ScheMaster, worker::ScheWorker},
+    metric::{observor::MetricObservor, publisher::MetricPublisher},
     // module_iter::*,
     // module_view::setup_views,
+    network::p2p::P2PModule,
+    schedule::{http_handler::RequestHandler, master::ScheMaster, worker::ScheWorker},
 };
 use crate::{
     // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KVClient},
@@ -21,9 +22,9 @@ use crate::{
 };
 use async_trait::async_trait;
 use lazy_static::lazy_static;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Weak,
+use std::{
+    ops::Add,
+    sync::{Arc, Weak},
 };
 use tokio::sync::Mutex;
 
@@ -126,6 +127,8 @@ macro_rules! logical_modules {
     ($($modules:ident,$ts:ty),+)=>{
         #[derive(Default)]
         pub struct LogicalModules {
+            new_cnt:usize,
+            start_cnt:usize,
             $(pub $modules: Option<$ts>),+
         }
 
@@ -139,10 +142,10 @@ macro_rules! logical_modules {
         // })*
     }
 }
-lazy_static! {
-    static ref SETTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static ref STARTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
-}
+// lazy_static! {
+//     static ref SETTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
+//     static ref STARTED_MODULES_COUNT: AtomicUsize = AtomicUsize::new(0);
+// }
 
 // pub struct LogicalModules {
 //     // #[sub]
@@ -214,7 +217,11 @@ macro_rules! logical_module_view_impl {
 
 macro_rules! start_module_opt {
     ($self:ident,$sys:ident,$opt:ident) => {
-        let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        unsafe {
+            let mu = ($self as *const LogicalModules) as *mut LogicalModules;
+            (*mu).start_cnt += 1;
+        }
+        // let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
         if let Some($opt) = $self.$opt.as_ref().unwrap() {
             $sys.sub_tasks.lock().await.append(&mut $opt.start().await?);
         }
@@ -223,7 +230,11 @@ macro_rules! start_module_opt {
 
 macro_rules! start_module {
     ($self:ident,$sys:ident,$opt:ident) => {
-        let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        // let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        unsafe {
+            let mu = ($self as *const LogicalModules) as *mut LogicalModules;
+            (*mu).start_cnt += 1;
+        }
         $sys.sub_tasks
             .lock()
             .await
@@ -241,10 +252,15 @@ logical_modules!(
     local_kv,
     Option<Box<dyn KVNode>>,
     p2p,
-    P2PModule, // p2p_kernel,
+    P2PModule,
+    // p2p_kernel,
     // Box<dyn P2PKernel>
     request_handler,
-    Box<dyn RequestHandler>
+    Box<dyn RequestHandler>,
+    metric_publisher,
+    MetricPublisher,
+    metric_observor,
+    Option<MetricObservor>
 );
 
 logical_module_view_impl!(MetaKVClientView);
@@ -270,9 +286,19 @@ logical_module_view_impl!(RequestHandlerView);
 logical_module_view_impl!(RequestHandlerView, p2p, P2PModule);
 logical_module_view_impl!(RequestHandlerView, request_handler, Box<dyn RequestHandler>);
 
+logical_module_view_impl!(MetricObservorView);
+logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
+logical_module_view_impl!(MetricObservorView, metric_observor, Option<MetricObservor>);
+
+logical_module_view_impl!(MetricPublisherView);
+logical_module_view_impl!(MetricPublisherView, p2p, P2PModule);
+logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
+
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
-    let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
-    unsafe { &mut *(Arc::downgrade(modules).as_ptr() as *mut LogicalModules) }
+    // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+    let mu = unsafe { &mut *(Arc::downgrade(modules).as_ptr() as *mut LogicalModules) };
+    mu.new_cnt += 1;
+    mu
 }
 
 impl LogicalModules {
@@ -295,19 +321,25 @@ impl LogicalModules {
                 inner: Arc::downgrade(&arc).into(),
             },
         };
+        let is_master = config.this.1.is_master();
+        assert!(is_master || config.this.1.is_worker());
 
         modules_mut_ref(&arc).local_kv = Some(Some(Box::new(LocalKVNode::new(args.clone()))));
         modules_mut_ref(&arc).local_kv_client = Some(Box::new(LocalKVClient::new(args.clone())));
         modules_mut_ref(&arc).meta_kv_client = Some(Box::new(MetaKVClient::new(args.clone())));
         modules_mut_ref(&arc).meta_kv = Some(Some(Box::new(RaftKVNode::new(args.clone()))));
         modules_mut_ref(&arc).p2p = Some(P2PModule::new(args.clone()));
-        modules_mut_ref(&arc).request_handler = Some(if config.this.1.is_master() {
+        modules_mut_ref(&arc).request_handler = Some(if is_master {
             Box::new(ScheMaster::new(args.clone()))
-        } else if config.this.1.is_worker() {
-            Box::new(ScheWorker::new(args.clone()))
         } else {
-            panic!("unknown request_handler node type");
+            Box::new(ScheWorker::new(args.clone()))
         });
+        modules_mut_ref(&arc).metric_publisher = Some(MetricPublisher::new(args.clone()));
+        modules_mut_ref(&arc).metric_observor = if is_master {
+            Some(Some(MetricObservor::new(args.clone())))
+        } else {
+            Some(None)
+        };
         // modules_mut_ref(&arc).p2p_kernel = Some(Box::new(P2PQuicNode::new(args.clone())));
         // setup_views(&arc);
         arc
@@ -320,6 +352,11 @@ impl LogicalModules {
         start_module!(self, sys, local_kv_client);
         start_module!(self, sys, meta_kv_client);
         start_module!(self, sys, request_handler);
+        start_module!(self, sys, metric_publisher);
+        start_module_opt!(self, sys, metric_observor);
+
+        assert!(self.start_cnt == ALL_MODULES_COUNT.add(0));
+        assert!(self.start_cnt == self.new_cnt);
         // start_module!(self, sys, p2p_kernel);
 
         // let all_modules_count = ALL_MODULES_COUNT.add(0);

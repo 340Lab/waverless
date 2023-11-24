@@ -58,6 +58,12 @@ impl MsgPack for proto::sche::UserResponse {
     }
 }
 
+impl MsgPack for proto::metric::RscMetric {
+    fn msg_id(&self) -> MsgId {
+        8
+    }
+}
+
 pub trait RPCReq: MsgPack + Default {
     type Resp: MsgPack + Default;
 }

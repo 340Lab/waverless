@@ -1,0 +1,10 @@
+syntax = "proto3";
+package metric;
+
+message RscMetric{
+    float cpu_used = 1;
+    float mem_used = 2;
+    float cpu_all = 3;
+    float mem_all = 4;
+}
+

@@ -4,15 +4,15 @@ An distributed serverless framework based on wasm runtime.
 ## Feishu doc
 [https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f?from=from_copylink](https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f?from=from_copylink)
 
-## Roadmap
+## Roadmap of wasm_serverless
 ### System
-test
+- (paused) Integrated KV storage, different design for meta and serverless app.
 
 - x Basic P2P and RPC based on quic
 
 - x Basic scheduler single master - multiple worker
 
-- Metric, collecting infos of each nodes
+- x Metric, collecting infos of each nodes
 
 - Bench test, comprehensive tests are necessary for writing paper.
 
