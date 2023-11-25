@@ -1,0 +1,26 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build WasmEdge Image
+      run: bash docker/WasmEdge/build_image.sh
+    - name: Install WasmEdge
+      run: bash ./scripts/install_wasmedge.sh
+    - name: Install Protobuf
+      run: bash ./scripts/install_protobuf.sh
+    - name: Build WasmServerless Image
+      run: bash docker/WasmServerless/build_image.sh
+    - name: CI
+      run: bash docker/ci.sh

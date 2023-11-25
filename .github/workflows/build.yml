@@ -20,5 +20,3 @@ jobs:
       run: bash ./scripts/install_protobuf.sh
     - name: Build
       run: cargo build --verbose
-    # - name: Run tests
-    #   run: cargo test --verbose
