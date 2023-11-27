@@ -1582,7 +1582,7 @@ def main(args):
         # download_url(
         #     CONST_urls[WASMEDGE], join(TEMP_PATH, CONST_release_pkg), show_progress
         # )
-        # Copy from temp
+
         copyfile("/tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz", join(TEMP_PATH, CONST_release_pkg))
 
         # Extract archive
