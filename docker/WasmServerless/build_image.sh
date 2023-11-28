@@ -2,7 +2,7 @@
 
 CURRENT_DIR=`pwd`
 TARGET_DIR="$CURRENT_DIR/target"
-DOCKER_DIR="$CURRENT_DIR/docker/WasmServerless/"
+DOCKER_DIR="$CURRENT_DIR/docker/WasmServerless"
 IMAGE_VERSION="v1"
 IMAGE_NAME="wasm_serverless:$IMAGE_VERSION"
 
@@ -15,11 +15,13 @@ then
     fi
 fi
 
-cp -r $TARGET_DIR $DOCKER_DIR
 
-cp "$CURRENT_DIR/node_config.yaml" $DOCKER_DIR
+mkdir -p $DOCKER_DIR/target/release
+cp $TARGET_DIR/release/wasm_serverless $DOCKER_DIR/target/release/wasm_serverless
+
+# cp "$CURRENT_DIR/node_config.yaml" $DOCKER_DIR
 
 docker build -t $IMAGE_NAME docker/WasmServerless --no-cache
 
-rm -f $DOCKER_DIR/node_config.yaml
-rm -rf $DOCKER_DIR/target
+# rm -f $DOCKER_DIR/node_config.yaml
+# rm -rf $DOCKER_DIR/target

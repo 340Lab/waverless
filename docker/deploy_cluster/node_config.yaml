@@ -1,0 +1,25 @@
+nodes: 
+  1: 
+    id: h8wq4b2uy6fiac37lbx16gb08
+    addr: 192.168.31.162:2500
+    spec: [meta,master]
+  2: 
+    id: h8wq4b2uy6fiac37lbx16gb08
+    addr: 192.168.31.162:2505
+    spec: [meta,worker]
+  3: 
+    id: t8f80nn3qxavell7leopbab40
+    addr: 192.168.31.87:2510
+    spec: [meta,worker]
+  4: 
+    id: t8f80nn3qxavell7leopbab40
+    addr: 192.168.31.87:2515
+    spec: [meta,worker]
+  5: 
+    id: d8huj03dv09keg3gp4vh1cj7k
+    addr: 192.168.31.96:2520
+    spec: [meta,worker]
+  6: 
+    id: d8huj03dv09keg3gp4vh1cj7k
+    addr: 192.168.31.96:2525
+    spec: [meta,worker]

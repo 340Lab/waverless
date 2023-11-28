@@ -42,7 +42,11 @@ async fn main() {
     // tracing_subscriber::fmt::init();
 
     let args = CmdArgs::parse();
-    let config = config::read_config(args.this_id, "node_config.yaml");
+    // if args.deploy.is_some() {
+    //     deploy::deploy(args).await;
+    //     return;
+    // }
+    let config = config::read_config(args.this_id, args.config_file);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
     Sys::new(config).wait_for_end().await;

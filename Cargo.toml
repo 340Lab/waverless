@@ -38,6 +38,7 @@ axum = "0.6.20"
 wasmedge-sdk = { version = "0.10.1" }
 async-channel = "2.1.0"
 sysinfo = "0.29.10"
+ssh2 = "0.9.4"
 
 # slog-envlogger = { version = "2.1.0", optional = true }
 

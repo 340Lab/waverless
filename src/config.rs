@@ -44,13 +44,17 @@ pub struct YamlConfig {
     // pub this: NodeID,
 }
 
-pub fn read_config(this_id: NodeID, file_path: impl AsRef<Path>) -> NodesConfig {
+pub fn read_yaml_config(file_path: impl AsRef<Path>) -> YamlConfig {
     let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
         panic!("open config file failed, err: {:?}", err);
     });
-    let mut yaml_config: YamlConfig = serde_yaml::from_reader(file).unwrap_or_else(|e| {
+    serde_yaml::from_reader(file).unwrap_or_else(|e| {
         panic!("parse yaml config file failed, err: {:?}", e);
-    });
+    })
+}
+
+pub fn read_config(this_id: NodeID, file_path: impl AsRef<Path>) -> NodesConfig {
+    let mut yaml_config = read_yaml_config(file_path);
 
     NodesConfig {
         this: (this_id, yaml_config.nodes.remove(&this_id).unwrap()),

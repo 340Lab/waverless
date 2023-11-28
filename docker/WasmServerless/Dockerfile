@@ -20,7 +20,7 @@ LABEL description="Wasm serverless platform"
 # RUN python3 /tmp/install/wasm_edge.py -v 0.13.3
 
 COPY target/release/wasm_serverless /usr/local/bin/wasm_serverless
-COPY node_config.yaml /etc/wasm_serverless/node_config.yaml
+# COPY node_config.yaml /etc/wasm_serverless/node_config.yaml
 COPY wasm_serverless_entrypoint.sh /etc/wasm_serverless/
 RUN chmod +x /etc/wasm_serverless/wasm_serverless_entrypoint.sh
 # ENV WASM_SERVERLESS_NODEID=-1

@@ -19,7 +19,8 @@ use prost::bytes::Bytes;
 use qp2p::{Connection, ConnectionIncoming, Endpoint, WireMsg};
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -113,7 +114,10 @@ impl LogicalModule for P2PQuicNode {
         let this_addr = self.p2p_base().nodes_config.this.1.addr;
         // create an endpoint for us to listen on and send from.
         let (endpoint, mut incoming_conns) = Endpoint::builder()
-            .addr(this_addr)
+            .addr(SocketAddr::new(
+                IpAddr::from_str("0.0.0.0").unwrap(),
+                this_addr.port(),
+            ))
             .keep_alive_interval(Duration::from_millis(100))
             // timeout of send or receive or connect, bigger than interval
             .idle_timeout(2 * 1_000 /* 3600s = 1h */)
