@@ -1,0 +1,97 @@
+---
+- hosts: localhost
+  tasks:
+    # install rysr, proto, docker, docker-compose
+    - name: Install All
+      include_tasks: ../install/_ans_install.yml
+    
+    - name: Remove Docker Stack
+      docker_stack:
+        state: absent
+        name: wasm_serverless
+
+
+    - name: Build the application on the master node
+      shell: cargo build --release
+
+    - name: Build the WASM demo fn
+      shell: cargo build --target wasm32-wasi --release
+      args:
+        chdir: ../../apps/fn2
+
+    # - name: Debug
+    #   shell: ls ../../target/release/
+
+    - name: Generate Docker stack file
+      include_tasks: _ans_build_cluster_docker_stack.yml
+
+    - name: Remove Zip
+      file:
+        path: ../../docker.zip
+        state: absent
+
+    - name: Zip docker file
+      command: "zip -r docker.zip docker"
+      args:
+        chdir: ../..
+- hosts: web
+  vars_prompt:
+    - name: build_env
+      prompt: "Do you want to rebuild the environment? (yes/no)"
+      private: false
+  tasks:
+    - name: Debug file path
+      debug:
+        var: src
+    - name: Copy release to all nodes
+      copy:
+        src: ../../target/release/wasm_serverless
+        dest: /root/wasm_serverless_deploy/target/release/wasm_serverless
+      become: yes
+    - name: Copy node_config.yaml to all nodes
+      copy:
+        src: ../deploy_cluster/node_config.yaml
+        dest: /root/wasm_serverless_deploy/node_config.yaml
+      become: yes
+    - name: Make dir for wasm
+      file:
+        path: /root/wasm_serverless_deploy/apps/fn2/target/wasm32-wasi/release
+        state: directory
+      become: yes
+    - name: Copy wasm to all nodes
+      copy:
+        src: ../../apps/fn2/target/wasm32-wasi/release/fn2.wasm
+        dest: /root/wasm_serverless_deploy/apps/fn2/target/wasm32-wasi/release/fn2.wasm
+        force: yes
+      become: yes
+    - name: Copy Docker scripts to all nodes
+      copy:
+        src: ../../docker.zip
+        dest: /root/wasm_serverless_deploy/docker.zip
+      become: yes
+
+    - name: Unzip Docker scripts to all nodes
+      shell: rm -rf docker && unzip -q -o docker.zip && rm -f docker.zip && chmod -R 775 docker
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes
+
+    - name: Build the environment Docker image (conditionally)
+      command: ./docker/WasmEdge/build_image.sh
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes
+      when: build_env == "yes"
+
+    - name: Build the application Docker image
+      command: ./docker/WasmServerless/build_image.sh
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes
+
+
+
+- hosts: localhost
+  tasks:
+    - name: Stack Up
+      shell: docker stack deploy -c ../deploy_cluster/gen_docker_stack.yml wasm_serverless

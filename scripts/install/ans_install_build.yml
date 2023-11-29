@@ -1,0 +1,7 @@
+---
+- hosts: localhost
+  tasks:
+    # install rysr, proto, docker, docker-compose
+    - name: Install Build Related
+      become: true
+      include: _ans_install_build.yml

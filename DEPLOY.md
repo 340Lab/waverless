@@ -1,22 +1,16 @@
-### We use multi-computer to build up a cluster.
+### Multi Nodes
 
 1. First clone this project on master node
 
-2. Docker swarm
+2. Ansible install with `scripts/install/install_ansible.sh` (need python)
 
-    1. docker swarm init
+3. Docker swarm init, join others to master (TODO: make auto)
 
-    2. (TODO: make this auto) run `docker swarm join xxx` on each node.
+4. Config the `scripts/deploy_cluster/node_config.yaml` each service
 
-    3. Registry 镜像
+5. Set up ssh interflow and ansible node info `python scripts/deploy_cluster/1.ansible_setup.py`
 
-    docker pull registry:latest
+6. Redploy `2.redeploy.sh`
 
-    docker run -d -p 5000:5000 --restart=always --name registry --network ingress registry:latest
-
-    docker tag wasm_serverless:v1 localhost:5000/wasm_serverless:v1
-
-    docker push localhost:5000/wasm_serverless:v1
-
-    4. `docker service ls`
-3. 
+### Single Node
+follow the ci

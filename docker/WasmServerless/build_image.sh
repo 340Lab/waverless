@@ -1,23 +1,32 @@
 #!/bin/bash
 
 CURRENT_DIR=`pwd`
-TARGET_DIR="$CURRENT_DIR/target"
 DOCKER_DIR="$CURRENT_DIR/docker/WasmServerless"
 IMAGE_VERSION="v1"
 IMAGE_NAME="wasm_serverless:$IMAGE_VERSION"
 
-if [ ! -d $TARGET_DIR ]
-then
-    cargo build --release
-    if test $? -ne 0
-    then
-        exit 1
-    fi
-fi
-
+# if [ ! -d $TARGET_DIR ]
+# then
+#     cargo build --release
+#     if test $? -ne 0
+#     then
+#         exit 1
+#     fi
+# fi
+echo ">"
+ls $CURRENT_DIR/target
+echo ">"
+ls $CURRENT_DIR/target/release
+echo ">"
+ls $CURRENT_DIR/apps/fn2/target
+echo ">"
+ls $CURRENT_DIR/apps/fn2/target/wasm32-wasi/release
 
 mkdir -p $DOCKER_DIR/target/release
-cp $TARGET_DIR/release/wasm_serverless $DOCKER_DIR/target/release/wasm_serverless
+mkdir -p $DOCKER_DIR/apps/fn2
+
+cp $CURRENT_DIR/target/release/wasm_serverless $DOCKER_DIR/target/release/wasm_serverless
+cp -r $CURRENT_DIR/apps/fn2/target $DOCKER_DIR/apps/fn2/target
 
 # cp "$CURRENT_DIR/node_config.yaml" $DOCKER_DIR
 

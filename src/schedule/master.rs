@@ -48,7 +48,7 @@ impl LogicalModule for ScheMaster {
         Self: Sized,
     {
         Self {
-            executor: Executor::new(),
+            executor: Executor::new(args.nodes_config.file_dir),
             // each_fn_caching: HashMap::new(),
             node_selector: Box::new(HashNodeSelector),
             request_handler_view: RequestHandlerView::new(args.logical_modules_ref.clone()),

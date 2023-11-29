@@ -1,0 +1,28 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Build the application on the master node
+      become: true
+      shell: |
+        cat > /tmp/build.sh <<'END'
+        #!/bin/sh
+          source $HOME/.cargo/env
+          cargo build --release
+        END
+        bash /tmp/build.sh
+        rm -f /tmp/build.sh
+      args:
+        chdir: ../..
+        
+    - name: Build demo wasm fn2
+      become: true
+      shell: |
+        cat > /tmp/build.sh <<'END'
+        #!/bin/sh
+          source $HOME/.cargo/env
+          cargo build --target wasm32-wasi --release
+        END
+        bash /tmp/build.sh
+        rm -f /tmp/build.sh
+      args:
+        chdir: ../../apps/fn2

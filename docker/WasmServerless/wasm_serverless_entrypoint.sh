@@ -1,5 +1,9 @@
 #!/bin/bash
 
-echo "Node id is ${WASM_SERVERLESS_NODEID}"
+echo "Node id: ${WASM_SERVERLESS_NODEID}"
+echo "Who am i: $(whoami)"
 
-/usr/local/bin/wasm_serverless $WASM_SERVERLESS_NODEID /etc/wasm_serverless/config/node_config.yaml
+cd /usr/local/bin/
+ls /etc/wasm_serverless/
+
+wasm_serverless $WASM_SERVERLESS_NODEID /etc/wasm_serverless/

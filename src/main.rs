@@ -46,7 +46,7 @@ async fn main() {
     //     deploy::deploy(args).await;
     //     return;
     // }
-    let config = config::read_config(args.this_id, args.config_file);
+    let config = config::read_config(args.this_id, args.files_dir);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
     Sys::new(config).wait_for_end().await;

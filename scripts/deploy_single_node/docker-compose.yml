@@ -1,0 +1,22 @@
+version: '3'
+
+networks:
+    cluster:
+      ipam:
+         config:
+         - subnet: 192.168.0.0/24
+           gateway: 192.168.0.1
+
+services:
+  node1:
+    image: "wasm_serverless:v1"
+    environment:
+      WASM_SERVERLESS_NODEID: "1"
+  node2:
+    image: "wasm_serverless:v1"
+    environment:
+      WASM_SERVERLESS_NODEID: "2"
+  node3:
+    image: "wasm_serverless:v1"
+    environment:
+      WASM_SERVERLESS_NODEID: "3"

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::container_manager::ContainerManager;
 
 pub struct Executor {
@@ -5,9 +7,9 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new() -> Self {
+    pub fn new(file_dir: impl AsRef<Path>) -> Self {
         Self {
-            container_manager: ContainerManager::new(),
+            container_manager: ContainerManager::new(file_dir),
         }
     }
     pub async fn execute(&self, req_fn: &str) {

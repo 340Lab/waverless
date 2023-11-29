@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -49,13 +50,15 @@ impl<R> LRUCache<R> {
 pub struct ContainerManager {
     cache: Mutex<LRUCache<Vm>>,
     using_map: SkipMap<String, Arc<Mutex<()>>>,
+    file_dir: PathBuf,
 }
 
 impl ContainerManager {
-    pub fn new() -> Self {
+    pub fn new(file_dir: impl AsRef<Path>) -> Self {
         Self {
             cache: Mutex::new(LRUCache::new(10)),
             using_map: SkipMap::new(),
+            file_dir: file_dir.as_ref().to_owned(),
         }
     }
     pub async fn finish_using<'a>(
@@ -92,9 +95,12 @@ impl ContainerManager {
         // 2. 从磁盘加载容器
         else {
             tracing::info!("new vm");
-            let module =
-                Module::from_file(Some(&config), format!("apps/imgs/{}.wasm", container_name))
-                    .unwrap();
+            let module = Module::from_file(
+                Some(&config),
+                self.file_dir
+                    .join(format!("/apps/imgs/{}.wasm", container_name)),
+            )
+            .unwrap();
             // self.cache.lock().await.put(container_name, module.clone());
 
             (

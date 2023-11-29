@@ -1,0 +1,45 @@
+- name: Check if Rust is installed
+  become: true
+  command: rustc --version
+  ignore_errors: yes
+  register: rust_installed
+
+- name: Install required packages
+  become: true
+  apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - clang
+    - lldb
+    - lld
+    - build-essential
+    - curl
+    - protobuf-compiler
+    - pkg-config
+    - libssl-dev
+
+- name: Install Rust if not present
+  become: true
+  shell: |
+    cat > /tmp/install_rust.sh <<'END'
+      #!/bin/sh
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      source $HOME/.cargo/env
+      rustup target add wasm32-wasi 
+    END
+
+    bash /tmp/install_rust.sh
+    rm -f /tmp/install_rust.sh
+
+  when: "'rustc' not in rust_installed.stdout"
+- name: Add Rust to PATH
+  become: true
+  lineinfile:
+    path: "{{ ansible_user_dir }}/.bashrc"
+    line: |
+      export PATH="{{ ansible_user_dir }}/cargo/bin:$PATH"
+  when: "'rustc' not in rust_installed.stdout"
+
+- name: Install WasmEdge
+  include_tasks: _ans_install_wasmedge.yml

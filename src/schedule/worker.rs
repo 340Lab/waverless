@@ -27,7 +27,7 @@ impl LogicalModule for ScheWorker {
         Self: Sized,
     {
         Self {
-            executor: Executor::new(),
+            executor: Executor::new(args.nodes_config.file_dir),
             request_handler_view: RequestHandlerView::new(args.logical_modules_ref.clone()),
         }
     }

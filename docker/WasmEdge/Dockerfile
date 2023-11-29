@@ -16,8 +16,10 @@ LABEL description="Wasm serverless platform"
 
 RUN apt-get update && apt-get install -y python3 python3-pip git && mkdir -p /tmp/install
 # COPY --from=builder /root/.wasmedge /root/.wasmedge
-COPY env_prepare/inner/wasm_edge.py /tmp/install/wasm_edge.py
-COPY env_prepare/inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz /tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+COPY wasm_edge.py /tmp/install/wasm_edge.py
+COPY WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz /tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+
+RUN ls /tmp/install
 RUN python3 /tmp/install/wasm_edge.py -v 0.13.3
 
 # COPY target/release/wasm_serverless /usr/local/bin/wasm_serverless

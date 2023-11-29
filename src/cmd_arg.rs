@@ -9,7 +9,7 @@ pub struct CmdArgs {
     /// Name of the person to greet
     // #[arg(short, long)]
     pub this_id: NodeID,
-    pub config_file: String,
+    pub files_dir: String,
     // wrap password
     // pub deploy: Option<String>,
 }
