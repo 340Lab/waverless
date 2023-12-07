@@ -14,6 +14,7 @@ def read_yaml(file_path):
 
 def generate_docker_compose(ip, nodes):
     services = {}
+    
     for key, node in nodes.items():
         service_name = f"node{key}"
 
@@ -35,7 +36,8 @@ def generate_docker_compose(ip, nodes):
             'volumes': ['/root/wasm_serverless_deploy:/etc/wasm_serverless/config'],
             'environment': {
                 'WASM_SERVERLESS_NODEID': key
-            }
+            },
+            'privileged': True # for tc control
         }
 
     compose_data = {'version': '3', 'services': services}
