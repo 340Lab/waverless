@@ -14,7 +14,7 @@ FROM ubuntu:18.04 as wasm_serverless
 LABEL maintainers="ActivePeter"
 LABEL description="Wasm serverless platform"
 
-RUN apt-get update && apt-get install -y python3 python3-pip git && mkdir -p /tmp/install
+RUN apt-get update && apt-get install -y python3 python3-pip git iproute2 iputils-ping && mkdir -p /tmp/install
 # COPY --from=builder /root/.wasmedge /root/.wasmedge
 COPY wasm_edge.py /tmp/install/wasm_edge.py
 COPY WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz /tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
