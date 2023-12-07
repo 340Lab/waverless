@@ -1,15 +1,8 @@
 ---
 - hosts: localhost
   tasks:
-    # install rysr, proto, docker, docker-compose
     - name: Install All
       include_tasks: ../install/_ans_install.yml
-    
-    - name: Remove Docker Stack
-      docker_stack:
-        state: absent
-        name: wasm_serverless
-
 
     - name: Build the application on the master node
       shell: cargo build --release
@@ -19,11 +12,8 @@
       args:
         chdir: ../../apps/fn2
 
-    # - name: Debug
-    #   shell: ls ../../target/release/
-
-    - name: Generate Docker stack file
-      include_tasks: _ans_build_cluster_docker_stack.yml
+    - name: Generate Docker Compose File
+      shell: python3 _gen_each_node_compose.py
 
     - name: Remove Zip
       file:
@@ -32,6 +22,16 @@
 
     - name: Zip docker file
       command: "zip -r docker.zip docker"
+      args:
+        chdir: ../..
+
+    - name: Remove scripts Zip
+      file:
+        path: ../../scripts.zip
+        state: absent
+
+    - name: Zip scripts file
+      command: "zip -r scripts.zip scripts"
       args:
         chdir: ../..
 - hosts: web
@@ -47,6 +47,25 @@
       copy:
         src: ../../target/release/wasm_serverless
         dest: /root/wasm_serverless_deploy/target/release/wasm_serverless
+      become: yes
+
+    - name: Check if the Docker compose configuration file exists
+      stat:
+        path: "/root/wasm_serverless_deploy/docker-compose.yml"
+      register: compose_file
+
+    - name: Docker compose down if the configuration file exists
+      command: docker-compose down
+      args:
+        chdir: "/root/wasm_serverless_deploy"
+      become: yes
+      when: compose_file.stat.exists
+      ignore_errors: yes
+
+    - name: Copy compose_{ip}.yml to all nodes
+      copy:
+        src: ../deploy_cluster/compose_{{ ansible_host }}.yml
+        dest: /root/wasm_serverless_deploy/docker-compose.yml
       become: yes
     - name: Copy node_config.yaml to all nodes
       copy:
@@ -76,6 +95,21 @@
         chdir: /root/wasm_serverless_deploy
       become: yes
 
+    - name: Copy scripts to all nodes
+      copy:
+        src: ../../scripts.zip
+        dest: /root/wasm_serverless_deploy/scripts.zip
+      become: yes
+
+    - name: Unzip scripts to all nodes
+      shell: rm -rf scripts && unzip -q -o scripts.zip && rm -f scripts.zip && chmod -R 775 scripts
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes
+
+    - name: Install docker
+      include_tasks: ../install/_ans_install_docker.yml
+
     - name: Build the environment Docker image (conditionally)
       command: ./docker/WasmEdge/build_image.sh
       args:
@@ -89,9 +123,14 @@
         chdir: /root/wasm_serverless_deploy
       become: yes
 
+    - name: docker-compose
+      command: docker-compose -v
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes
 
-
-- hosts: localhost
-  tasks:
-    - name: Stack Up
-      shell: docker stack deploy -c ../deploy_cluster/gen_docker_stack.yml wasm_serverless
+    - name: Docker compose up
+      command: docker-compose --compatibility up -d
+      args:
+        chdir: /root/wasm_serverless_deploy
+      become: yes

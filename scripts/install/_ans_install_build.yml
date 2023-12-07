@@ -1,9 +1,3 @@
-- name: Check if Rust is installed
-  become: true
-  command: rustc --version
-  ignore_errors: yes
-  register: rust_installed
-
 - name: Install required packages
   become: true
   apt:
@@ -18,6 +12,16 @@
     - protobuf-compiler
     - pkg-config
     - libssl-dev
+    - snap
+
+- name: Install Docker
+  include_tasks: ../install/_ans_install_docker.yml
+
+- name: Check if Rust is installed
+  become: true
+  command: rustc --version
+  ignore_errors: yes
+  register: rust_installed
 
 - name: Install Rust if not present
   become: true

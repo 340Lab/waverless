@@ -56,6 +56,8 @@ impl LogicalModule for ScheMaster {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        tracing::info!("start as master");
+
         let view = self.request_handler_view.clone();
         Ok(vec![JoinHandleWrapper::from(tokio::spawn(async move {
             start_http_handler(view).await;
@@ -67,18 +69,11 @@ impl LogicalModule for ScheMaster {
 impl RequestHandler for ScheMaster {
     async fn handle_request(&self, req_fn: &str) -> Response {
         // 选择节点
-        // let node = self.node_selector.select_node(
-        //     self.request_handler_view.p2p().nodes_config.peers.len() + 1,
-        //     req_fn,
-        // );
-        let node = 1;
-        // tracing::info!("select node: {} for {}", node, req_fn);
-        // tracing::info!(
-        //     "this {} {}",
-        //     self.request_handler_view.p2p().nodes_config.this.0,
-        //     self.request_handler_view.p2p().nodes_config.this.0 == node
-        // );
-        // let node = 1;
+        let node = self.node_selector.select_node(
+            self.request_handler_view.p2p().nodes_config.peers.len() + 1,
+            req_fn,
+        );
+
         if self.request_handler_view.p2p().nodes_config.this.0 == node {
             // println!("run");
             // 本节点执行

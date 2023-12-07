@@ -1,2 +1,3 @@
 gen_ansible.ini
 gen_docker_stack.yml
+compose_*

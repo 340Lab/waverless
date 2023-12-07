@@ -32,6 +32,8 @@ impl LogicalModule for ScheWorker {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        tracing::info!("start as worker");
+
         let view = self.request_handler_view.clone();
         Ok(vec![JoinHandleWrapper::from(tokio::spawn(async move {
             start_http_handler(view).await;

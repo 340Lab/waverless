@@ -1,13 +1,13 @@
 - name: Check if the file exists
   ansible.builtin.stat:
-    path: inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+    path: ../install/inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
   register: file_stat
 
 - name: Download WasmEdge release file
   become: true
   ansible.builtin.get_url:
     url: "https://github.com/WasmEdge/WasmEdge/releases/download/0.13.3/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz"
-    dest: "inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz"
+    dest: "../install/inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz"
   when: not file_stat.stat.exists
 
 - name: Install WasmEdge
@@ -24,5 +24,5 @@
     bash /tmp/install_wasmedge.sh
     rm -f /tmp/install_wasmedge.sh
   args:
-    chdir: '../..'
-    creates: "/usr/local/bin/wasmedge"  # Skip if WasmEdge is already installed
+    chdir: "../.."
+    creates: "/usr/local/bin/wasmedge" # Skip if WasmEdge is already installed

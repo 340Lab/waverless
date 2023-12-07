@@ -1,0 +1,16 @@
+- name: Check Docker installation status
+  command: docker --version
+  register: docker_version_output
+  ignore_errors: true
+  become: yes
+
+- name: Print Docker version if installed
+  debug:
+    msg: "{{ docker_version_output.stdout }}"
+  become: yes
+  when: docker_version_output.rc == 0
+
+- name: Handle case when Docker is not installed
+  shell: snap install docker
+  become: yes
+  when: docker_version_output.rc != 0

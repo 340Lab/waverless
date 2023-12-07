@@ -145,8 +145,10 @@ impl LogicalModule for P2PQuicNode {
                         match res {
                             Ok((connection, incoming)) => {
                                 tracing::info!("connected to {}", addr);
-
+                                let _=connection.send((Bytes::new(),Bytes::new(), Bytes::from(this_addr.to_string()))).await;
+                                // send self addr
                                 handle_connection(
+                                    addr,
                                     &view,
                                     shared.clone(),
                                     &endpoint,
@@ -180,10 +182,27 @@ impl LogicalModule for P2PQuicNode {
             loop {
                 tokio::select! {
                     next_incoming= incoming_conns.next() => {
-                        if let Some((connection, incoming)) = next_incoming {
-                            tracing::info!("recv connect from {}", connection.remote_address());
-                            // handle_conflict_connection(&view,&shared, &endpoint, connection, incoming);
-                            new_handle_connection_task(&view, shared.clone(), endpoint.clone(), connection, incoming);
+                        if let Some((connection, mut incoming)) = next_incoming {
+                            let res = incoming.next().await;
+                            
+                            match res {
+                                Ok(msg) => {
+                                    if let Some(WireMsg((_head, _, bytes))) = msg {
+                                        let addr=String::from_utf8(bytes.to_vec()).unwrap().parse::<SocketAddr>().unwrap();
+                                        tracing::info!("recv connect from {}", addr);
+
+                                        // handle_conflict_connection(&view,&shared, &endpoint, connection, incoming);
+                                        new_handle_connection_task(addr,&view, shared.clone(), endpoint.clone(), connection, incoming);
+                                    }else{
+                                        tracing::info!("didn't recv head"); 
+                                        continue;   
+                                    }
+                                }
+                                Err(err)=>{
+                                    tracing::info!("recv head error {:?}",err);
+                                    continue;
+                                }
+                            }
                         }else{
                             // no more connections, system shutdown
                             let _ =shared.btx.send(BroadcastMsg::SysEnd).unwrap_or_else(|err|{
@@ -275,6 +294,7 @@ impl LogicalModule for P2PQuicNode {
 // }
 
 fn new_handle_connection_task(
+    remote_addr: SocketAddr,
     view: &P2PView,
     shared: Arc<P2PQuicNodeShared>,
     endpoint: Endpoint,
@@ -288,11 +308,12 @@ fn new_handle_connection_task(
         .lock()
         .sub_tasks
         .push(tokio::spawn(async move {
-            handle_connection(&view, shared, &endpoint, connection, incoming).await;
+            handle_connection(remote_addr,&view, shared, &endpoint, connection, incoming).await;
         }));
 }
 
 async fn handle_connection(
+    remote_addr: SocketAddr,
     view: &P2PView,
     shared: Arc<P2PQuicNodeShared>,
     _endpoint: &Endpoint,
@@ -300,13 +321,10 @@ async fn handle_connection(
     mut incoming: ConnectionIncoming,
 ) {
     println!("\n---");
-    println!("Listening on: {:?}", connection.remote_address());
+    println!("Listening on: {:?}", remote_addr);
     println!("---\n");
 
-    // let end = Arc::new(AtomicBool::new(false));
 
-    // let handle = tokio::spawn(async move {
-    let remote_addr = connection.remote_address();
     let remote_id = view.p2p().find_peer_id(&remote_addr).unwrap_or_else(|| {
         panic!(
             "remote_addr {:?} not found in peer_id_map {:?}",
