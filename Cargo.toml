@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-qp2p = "0.36.4"                                     #{ path = "qp2p" }                           
+qp2p = "0.36.4"                                     #{ path = "qp2p" }
 tokio = { version = "1.32.0", features = ["full"] }
 thiserror = "1.0.50"
 async-trait = "0.1.74"
@@ -39,6 +39,7 @@ wasmedge-sdk = { version = "0.10.1" }
 async-channel = "2.1.0"
 sysinfo = "0.29.10"
 ssh2 = "0.9.4"
+rand = "0.8.5"
 
 # slog-envlogger = { version = "2.1.0", optional = true }
 

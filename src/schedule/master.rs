@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use ws_derive::LogicalModule;
+// use
 
 use super::{executor::Executor, http_handler::RequestHandler};
 use crate::{
@@ -22,6 +23,45 @@ pub struct ScheMaster {
     node_selector: Box<dyn NodeSelector>,
     request_handler_view: RequestHandlerView,
     // view: ScheMasterView,
+}
+
+trait NodeWeighteFetcher: Send + Sync + 'static {
+    // NOTE: get weight return node weight
+    // larger is better
+    fn get_node_weight(&self, id: NodeID) -> f64;
+}
+
+struct StrawNodeSelector {
+    weight_fetcher: Box<dyn NodeWeighteFetcher>,
+}
+
+impl StrawNodeSelector {
+    fn new(weight_fetcher: Box<dyn NodeWeighteFetcher>) -> Self {
+        Self { weight_fetcher }
+    }
+}
+
+// NOTE: Straw2 algorithm
+impl NodeSelector for StrawNodeSelector {
+    fn select_node(&self, all_node_cnt: usize, fn_name: &str) -> NodeID {
+        // NOTE: 1 is an impossible value for straw
+        let mut max_straw: f64 = 1.0;
+        let mut node_id: NodeID = 1;
+        // NOTE: node id is [1,all_node_cnt]
+        for i in 1..all_node_cnt + 1 {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(fn_name.as_bytes());
+            hasher.write_u64(i as u64);
+            let hash = hasher.finish() % 63336;
+            let weight = self.weight_fetcher.get_node_weight(i as NodeID);
+            let straw = ((hash as f64) / 65536.0).ln() / weight;
+            if (max_straw - 1.0).abs() < 0.000001 || max_straw < straw {
+                max_straw = straw;
+                node_id = i as NodeID;
+            }
+        }
+        return node_id;
+    }
 }
 
 trait NodeSelector: Send + Sync + 'static {
