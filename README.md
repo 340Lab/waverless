@@ -14,13 +14,25 @@ An distributed serverless framework based on wasm runtime.
 
 - x Metric, collecting infos of each nodes
 
-- x Cluster deployment with docker swarm and ansible
+- x Cluster deployment with docker and ansible
 
 - Bench test, comprehensive tests are necessary for writing paper.
 
-- Different application type
+  - x Goose stress test
+  
+  - x Network bandwidth and latency limit with tc
 
-- Propagation delay simulation
+  - Different load pattern
+
+- Scheduling algorithm
+
+  - x random
+
+  - x hash
+
+
+
+- Different application type
 
 - General storage api
 

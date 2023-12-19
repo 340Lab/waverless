@@ -15,11 +15,8 @@ use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
 };
 
-// #[macro_use]
-// pub mod module_view;
 pub mod cmd_arg;
 pub mod config;
-pub mod error_collector;
 pub mod event;
 mod kv;
 pub mod metric;
@@ -31,21 +28,11 @@ pub mod util;
 
 #[cfg(test)]
 mod test;
-// inlcude macro logical_module
-
-// Include the `items` module, which is generated from items.proto.
 
 #[tokio::main]
 async fn main() {
     start_tracing();
-
-    // tracing_subscriber::fmt::init();
-
     let args = CmdArgs::parse();
-    // if args.deploy.is_some() {
-    //     deploy::deploy(args).await;
-    //     return;
-    // }
     let config = config::read_config(args.this_id, args.files_dir);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
