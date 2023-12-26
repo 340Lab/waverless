@@ -13,7 +13,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
 
-use crate::kv::dist_kv::SetOptions;
+use crate::kv::kv_interface::SetOptions;
 use crate::network::proto;
 use crate::network::proto::kv::kv_request::{KvDeleteRequest, KvPutRequest};
 use crate::network::proto::kv::{KeyRange, KvPairs};

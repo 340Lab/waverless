@@ -1,4 +1,4 @@
-### Multi Nodes
+## Multi Nodes
 
 1. First clone this project on master node
 
@@ -12,5 +12,45 @@
 
 6. Redploy `2.redeploy.sh`
 
-### Single Node
+### Deployment File Distribution
+
+- /root/wasm_serverless_deploy/
+    - apps/
+    - {app_name}/
+        - app.wasm
+        - app.yaml
+    - ...
+    - docker/
+    - (contents of the Docker directory, after unzipping)
+    - scripts/
+    - (contents of the scripts directory, after unzipping)
+    - docker.zip
+    - scripts.zip
+    - files/
+        - node_config.yaml
+        - app needed data
+    - target/
+    - release/
+        - wasm_serverless
+    - compose_{ip}.yml (copied from the deploy_cluster directory)
+    - docker-compose.yml
+    - install/
+    - _ans_install.yml
+    - _ans_install_docker.yml
+
+
+### Docker Container File Distribution
+- /usr/local/bin/
+    - wasm_serverless (binary file copied from target/release/ during the build)
+- /etc/wasm_serverless/
+    - apps/
+        - {app_name}
+            - app.* (files copied from apps/fn2/ during the build)
+        - ...
+    - wasm_serverless_entrypoint.sh (script copied during the build)
+    - node_config.yaml (uncomment the corresponding line to copy it during the build if needed)
+    - files/ (volume to /root/wasm_serverless_deploy/files)
+
+
+## Single Node
 follow the ci

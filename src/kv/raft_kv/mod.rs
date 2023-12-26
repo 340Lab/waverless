@@ -14,8 +14,8 @@ mod async_raft_kernel;
 use self::async_raft_kernel::storage::{ClientRequest, OpeType};
 
 use super::{
-    dist_kv::{KVNode, SetOptions},
-    kv_client::KVClient,
+    dist_kv::KVNode,
+    kv_interface::{KVInterface, SetOptions},
 };
 use crate::{
     network::proto::{
@@ -80,7 +80,7 @@ impl KVNode for RaftKVNode {
 }
 
 #[async_trait]
-impl KVClient for RaftKVNode {
+impl KVInterface for RaftKVNode {
     async fn get(&self, key_range: KeyRange) -> WSResult<Vec<KvPair>> {
         // get from local persist
         // self.view

@@ -1,11 +1,10 @@
+use crate::{schedule::container_manager::KeyPattern, sys::NodeID};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     path::{Path, PathBuf},
 };
-
-use crate::sys::NodeID;
 
 #[derive(Debug, Clone)]
 pub struct NodesConfig {
@@ -15,6 +14,14 @@ pub struct NodesConfig {
 }
 
 impl NodesConfig {
+    pub fn get_master_node(&self) -> NodeID {
+        *self
+            .peers
+            .iter()
+            .find(|(_, config)| config.is_master())
+            .unwrap()
+            .0
+    }
     pub fn get_meta_kv_nodes(&self) -> HashSet<NodeID> {
         self.peers
             .iter()
@@ -40,12 +47,56 @@ impl NodeConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FnEventYaml {
+    HttpApp { http_app: () },
+    KvSet { kv_set: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FnInputYaml {
+    Key { key: String },
+    Value { value: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FnMetaYaml {
+    pub event: Vec<FnEventYaml>,
+    // pub input: Option<Vec<FnInputYaml>>,
+    pub kv: Option<Vec<String>>,
+    pub consume_kv: Option<Vec<String>>,
+}
+
+pub enum FnInputMeta {
+    Key(KeyPattern),
+    Value(KeyPattern),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppMetaYaml {
+    pub fns: HashMap<String, FnMetaYaml>,
+}
+
+impl AppMetaYaml {
+    pub fn read(apps_dir: impl AsRef<Path>, appname: &str) -> AppMetaYaml {
+        let file_path = apps_dir.as_ref().join(format!("{}/app.yaml", appname));
+        let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
+            panic!("open config file failed, err: {:?}", err);
+        });
+        serde_yaml::from_reader(file).unwrap_or_else(|e| {
+            panic!("parse yaml config file failed, err: {:?}", e);
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct YamlConfig {
     pub nodes: HashMap<NodeID, NodeConfig>,
     // pub this: NodeID,
 }
 
-pub fn read_yaml_config(file_path: impl AsRef<Path>) -> YamlConfig {
+fn read_yaml_config(file_path: impl AsRef<Path>) -> YamlConfig {
     let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
         panic!("open config file failed, err: {:?}", err);
     });
@@ -55,7 +106,7 @@ pub fn read_yaml_config(file_path: impl AsRef<Path>) -> YamlConfig {
 }
 
 pub fn read_config(this_id: NodeID, file_path: impl AsRef<Path>) -> NodesConfig {
-    let config_path = file_path.as_ref().join("config/node_config.yaml");
+    let config_path = file_path.as_ref().join("files/node_config.yaml");
     let mut yaml_config = read_yaml_config(config_path);
 
     NodesConfig {

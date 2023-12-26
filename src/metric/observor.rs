@@ -43,10 +43,10 @@ impl LogicalModule for MetricObservor {
         let view = self.view.clone();
         self.view.p2p().regist_dispatch(
             proto::metric::RscMetric::default(),
-            move |nid, _p2p, _tid, msg| {
+            move |responser, msg| {
                 let ob = view.metric_observor().as_ref().unwrap();
-                tracing::info!("recv rsc metric from node {} {:?}", nid, msg);
-                let _ = ob.insert_node_rsc_metric(nid, msg);
+                tracing::info!("recv rsc metric from node {} {:?}", responser.node_id, msg);
+                let _ = ob.insert_node_rsc_metric(responser.node_id, msg);
                 Ok(())
             },
         );

@@ -16,7 +16,7 @@ use crate::{
     config::NodesConfig,
     // module_view::P2PModuleLMView,
     result::{ErrCvt, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
-    sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, NodeID, P2PView},
     util::JoinHandleWrapper,
 };
 
@@ -46,7 +46,12 @@ pub struct P2PModule {
     dispatch_map: RwLock<
         HashMap<
             u32,
-            Box<dyn Fn(NodeID, &Self, TaskId, Bytes) -> WSResult<()> + 'static + Send + Sync>,
+            Box<
+                dyn Fn(NodeID, &Self, TaskId, DispatchPayload) -> WSResult<()>
+                    + 'static
+                    + Send
+                    + Sync,
+            >,
         >,
     >,
     waiting_tasks: crossbeam_skiplist::SkipMap<
@@ -58,6 +63,7 @@ pub struct P2PModule {
     // pub state_trans_tx: tokio::sync::broadcast::Sender<ModuleSignal>,
     pub nodes_config: NodesConfig,
     pub next_task_id: AtomicU32,
+    view: P2PView,
 }
 
 // // dispatch_map Box<dyn Fn(Bytes) -> WSResult<()>>
@@ -80,12 +86,52 @@ impl LogicalModule for P2PModule {
             rpc_holder: HashMap::new().into(),
             nodes_config,
             next_task_id: AtomicU32::new(0),
+            view: P2PView::new(args.logical_modules_ref.clone()),
         }
     }
 
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         let sub = self.p2p_kernel.start().await?;
         Ok(sub)
+    }
+}
+
+pub struct Responser {
+    task_id: TaskId,
+    pub node_id: NodeID,
+    view: P2PView,
+}
+
+impl Responser {
+    pub async fn send_resp<RESP>(&self, resp: RESP) -> WSResult<()>
+    where
+        RESP: MsgPack + Default,
+    {
+        if self.view.p2p().nodes_config.this.0 == self.node_id {
+            self.view.p2p().dispatch(
+                self.node_id,
+                resp.msg_id(),
+                self.task_id,
+                DispatchPayload::Local(Box::new(resp)),
+            )
+        } else {
+            self.view
+                .p2p()
+                .send_resp(self.node_id, self.task_id, resp)
+                .await
+        }
+    }
+}
+
+pub enum DispatchPayload {
+    Remote(Bytes),
+    /// zero copy of sub big memory ptr like vector,string,etc.
+    Local(Box<dyn MsgPack>),
+}
+
+impl From<Bytes> for DispatchPayload {
+    fn from(b: Bytes) -> Self {
+        DispatchPayload::Remote(b)
     }
 }
 
@@ -109,31 +155,48 @@ impl P2PModule {
     pub fn regist_dispatch<M, F>(&self, m: M, f: F)
     where
         M: MsgPack + Default,
-        F: Fn(NodeID, &P2PModule, TaskId, M) -> WSResult<()> + Send + Sync + 'static,
+        F: Fn(Responser, M) -> WSResult<()> + Send + Sync + 'static,
     {
         // self.p2p.regist_dispatch();
         let mut map = self.dispatch_map.write();
         let old = map.insert(
             m.msg_id(),
-            Box::new(move |nid, this, task_id, data| {
-                let msg = M::decode(data).map_err(|err| ErrCvt(err).to_ws_network_logic_err())?;
-                f(nid, this, task_id, msg)
+            Box::new(move |nid, p2p, task_id, data| {
+                let msg = match data {
+                    DispatchPayload::Remote(b) => {
+                        assert!(nid != p2p.view.p2p().nodes_config.this.0);
+                        M::decode(b).map_err(|err| ErrCvt(err).to_ws_network_logic_err())?
+                    }
+                    DispatchPayload::Local(b) => {
+                        assert!(nid == p2p.view.p2p().nodes_config.this.0);
+                        *b.downcast::<M>().unwrap()
+                    }
+                };
+
+                f(
+                    Responser {
+                        task_id,
+                        node_id: nid,
+                        view: p2p.view.clone(),
+                    },
+                    msg,
+                )
             }),
         );
         assert!(old.is_none());
     }
 
-    // 自动完成response的匹配
-    pub fn regist_rpc<REQ, F>(&self, req_handler: F)
+    pub fn regist_rpc_send<REQ>(&self)
     where
         REQ: RPCReq,
-        // RESP: MsgPack + Default,
-        F: Fn(NodeID, &P2PModule, TaskId, REQ) -> WSResult<()> + Send + Sync + 'static,
     {
-        self.regist_dispatch(REQ::default(), req_handler);
         // self.p2p.regist_rpc();
-        self.regist_dispatch(REQ::Resp::default(), |nid, this, taskid, v| {
-            let cb = this.waiting_tasks.remove(&(taskid, nid));
+        self.regist_dispatch(REQ::Resp::default(), |resp, v| {
+            let cb = resp
+                .view
+                .p2p()
+                .waiting_tasks
+                .remove(&(resp.task_id, resp.node_id));
             if let Some(pack) = cb {
                 pack.value()
                     .lock()
@@ -144,11 +207,32 @@ impl P2PModule {
                         panic!("send back to waiting task failed: {:?}", err);
                     });
             } else {
-                tracing::warn!("taskid: {} not found", taskid);
+                tracing::warn!("taskid: {} not found", resp.task_id);
             }
             Ok(())
         })
     }
+
+    // 自动完成response的匹配
+    pub fn regist_rpc_recv<REQ, F>(&self, req_handler: F)
+    where
+        REQ: RPCReq,
+        // RESP: MsgPack + Default,
+        F: Fn(Responser, REQ) -> WSResult<()> + Send + Sync + 'static,
+    {
+        self.regist_dispatch(REQ::default(), req_handler);
+    }
+
+    pub fn regist_rpc<REQ, F>(&self, req_handler: F)
+    where
+        REQ: RPCReq,
+        // RESP: MsgPack + Default,
+        F: Fn(Responser, REQ) -> WSResult<()> + Send + Sync + 'static,
+    {
+        self.regist_rpc_recv::<REQ, F>(req_handler);
+        self.regist_rpc_send::<REQ>();
+    }
+
     pub async fn send_resp<RESP>(
         &self,
         node_id: NodeID,
@@ -169,14 +253,14 @@ impl P2PModule {
     }
 
     #[inline]
-    pub async fn call_rpc<R>(&self, node_id: NodeID, req: &R) -> WSResult<R::Resp>
+    pub async fn call_rpc<R>(&self, node_id: NodeID, req: R) -> WSResult<R::Resp>
     where
         R: RPCReq,
     {
         self.call_rpc_inner::<R, R::Resp>(node_id, req).await
     }
 
-    async fn call_rpc_inner<REQ, RESP>(&self, node_id: NodeID, r: &REQ) -> WSResult<RESP>
+    async fn call_rpc_inner<REQ, RESP>(&self, node_id: NodeID, r: REQ) -> WSResult<RESP>
     where
         REQ: MsgPack,
         RESP: MsgPack,
@@ -184,6 +268,23 @@ impl P2PModule {
         // alloc from global
         let taskid: TaskId = self.next_task_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = tokio::sync::oneshot::channel::<Box<dyn MsgPack>>();
+
+        if node_id == self.nodes_config.this.0 {
+            let _ = self
+                .waiting_tasks
+                .insert((taskid, node_id), Some(tx).into());
+            self.dispatch(
+                node_id,
+                r.msg_id(),
+                taskid,
+                DispatchPayload::Local(Box::new(r)),
+            );
+            let resp = rx.await.unwrap();
+            let resp = resp.downcast::<RESP>().unwrap();
+
+            return Ok(*resp);
+        }
+
         if self.rpc_holder.read().get(&(r.msg_id(), node_id)).is_none() {
             let res = self
                 .rpc_holder
@@ -252,7 +353,13 @@ impl P2PModule {
         Ok(*resp)
     }
 
-    pub fn dispatch(&self, nid: NodeID, id: MsgId, taskid: TaskId, data: Bytes) -> WSResult<()> {
+    pub fn dispatch(
+        &self,
+        nid: NodeID,
+        id: MsgId,
+        taskid: TaskId,
+        data: DispatchPayload,
+    ) -> WSResult<()> {
         let read = self.dispatch_map.read();
         if let Some(cb) = read.get(&id) {
             cb(nid, self, taskid, data)?;

@@ -30,6 +30,11 @@ pub enum WsNetworkConnErr {
 }
 
 #[derive(Debug)]
+pub enum WsIoErr {
+    Io(std::io::Error),
+}
+
+#[derive(Debug)]
 pub enum WsRaftErr {
     InitializeError(async_raft::error::InitializeError),
     RaftError(RaftError),
@@ -42,6 +47,9 @@ pub enum WsSerialErr {
 
 #[derive(Error, Debug)]
 pub enum WSError {
+    #[error("Io error: {0:?}")]
+    WsIoErr(WsIoErr),
+
     #[error("Network logic error: {0:?}")]
     WsNetworkLogicErr(WsNetworkLogicErr),
 
@@ -82,6 +90,12 @@ impl From<WsSerialErr> for WSError {
     }
 }
 
+impl From<WsIoErr> for WSError {
+    fn from(e: WsIoErr) -> Self {
+        WSError::WsIoErr(e)
+    }
+}
+
 pub struct ErrCvt<T>(pub T);
 
 macro_rules! impl_err_convertor {
@@ -101,3 +115,4 @@ impl_err_convertor!(EndpointError, WsNetworkConnErr, EndPointError);
 impl_err_convertor!(SendError, WsNetworkConnErr, SendError);
 impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);
 impl_err_convertor!(RaftError, WsRaftErr, RaftError);
+impl_err_convertor!(std::io::Error, WsIoErr, Io);

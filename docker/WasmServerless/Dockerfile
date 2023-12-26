@@ -20,16 +20,17 @@ LABEL description="Wasm serverless platform"
 # RUN python3 /tmp/install/wasm_edge.py -v 0.13.3
 
 COPY target/release/wasm_serverless /usr/local/bin/wasm_serverless
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn1.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn2.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn3.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn4.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn5.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn6.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn7.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn8.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn9.wasm
-COPY apps/fn2/target/wasm32-wasi/release/fn2.wasm /etc/wasm_serverless/fn10.wasm
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn1/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn2/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn3/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn4/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn5/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn6/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn7/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn8/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn9/
+COPY apps/fn2/app.* /etc/wasm_serverless/apps/fn10/
+COPY apps/word_count/app.* /etc/wasm_serverless/apps/word_count/
 
 # COPY node_config.yaml /etc/wasm_serverless/node_config.yaml
 COPY wasm_serverless_entrypoint.sh /etc/wasm_serverless/

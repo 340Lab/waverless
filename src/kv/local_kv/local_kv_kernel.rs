@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::{kv::dist_kv::SetOptions, result::WSResult};
-
+use super::super::kv_interface::SetOptions;
+use crate::result::WSResult;
 // use super::dist_kv::SetOptions;
 
 #[async_trait]

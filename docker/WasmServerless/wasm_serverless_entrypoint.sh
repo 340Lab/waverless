@@ -10,6 +10,10 @@ echo "Who am i: $(whoami)"
 timeout 10 ping baidu.com
 
 cd /usr/local/bin/
+echo "ls /etc/wasm_serverless/"
 ls /etc/wasm_serverless/
+echo "ls /etc/wasm_serverless/files"
+ls /etc/wasm_serverless/files
+
 
 wasm_serverless $WASM_SERVERLESS_NODEID /etc/wasm_serverless/

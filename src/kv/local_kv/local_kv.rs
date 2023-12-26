@@ -2,10 +2,7 @@ use std::collections::BTreeMap;
 
 // use super::dist_kv::SetOptions;
 use crate::{
-    kv::{
-        dist_kv::{KVNode, SetOptions},
-        kv_client::KVClient,
-    },
+    kv::kv_interface::{KVInterface, KVNode, SetOptions},
     network::proto::kv::{kv_response::KvPairOpt, KeyRange, KvPair},
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs},
@@ -25,7 +22,7 @@ pub struct LocalKVNode {
 }
 
 #[async_trait]
-impl KVClient for LocalKVNode {
+impl KVInterface for LocalKVNode {
     async fn get(&self, key_range: KeyRange) -> WSResult<Vec<KvPair>> {
         let mut res = vec![];
         if key_range.end.len() > 0 {

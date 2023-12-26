@@ -1,17 +1,15 @@
 use crate::{
     config::NodesConfig,
-    kv::{
-        dist_kv::KVNode,
-        kv_client::{local_kv_client::LocalKVClient, meta_kv_client::MetaKVClient, KVClient},
-        local_kv::local_kv::LocalKVNode,
-        raft_kv::RaftKVNode,
-        // raft_kv::RaftKVNode,
-    },
+    fs::Fs,
+    kv::dyn_kv::client::DynKvClient,
     metric::{observor::MetricObservor, publisher::MetricPublisher},
     // module_iter::*,
     // module_view::setup_views,
     network::p2p::P2PModule,
-    schedule::{http_handler::RequestHandler, master::ScheMaster, worker::ScheWorker},
+    schedule::{
+        container_manager::ContainerManager, executor::Executor, http_handler::ScheNode,
+        master::ScheMaster, worker::ScheWorker,
+    },
 };
 use crate::{
     // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KVClient},
@@ -243,35 +241,33 @@ macro_rules! start_module {
 }
 
 logical_modules!(
-    meta_kv_client,
-    Box<dyn KVClient>,
-    meta_kv,
-    Option<Box<dyn KVNode>>,
-    local_kv_client,
-    Box<dyn KVClient>,
-    local_kv,
-    Option<Box<dyn KVNode>>,
     p2p,
     P2PModule,
-    // p2p_kernel,
-    // Box<dyn P2PKernel>
     request_handler,
-    Box<dyn RequestHandler>,
+    Box<dyn ScheNode>,
     metric_publisher,
     MetricPublisher,
     metric_observor,
-    Option<MetricObservor>
+    Option<MetricObservor>,
+    dyn_kv_client,
+    DynKvClient,
+    container_manager,
+    ContainerManager,
+    executor,
+    Executor,
+    fs,
+    Fs
 );
 
-logical_module_view_impl!(MetaKVClientView);
-logical_module_view_impl!(MetaKVClientView, meta_kv_client, Box<dyn KVClient>);
-logical_module_view_impl!(MetaKVClientView, meta_kv, Option<Box<dyn KVNode>>);
-logical_module_view_impl!(MetaKVClientView, p2p, P2PModule);
+// logical_module_view_impl!(MetaKVClientView);
+// logical_module_view_impl!(MetaKVClientView, meta_kv_client, Box<dyn KVClient>);
+// logical_module_view_impl!(MetaKVClientView, meta_kv, Option<Box<dyn KVNode>>);
+// logical_module_view_impl!(MetaKVClientView, p2p, P2PModule);
 
 logical_module_view_impl!(MetaKVView);
-logical_module_view_impl!(MetaKVView, p2p, P2PModule);
-logical_module_view_impl!(MetaKVView, meta_kv, Option<Box<dyn KVNode>>);
-logical_module_view_impl!(MetaKVView, local_kv, Option<Box<dyn KVNode>>);
+// logical_module_view_impl!(MetaKVView, p2p, P2PModule);
+// logical_module_view_impl!(MetaKVView, meta_kv, Option<Box<dyn KVNode>>);
+// logical_module_view_impl!(MetaKVView, local_kv, Option<Box<dyn KVNode>>);
 
 logical_module_view_impl!(P2PView);
 logical_module_view_impl!(P2PView, p2p, P2PModule);
@@ -284,7 +280,8 @@ logical_module_view_impl!(ScheWorkerView, p2p, P2PModule);
 
 logical_module_view_impl!(RequestHandlerView);
 logical_module_view_impl!(RequestHandlerView, p2p, P2PModule);
-logical_module_view_impl!(RequestHandlerView, request_handler, Box<dyn RequestHandler>);
+logical_module_view_impl!(RequestHandlerView, request_handler, Box<dyn ScheNode>);
+logical_module_view_impl!(RequestHandlerView, executor, Executor);
 
 logical_module_view_impl!(MetricObservorView);
 logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
@@ -293,6 +290,24 @@ logical_module_view_impl!(MetricObservorView, metric_observor, Option<MetricObse
 logical_module_view_impl!(MetricPublisherView);
 logical_module_view_impl!(MetricPublisherView, p2p, P2PModule);
 logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
+
+logical_module_view_impl!(DynKvClientView);
+logical_module_view_impl!(DynKvClientView, p2p, P2PModule);
+logical_module_view_impl!(DynKvClientView, dyn_kv_client, DynKvClient);
+logical_module_view_impl!(DynKvClientView, container_manager, ContainerManager);
+
+logical_module_view_impl!(ExecutorView);
+logical_module_view_impl!(ExecutorView, p2p, P2PModule);
+logical_module_view_impl!(ExecutorView, container_manager, ContainerManager);
+logical_module_view_impl!(ExecutorView, executor, Executor);
+logical_module_view_impl!(ExecutorView, dyn_kv_client, DynKvClient);
+
+logical_module_view_impl!(ContainerManagerView);
+logical_module_view_impl!(ContainerManagerView, p2p, P2PModule);
+logical_module_view_impl!(ContainerManagerView, container_manager, ContainerManager);
+
+logical_module_view_impl!(FsView);
+logical_module_view_impl!(FsView, fs, Fs);
 
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
     // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -324,10 +339,6 @@ impl LogicalModules {
         let is_master = config.this.1.is_master();
         assert!(is_master || config.this.1.is_worker());
 
-        modules_mut_ref(&arc).local_kv = Some(Some(Box::new(LocalKVNode::new(args.clone()))));
-        modules_mut_ref(&arc).local_kv_client = Some(Box::new(LocalKVClient::new(args.clone())));
-        modules_mut_ref(&arc).meta_kv_client = Some(Box::new(MetaKVClient::new(args.clone())));
-        modules_mut_ref(&arc).meta_kv = Some(Some(Box::new(RaftKVNode::new(args.clone()))));
         modules_mut_ref(&arc).p2p = Some(P2PModule::new(args.clone()));
         modules_mut_ref(&arc).request_handler = Some(if is_master {
             Box::new(ScheMaster::new(args.clone()))
@@ -340,43 +351,27 @@ impl LogicalModules {
         } else {
             Some(None)
         };
+        modules_mut_ref(&arc).dyn_kv_client = Some(DynKvClient::new(args.clone()));
+        modules_mut_ref(&arc).container_manager = Some(ContainerManager::new(args.clone()));
+        modules_mut_ref(&arc).executor = Some(Executor::new(args.clone()));
+        modules_mut_ref(&arc).fs = Some(Fs::new(args.clone()));
         // modules_mut_ref(&arc).p2p_kernel = Some(Box::new(P2PQuicNode::new(args.clone())));
         // setup_views(&arc);
         arc
     }
 
     pub async fn start(&self, sys: &Sys) -> WSResult<()> {
-        start_module_opt!(self, sys, local_kv);
         start_module!(self, sys, p2p);
-        start_module_opt!(self, sys, meta_kv);
-        start_module!(self, sys, local_kv_client);
-        start_module!(self, sys, meta_kv_client);
         start_module!(self, sys, request_handler);
         start_module!(self, sys, metric_publisher);
         start_module_opt!(self, sys, metric_observor);
+        start_module!(self, sys, dyn_kv_client);
+        start_module!(self, sys, container_manager);
+        start_module!(self, sys, executor);
+        start_module!(self, sys, fs);
 
         assert!(self.start_cnt == ALL_MODULES_COUNT.add(0));
         assert!(self.start_cnt == self.new_cnt);
-        // start_module!(self, sys, p2p_kernel);
-
-        // let all_modules_count = ALL_MODULES_COUNT.add(0);
-        // assert_eq!(
-        //     all_modules_count,
-        //     SETTED_MODULES_COUNT.load(Ordering::SeqCst),
-        // );
-
-        // assert_eq!(
-        //     all_modules_count,
-        //     STARTED_MODULES_COUNT.load(Ordering::SeqCst)
-        // );
-
-        // tracing::info!(
-        //     "all:{}, setted:{}, started:{}",
-        //     all_modules_count,
-        //     SETTED_MODULES_COUNT.load(Ordering::SeqCst),
-        //     STARTED_MODULES_COUNT.load(Ordering::SeqCst)
-        // );
-
         Ok(())
     }
 }

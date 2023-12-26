@@ -22,11 +22,14 @@ ls $CURRENT_DIR/apps/fn2/target
 echo ">"
 ls $CURRENT_DIR/apps/fn2/target/wasm32-wasi/release
 
+rm -rf $DOCKER_DIR/target
+rm -rf $DOCKER_DIR/apps
+
 mkdir -p $DOCKER_DIR/target/release
-mkdir -p $DOCKER_DIR/apps/fn2
+mkdir -p $DOCKER_DIR/apps
 
 cp $CURRENT_DIR/target/release/wasm_serverless $DOCKER_DIR/target/release/wasm_serverless
-cp -r $CURRENT_DIR/apps/fn2/target $DOCKER_DIR/apps/fn2/target
+cp -r $CURRENT_DIR/apps $DOCKER_DIR
 
 # cp "$CURRENT_DIR/node_config.yaml" $DOCKER_DIR
 

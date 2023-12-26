@@ -352,7 +352,7 @@ async fn handle_connection(
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
                             // println!("Received from {remote_addr:?} --> {bytes:?}");
-                            view.p2p().dispatch(remote_id, msg_id, task_id, bytes);
+                            view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into());
                             // if bytes == *MSG_MARCO {
                             //     let reply = Bytes::from(MSG_POLO);
                             //     connection

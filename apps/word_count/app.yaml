@@ -1,0 +1,14 @@
+fns:
+  split_file:
+    event:
+    - http_app: 
+    kv:
+    - wordcount_slice_{}
+
+  handle_one_slice:
+    # 函数输入参数为触发事件关联数据，比如http就是json（未适配），kv就是key
+    event:
+    - kv_set: wordcount_slice_{}
+    # 用于表征数据消费关系，决策时直接将数据存到目标执行位置
+    consume_kv: 
+    - wordcount_slice_{}

@@ -1,4 +1,5 @@
 #![allow(clippy::all)]
+#![allow(invalid_reference_casting)] // allow unsafe cast
 #![deny(
     unused_imports,
     unused_variables,
@@ -18,6 +19,8 @@ use tracing_subscriber::{
 pub mod cmd_arg;
 pub mod config;
 pub mod event;
+pub mod fs;
+pub mod host_funcs;
 mod kv;
 pub mod metric;
 pub mod network;

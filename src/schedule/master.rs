@@ -8,8 +8,9 @@ use axum::{
 use ws_derive::LogicalModule;
 // use
 
-use super::{executor::Executor, http_handler::RequestHandler};
+use super::http_handler::ScheNode;
 use crate::{
+    network::proto,
     result::WSResult,
     schedule::http_handler::start_http_handler,
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID, RequestHandlerView},
@@ -18,7 +19,6 @@ use crate::{
 
 #[derive(LogicalModule)]
 pub struct ScheMaster {
-    executor: Executor,
     // each_fn_caching: HashMap<String, HashSet<NodeId>>,
     node_selector: Box<dyn NodeSelector>,
     request_handler_view: RequestHandlerView,
@@ -88,7 +88,6 @@ impl LogicalModule for ScheMaster {
         Self: Sized,
     {
         Self {
-            executor: Executor::new(args.nodes_config.file_dir),
             // each_fn_caching: HashMap::new(),
             node_selector: Box::new(HashNodeSelector),
             request_handler_view: RequestHandlerView::new(args.logical_modules_ref.clone()),
@@ -97,6 +96,17 @@ impl LogicalModule for ScheMaster {
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
+        let view = self.request_handler_view.clone();
+        self.request_handler_view
+            .p2p()
+            .regist_rpc_recv::<proto::sche::FnEventScheRequest, _>(move |responser, r| {
+                let view = view.clone();
+                let _ = tokio::spawn(async move {
+                    let res = view.request_handler().select_node(r).await;
+                    let _ = responser.send_resp(res).await;
+                });
+                Ok(())
+            });
 
         let view = self.request_handler_view.clone();
         Ok(vec![JoinHandleWrapper::from(tokio::spawn(async move {
@@ -106,7 +116,7 @@ impl LogicalModule for ScheMaster {
 }
 
 #[async_trait]
-impl RequestHandler for ScheMaster {
+impl ScheNode for ScheMaster {
     async fn handle_request(&self, req_fn: &str) -> Response {
         // 选择节点
         let node = self.node_selector.select_node(
@@ -117,7 +127,10 @@ impl RequestHandler for ScheMaster {
         if self.request_handler_view.p2p().nodes_config.this.0 == node {
             // println!("run");
             // 本节点执行
-            self.executor.execute(req_fn).await;
+            self.request_handler_view
+                .executor()
+                .execute_http_app(req_fn)
+                .await;
             // println!("end run");
 
             StatusCode::OK.into_response()
@@ -134,5 +147,11 @@ impl RequestHandler for ScheMaster {
             target_node.set_port(target_node.port() + 1);
             Redirect::to(&*format!("http://{}/{}", target_node, req_fn)).into_response()
         }
+    }
+    async fn select_node(
+        &self,
+        _req: proto::sche::FnEventScheRequest,
+    ) -> proto::sche::FnEventScheResponse {
+        proto::sche::FnEventScheResponse { target_node: 2 }
     }
 }

@@ -1,5 +1,5 @@
-use std::net::SocketAddr;
-
+use crate::network::proto;
+use crate::sys::{LogicalModule, RequestHandlerView};
 use async_trait::async_trait;
 use axum::{
     extract::{Path, State},
@@ -7,12 +7,15 @@ use axum::{
     routing::get,
     Router,
 };
-
-use crate::sys::{LogicalModule, RequestHandlerView};
+use std::net::SocketAddr;
 
 #[async_trait]
-pub trait RequestHandler: LogicalModule {
+pub trait ScheNode: LogicalModule {
     async fn handle_request(&self, req_fn: &str) -> Response;
+    async fn select_node(
+        &self,
+        req: proto::sche::FnEventScheRequest,
+    ) -> proto::sche::FnEventScheResponse;
 }
 
 pub async fn start_http_handler(request_handler_view: RequestHandlerView) {

@@ -29,3 +29,19 @@ impl JoinHandleWrapper {
         }
     }
 }
+
+pub struct StrUnsafeRef(usize, usize);
+
+impl StrUnsafeRef {
+    pub fn new(str: &str) -> StrUnsafeRef {
+        StrUnsafeRef(str.as_ptr() as usize, str.len())
+    }
+    pub fn str<'a>(&self) -> &'a str {
+        // tracing::info!("unsafe str ref");
+        let res =
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(self.0 as *const u8, self.1) })
+                .unwrap();
+        // tracing::info!("unsafe str ref get");
+        res
+    }
+}

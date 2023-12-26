@@ -33,7 +33,7 @@ def generate_docker_compose(ip, nodes):
                 }
             },
                 
-            'volumes': ['/root/wasm_serverless_deploy:/etc/wasm_serverless/config'],
+            'volumes': ['/root/wasm_serverless_deploy/files:/etc/wasm_serverless/files'],
             'environment': {
                 'WASM_SERVERLESS_NODEID': key
             },

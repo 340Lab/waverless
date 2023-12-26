@@ -1,3 +1,10 @@
+use crate::{
+    network::proto,
+    result::WSResult,
+    schedule::http_handler::start_http_handler,
+    sys::{LogicalModule, LogicalModuleNewArgs, RequestHandlerView},
+    util::JoinHandleWrapper,
+};
 use async_trait::async_trait;
 use axum::{
     http::StatusCode,
@@ -5,18 +12,10 @@ use axum::{
 };
 use ws_derive::LogicalModule;
 
-use crate::{
-    result::WSResult,
-    schedule::http_handler::start_http_handler,
-    sys::{LogicalModule, LogicalModuleNewArgs, RequestHandlerView},
-    util::JoinHandleWrapper,
-};
-
-use super::{executor::Executor, http_handler::RequestHandler};
+use super::http_handler::ScheNode;
 
 #[derive(LogicalModule)]
 pub struct ScheWorker {
-    executor: Executor,
     request_handler_view: RequestHandlerView,
 }
 
@@ -27,7 +26,6 @@ impl LogicalModule for ScheWorker {
         Self: Sized,
     {
         Self {
-            executor: Executor::new(args.nodes_config.file_dir),
             request_handler_view: RequestHandlerView::new(args.logical_modules_ref.clone()),
         }
     }
@@ -42,10 +40,19 @@ impl LogicalModule for ScheWorker {
 }
 
 #[async_trait]
-impl RequestHandler for ScheWorker {
+impl ScheNode for ScheWorker {
     async fn handle_request(&self, req_fn: &str) -> Response {
-        self.executor.execute(req_fn).await;
+        self.request_handler_view
+            .executor()
+            .execute_http_app(req_fn)
+            .await;
 
         StatusCode::OK.into_response()
+    }
+    async fn select_node(
+        &self,
+        _req: proto::sche::FnEventScheRequest,
+    ) -> proto::sche::FnEventScheResponse {
+        panic!("worker should not select node");
     }
 }

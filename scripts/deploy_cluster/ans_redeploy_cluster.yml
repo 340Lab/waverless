@@ -11,6 +11,11 @@
       shell: cargo build --target wasm32-wasi --release
       args:
         chdir: ../../apps/fn2
+      
+    - name: Build the WASM demo word_count
+      shell: cargo build --target wasm32-wasi --release
+      args:
+        chdir: ../../apps/word_count
 
     - name: Generate Docker Compose File
       shell: python3 _gen_each_node_compose.py
@@ -43,6 +48,16 @@
     - name: Debug file path
       debug:
         var: src
+    - name: Make sure the directory exists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      become: yes
+      loop:
+        - /root/wasm_serverless_deploy
+        - /root/wasm_serverless_deploy/apps
+        - /root/wasm_serverless_deploy/files
+
     - name: Copy release to all nodes
       copy:
         src: ../../target/release/wasm_serverless
@@ -61,7 +76,7 @@
       become: yes
       when: compose_file.stat.exists
       ignore_errors: yes
-
+    
     - name: Copy compose_{ip}.yml to all nodes
       copy:
         src: ../deploy_cluster/compose_{{ ansible_host }}.yml
@@ -70,67 +85,105 @@
     - name: Copy node_config.yaml to all nodes
       copy:
         src: ../deploy_cluster/node_config.yaml
-        dest: /root/wasm_serverless_deploy/node_config.yaml
+        dest: /root/wasm_serverless_deploy/files/node_config.yaml
       become: yes
-    - name: Make dir for wasm
-      file:
-        path: /root/wasm_serverless_deploy/apps/fn2/target/wasm32-wasi/release
-        state: directory
-      become: yes
-    - name: Copy wasm to all nodes
-      copy:
-        src: ../../apps/fn2/target/wasm32-wasi/release/fn2.wasm
-        dest: /root/wasm_serverless_deploy/apps/fn2/target/wasm32-wasi/release/fn2.wasm
-        force: yes
-      become: yes
-    - name: Copy Docker scripts to all nodes
-      copy:
-        src: ../../docker.zip
-        dest: /root/wasm_serverless_deploy/docker.zip
-      become: yes
+    
+    - name: Scripts
+      block:
+      - name: Copy Docker scripts to all nodes
+        copy:
+          src: ../../docker.zip
+          dest: /root/wasm_serverless_deploy/docker.zip
+        become: yes
 
-    - name: Unzip Docker scripts to all nodes
-      shell: rm -rf docker && unzip -q -o docker.zip && rm -f docker.zip && chmod -R 775 docker
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
+      - name: Unzip Docker scripts to all nodes
+        shell: rm -rf docker && unzip -q -o docker.zip && rm -f docker.zip && chmod -R 775 docker
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
 
-    - name: Copy scripts to all nodes
-      copy:
-        src: ../../scripts.zip
-        dest: /root/wasm_serverless_deploy/scripts.zip
-      become: yes
+      - name: Copy scripts to all nodes
+        copy:
+          src: ../../scripts.zip
+          dest: /root/wasm_serverless_deploy/scripts.zip
+        become: yes
 
-    - name: Unzip scripts to all nodes
-      shell: rm -rf scripts && unzip -q -o scripts.zip && rm -f scripts.zip && chmod -R 775 scripts
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
+      - name: Unzip scripts to all nodes
+        shell: rm -rf scripts && unzip -q -o scripts.zip && rm -f scripts.zip && chmod -R 775 scripts
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
 
-    - name: Install docker
-      include_tasks: ../install/_ans_install_docker.yml
 
-    - name: Build the environment Docker image (conditionally)
-      command: ./docker/WasmEdge/build_image.sh
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
-      when: build_env == "yes"
+    - name: Apps
+      block:
+      - name: Creates directory
+        ansible.builtin.file:
+          path: /root/wasm_serverless_deploy/apps/{{ item }}/
+          state: directory
+        become: yes
+        loop:
+          - fn2
+          - word_count
+      - name: Copy wasm
+        copy:
+          src: ../../apps/{{ item }}/target/wasm32-wasi/release/{{ item }}.wasm
+          dest: /root/wasm_serverless_deploy/apps/{{ item }}/app.wasm
+          force: yes
+        become: yes
+        loop:
+          - fn2
+          - word_count
 
-    - name: Build the application Docker image
-      command: ./docker/WasmServerless/build_image.sh
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
+      - name: Copy yaml
+        copy:
+          src: ../../apps/{{ item }}/app.yaml
+          dest: /root/wasm_serverless_deploy/apps/{{ item }}/app.yaml
+          force: yes
+        become: yes
+        loop:
+          - fn2
+          - word_count
+      - name: Generate app needed files
+        block:
+        - name: Install wordlist
+          shell: pip3 install wordlist
+          args:
+            chdir: /root/wasm_serverless_deploy
+          become: yes
+        - name: Generate app needed files
+          shell: python3 scripts/deploy_cluster/_gen_app_need_data.py
+          args:
+            chdir: /root/wasm_serverless_deploy
+          become: yes
 
-    - name: docker-compose
-      command: docker-compose -v
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
 
-    - name: Docker compose up
-      command: docker-compose --compatibility up -d
-      args:
-        chdir: /root/wasm_serverless_deploy
-      become: yes
+    - name: Docker Stuff
+      block:
+      - name: Install docker
+        include_tasks: ../install/_ans_install_docker.yml
+
+      - name: Build the environment Docker image (conditionally)
+        command: ./docker/WasmEdge/build_image.sh
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
+        when: build_env == "yes"
+
+      - name: Build the application Docker image
+        command: ./docker/WasmServerless/build_image.sh
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
+
+      - name: docker-compose
+        command: docker-compose -v
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
+
+      - name: Docker compose up
+        command: docker-compose --compatibility up -d
+        args:
+          chdir: /root/wasm_serverless_deploy
+        become: yes
