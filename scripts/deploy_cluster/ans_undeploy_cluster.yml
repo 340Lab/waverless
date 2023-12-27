@@ -1,0 +1,25 @@
+---
+- hosts: web
+  vars:
+    container_whitelist:
+      - "portainer"
+
+  tasks:
+    - name: 获取所有运行中的容器
+      command: docker ps -q
+      register: running_containers
+      ignore_errors: true
+
+    - name: 关闭非白名单中的容器
+      docker_container:
+        name: "{{ item }}"
+        state: stopped
+      with_items: "{{ running_containers.stdout_lines }}"
+      when: item not in container_whitelist and running_containers.stdout_lines|length > 0
+
+    - name: 删除非白名单中的容器
+      docker_container:
+        name: "{{ item }}"
+        state: absent
+      with_items: "{{ running_containers.stdout_lines }}"
+      when: item not in container_whitelist and running_containers.stdout_lines|length > 0
