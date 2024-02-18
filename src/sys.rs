@@ -1,14 +1,14 @@
 use crate::{
     config::NodesConfig,
-    fs::Fs,
-    kv::dyn_kv::client::DynKvClient,
-    metric::{observor::MetricObservor, publisher::MetricPublisher},
-    // module_iter::*,
-    // module_view::setup_views,
-    network::p2p::P2PModule,
-    schedule::{
-        container_manager::ContainerManager, executor::Executor, http_handler::ScheNode,
-        master::ScheMaster, worker::ScheWorker,
+    general::{
+        fs::Fs, metric_publisher::MetricPublisher, network::http_handler::HttpHandler,
+        network::p2p::P2PModule,
+    },
+    master::{http_handler::MasterHttpHandler, master::Master, metric_observor::MetricObservor},
+    util,
+    worker::{
+        executor::Executor, http_handler::WorkerHttpHandler, instance_manager::InstanceManager,
+        kv_user_client::KvUserClient, worker::WorkerCore,
     },
 };
 use crate::{
@@ -27,7 +27,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub struct Sys {
-    pub logical_modules: Arc<LogicalModules>,
+    logical_modules: Arc<Option<LogicalModules>>,
     sub_tasks: Mutex<Vec<JoinHandleWrapper>>,
 }
 
@@ -39,7 +39,7 @@ impl Sys {
         }
     }
     pub async fn wait_for_end(&mut self) {
-        if let Err(err) = self.logical_modules.start(self).await {
+        if let Err(err) = (*self.logical_modules).as_ref().unwrap().start(self).await {
             panic!("start logical nodes error: {:?}", err);
         }
         tracing::info!("modules all started, waiting for end");
@@ -89,31 +89,31 @@ pub type BroadcastSender = tokio::sync::broadcast::Sender<BroadcastMsg>;
 // 使用trait的目的是为了接口干净
 // #[derive(ModuleView)]
 
-macro_rules! logical_modules_ref_impl {
-    ($module:ident,$type:ty) => {
-        impl LogicalModulesRef {
-            pub fn $module(&self) -> &$type {
-                unsafe {
-                    (*self.inner.as_ref().unwrap().as_ptr())
-                        .$module
-                        .as_ref()
-                        .unwrap()
-                }
-            }
-        }
-    };
-}
+// macro_rules! logical_modules_ref_impl {
+//     ($module:ident,$type:ty) => {
+//         impl LogicalModulesRef {
+//             pub fn $module(&self) -> &$type {
+//                 unsafe {
+//                     (*self.inner.as_ref().unwrap().as_ptr())
+//                         .$module
+//                         .as_ref()
+//                         .unwrap()
+//                 }
+//             }
+//         }
+//     };
+// }
 
-macro_rules! logical_modules_refs {
-    ($module:ident,$t:ty) => {
-        logical_modules_ref_impl!($module,$t);
-    };
-    ($module:ident,$t:ty,$($modules:ident,$ts:ty),+) => {
-        // logical_modules_ref_impl!($module,$t);
-        logical_modules_refs!($module,$t);
-        logical_modules_refs!($($modules,$ts),+);
-    };
-}
+// macro_rules! logical_modules_refs {
+//     ($module:ident,$t:ty) => {
+//         logical_modules_ref_impl!($module,$t);
+//     };
+//     ($module:ident,$t:ty,$($modules:ident,$ts:ty),+) => {
+//         // logical_modules_ref_impl!($module,$t);
+//         logical_modules_refs!($module,$t);
+//         logical_modules_refs!($($modules,$ts),+);
+//     };
+// }
 
 macro_rules! count_modules {
     ($module:ident,$t:ty) => {1usize};
@@ -123,18 +123,36 @@ macro_rules! count_modules {
 macro_rules! logical_modules {
     // outter struct
     ($($modules:ident,$ts:ty),+)=>{
-        #[derive(Default)]
+
         pub struct LogicalModules {
             new_cnt:usize,
             start_cnt:usize,
-            $(pub $modules: Option<$ts>),+
+            $(pub $modules: $ts),+
         }
 
-        logical_modules_refs!($($modules,$ts),+);
+        // logical_modules_refs!($($modules,$ts),+);
         lazy_static! {
             /// This is an example for using doc comment attributes
             static ref ALL_MODULES_COUNT: usize = count_modules!($($modules,$ts),+);
         }
+
+        // impl LogicalModules{
+        //     pub async fn start(&self, sys: &Sys) -> WSResult<()> {
+        //         $(start_module!(self, sys, $modules, $ts);)+
+        //         // start_module!(self, sys, p2p, );
+        //         // start_module!(self, sys, http_handler);
+        //         // start_module!(self, sys, metric_publisher);
+        //         // start_module!(self, sys, fs);
+
+        //         // start_module_opt!(self, sys, metric_observor);
+        //         // start_module!(self, sys, kv_user_client);
+        //         // start_module!(self, sys, instance_manager);
+        //         // start_module!(self, sys, executor);
+
+        //         assert!(self.start_cnt == ALL_MODULES_COUNT.add(0));
+        //         Ok(())
+        //     }
+        // }
         // $(impl $modules(&self)->&$ts{
         //     self.$modules.as_ref().unwrap()
         // })*
@@ -174,13 +192,13 @@ macro_rules! logical_modules {
 
 #[derive(Clone)]
 pub struct LogicalModulesRef {
-    inner: Option<Weak<LogicalModules>>,
+    inner: Weak<Option<LogicalModules>>,
 }
 
 impl LogicalModulesRef {
-    pub fn new(inner: Arc<LogicalModules>) -> LogicalModulesRef {
+    pub fn new(inner: Arc<Option<LogicalModules>>) -> LogicalModulesRef {
         let inner = Arc::downgrade(&inner);
-        LogicalModulesRef { inner: Some(inner) }
+        LogicalModulesRef { inner }
     }
 }
 // impl LogicalModulesRef {
@@ -190,10 +208,24 @@ impl LogicalModulesRef {
 // }
 
 macro_rules! logical_module_view_impl {
+    ($module:ident,$module_name:ident,Option<$type:ty>) => {
+        impl $module {
+            pub fn $module_name(&self) -> &$type {
+                unsafe {
+                    &(*self.inner.inner.as_ptr())
+                        .as_ref()
+                        .unwrap()
+                        .$module_name
+                        .as_ref()
+                        .unwrap()
+                }
+            }
+        }
+    };
     ($module:ident,$module_name:ident,$type:ty) => {
         impl $module {
             pub fn $module_name(&self) -> &$type {
-                self.inner.$module_name()
+                unsafe { &(*self.inner.inner.as_ptr()).as_ref().unwrap().$module_name }
             }
         }
     };
@@ -220,7 +252,7 @@ macro_rules! start_module_opt {
             (*mu).start_cnt += 1;
         }
         // let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
-        if let Some($opt) = $self.$opt.as_ref().unwrap() {
+        if let Some($opt) = $self.$opt.as_ref() {
             $sys.sub_tasks.lock().await.append(&mut $opt.start().await?);
         }
     };
@@ -236,27 +268,60 @@ macro_rules! start_module {
         $sys.sub_tasks
             .lock()
             .await
+            .append(&mut $self.$opt.start().await?);
+    };
+    ($self:ident,$sys:ident,$opt:ident,Option<$type:ty>) => {
+        // let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        unsafe {
+            let mu = ($self as *const LogicalModules) as *mut LogicalModules;
+            (*mu).start_cnt += 1;
+        }
+        $sys.sub_tasks
+            .lock()
+            .await
             .append(&mut $self.$opt.as_ref().unwrap().start().await?);
+    };
+    ($self:ident,$sys:ident,$opt:ident,$type:ty) => {
+        // let _ = STARTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
+        unsafe {
+            let mu = ($self as *const LogicalModules) as *mut LogicalModules;
+            (*mu).start_cnt += 1;
+        }
+        $sys.sub_tasks
+            .lock()
+            .await
+            .append(&mut $self.$opt.start().await?);
     };
 }
 
 logical_modules!(
+    // general
     p2p,
     P2PModule,
-    request_handler,
-    Box<dyn ScheNode>,
+    http_handler,
+    Box<dyn HttpHandler>,
     metric_publisher,
     MetricPublisher,
+    fs,
+    Fs,
+    ////////////////////////////
+    // master
     metric_observor,
     Option<MetricObservor>,
-    dyn_kv_client,
-    DynKvClient,
-    container_manager,
-    ContainerManager,
+    master,
+    Option<Master>,
+    ////////////////////////////
+    // worker
+    worker,
+    Option<WorkerCore>,
+    kv_user_client,
+    Option<KvUserClient>,
+    instance_manager,
+    Option<InstanceManager>,
+    // kv_storage,
+    // KvStorage,
     executor,
-    Executor,
-    fs,
-    Fs
+    Option<Executor>
 );
 
 // logical_module_view_impl!(MetaKVClientView);
@@ -275,13 +340,27 @@ logical_module_view_impl!(P2PView, p2p, P2PModule);
 logical_module_view_impl!(ScheMasterView);
 logical_module_view_impl!(ScheMasterView, p2p, P2PModule);
 
-logical_module_view_impl!(ScheWorkerView);
-logical_module_view_impl!(ScheWorkerView, p2p, P2PModule);
+logical_module_view_impl!(WorkerView);
+logical_module_view_impl!(WorkerView, p2p, P2PModule);
 
-logical_module_view_impl!(RequestHandlerView);
-logical_module_view_impl!(RequestHandlerView, p2p, P2PModule);
-logical_module_view_impl!(RequestHandlerView, request_handler, Box<dyn ScheNode>);
-logical_module_view_impl!(RequestHandlerView, executor, Executor);
+logical_module_view_impl!(HttpHandlerView);
+logical_module_view_impl!(HttpHandlerView, p2p, P2PModule);
+logical_module_view_impl!(HttpHandlerView, http_handler, Box<dyn HttpHandler>);
+
+logical_module_view_impl!(WorkerHttpHandlerView);
+logical_module_view_impl!(WorkerHttpHandlerView, p2p, P2PModule);
+logical_module_view_impl!(WorkerHttpHandlerView, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
+
+logical_module_view_impl!(MasterHttpHandlerView);
+logical_module_view_impl!(MasterHttpHandlerView, p2p, P2PModule);
+logical_module_view_impl!(MasterHttpHandlerView, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(MasterHttpHandlerView, master, Option<Master>);
+logical_module_view_impl!(
+    MasterHttpHandlerView,
+    metric_observor,
+    Option<MetricObservor>
+);
 
 logical_module_view_impl!(MetricObservorView);
 logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
@@ -289,25 +368,36 @@ logical_module_view_impl!(MetricObservorView, metric_observor, Option<MetricObse
 
 logical_module_view_impl!(MetricPublisherView);
 logical_module_view_impl!(MetricPublisherView, p2p, P2PModule);
-logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
+// logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
+logical_module_view_impl!(MetricPublisherView, metric_publisher, MetricPublisher);
 
-logical_module_view_impl!(DynKvClientView);
-logical_module_view_impl!(DynKvClientView, p2p, P2PModule);
-logical_module_view_impl!(DynKvClientView, dyn_kv_client, DynKvClient);
-logical_module_view_impl!(DynKvClientView, container_manager, ContainerManager);
+logical_module_view_impl!(KvUserClientView);
+logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
+logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
+logical_module_view_impl!(KvUserClientView, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(KvUserClientView, worker, Option<WorkerCore>);
+logical_module_view_impl!(KvUserClientView, executor, Option<Executor>);
 
 logical_module_view_impl!(ExecutorView);
 logical_module_view_impl!(ExecutorView, p2p, P2PModule);
-logical_module_view_impl!(ExecutorView, container_manager, ContainerManager);
-logical_module_view_impl!(ExecutorView, executor, Executor);
-logical_module_view_impl!(ExecutorView, dyn_kv_client, DynKvClient);
+logical_module_view_impl!(ExecutorView, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
+logical_module_view_impl!(ExecutorView, kv_user_client, Option<KvUserClient>);
 
-logical_module_view_impl!(ContainerManagerView);
-logical_module_view_impl!(ContainerManagerView, p2p, P2PModule);
-logical_module_view_impl!(ContainerManagerView, container_manager, ContainerManager);
+logical_module_view_impl!(InstanceManagerView);
+logical_module_view_impl!(InstanceManagerView, p2p, P2PModule);
+logical_module_view_impl!(
+    InstanceManagerView,
+    instance_manager,
+    Option<InstanceManager>
+);
 
 logical_module_view_impl!(FsView);
 logical_module_view_impl!(FsView, fs, Fs);
+
+logical_module_view_impl!(MasterView);
+logical_module_view_impl!(MasterView, p2p, P2PModule);
+logical_module_view_impl!(MasterView, master, Option<Master>);
 
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
     // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -324,54 +414,70 @@ impl LogicalModules {
     //     }
     // }
 
-    pub fn new(config: NodesConfig) -> Arc<LogicalModules> {
+    pub fn new(config: NodesConfig) -> Arc<Option<LogicalModules>> {
         let (broadcast_tx, _broadcast_rx) = tokio::sync::broadcast::channel::<BroadcastMsg>(1);
-        let arc = Arc::new(LogicalModules::default());
+        let arc = Arc::new(None);
         let args = LogicalModuleNewArgs {
             btx: broadcast_tx,
             logical_models: None,
             parent_name: "".to_owned(),
             nodes_config: config.clone(),
             logical_modules_ref: LogicalModulesRef {
-                inner: Arc::downgrade(&arc).into(),
+                inner: Arc::downgrade(&arc),
             },
         };
         let is_master = config.this.1.is_master();
         assert!(is_master || config.this.1.is_worker());
 
-        modules_mut_ref(&arc).p2p = Some(P2PModule::new(args.clone()));
-        modules_mut_ref(&arc).request_handler = Some(if is_master {
-            Box::new(ScheMaster::new(args.clone()))
-        } else {
-            Box::new(ScheWorker::new(args.clone()))
-        });
-        modules_mut_ref(&arc).metric_publisher = Some(MetricPublisher::new(args.clone()));
-        modules_mut_ref(&arc).metric_observor = if is_master {
-            Some(Some(MetricObservor::new(args.clone())))
-        } else {
-            Some(None)
+        let mut logical_modules = LogicalModules {
+            p2p: P2PModule::new(args.clone()),
+            metric_publisher: MetricPublisher::new(args.clone()),
+            fs: Fs::new(args.clone()),
+            http_handler: if is_master {
+                Box::new(MasterHttpHandler::new(args.clone()))
+            } else {
+                Box::new(WorkerHttpHandler::new(args.clone()))
+            },
+            metric_observor: None,
+            master: None,
+            worker: None,
+            kv_user_client: None,
+            instance_manager: None,
+            executor: None,
+            new_cnt: 0,
+            start_cnt: 0,
         };
-        modules_mut_ref(&arc).dyn_kv_client = Some(DynKvClient::new(args.clone()));
-        modules_mut_ref(&arc).container_manager = Some(ContainerManager::new(args.clone()));
-        modules_mut_ref(&arc).executor = Some(Executor::new(args.clone()));
-        modules_mut_ref(&arc).fs = Some(Fs::new(args.clone()));
-        // modules_mut_ref(&arc).p2p_kernel = Some(Box::new(P2PQuicNode::new(args.clone())));
-        // setup_views(&arc);
+
+        if is_master {
+            logical_modules.metric_observor = Some(MetricObservor::new(args.clone()));
+            logical_modules.master = Some(Master::new(args.clone()));
+        } else {
+            logical_modules.kv_user_client = Some(KvUserClient::new(args.clone()));
+            logical_modules.instance_manager = Some(InstanceManager::new(args.clone()));
+            logical_modules.executor = Some(Executor::new(args.clone()));
+            logical_modules.worker = Some(WorkerCore::new(args.clone()));
+        }
+        let _ = unsafe { util::unsafe_mut(&*arc) }.replace(logical_modules);
         arc
     }
 
     pub async fn start(&self, sys: &Sys) -> WSResult<()> {
+        //general
         start_module!(self, sys, p2p);
-        start_module!(self, sys, request_handler);
+        start_module!(self, sys, http_handler);
         start_module!(self, sys, metric_publisher);
-        start_module_opt!(self, sys, metric_observor);
-        start_module!(self, sys, dyn_kv_client);
-        start_module!(self, sys, container_manager);
-        start_module!(self, sys, executor);
         start_module!(self, sys, fs);
 
+        // master
+        start_module_opt!(self, sys, metric_observor);
+        start_module_opt!(self, sys, master);
+        //worker
+        start_module_opt!(self, sys, worker);
+        start_module_opt!(self, sys, kv_user_client);
+        start_module_opt!(self, sys, instance_manager);
+        start_module_opt!(self, sys, executor);
+
         assert!(self.start_cnt == ALL_MODULES_COUNT.add(0));
-        assert!(self.start_cnt == self.new_cnt);
         Ok(())
     }
 }

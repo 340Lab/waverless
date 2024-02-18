@@ -15,7 +15,8 @@
     - snap
 
 - name: Install Docker
-  include_tasks: ../install/_ans_install_docker.yml
+  become: true
+  shell: bash install_docker.sh
 
 - name: Check if Rust is installed
   become: true

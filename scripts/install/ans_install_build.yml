@@ -3,5 +3,4 @@
   tasks:
     # install rysr, proto, docker, docker-compose
     - name: Install Build Related
-      become: true
-      include: _ans_install_build.yml
+      include_tasks: _ans_install_build.yml

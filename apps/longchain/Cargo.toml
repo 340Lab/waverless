@@ -1,0 +1,15 @@
+[package]
+name = "word_count"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasmedge-bindgen = "0.4.1"
+wasmedge-bindgen-macro = "0.4.1"
+wasm-bindgen = "0.2.74"
+wasm_serverless_lib = { path = "../_wasm_serverless_lib" }
+wasmedge-wasi-helper = "=0.2.0"

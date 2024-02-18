@@ -41,7 +41,5 @@ use wasm_serverless_lib::*;
 
 #[no_mangle]
 pub fn fn2() {
-    kv_set_wrapper("sss".as_bytes(), "hello".as_bytes());
-    let v = kv_get_wrapper("sss".as_bytes());
-    println!("kv get res {}", std::str::from_utf8(&*v).unwrap())
+    println!("hello world");
 }
