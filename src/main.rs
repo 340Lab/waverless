@@ -16,21 +16,15 @@ use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
 };
 
+pub mod general;
+pub mod master;
+pub mod worker;
+
 pub mod cmd_arg;
 pub mod config;
-pub mod event;
-pub mod fs;
-pub mod host_funcs;
-mod kv;
-pub mod metric;
-pub mod network;
 pub mod result;
-pub mod schedule;
 mod sys;
 pub mod util;
-
-#[cfg(test)]
-mod test;
 
 #[tokio::main]
 async fn main() {

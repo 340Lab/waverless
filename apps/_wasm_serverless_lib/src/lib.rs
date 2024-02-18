@@ -1,4 +1,5 @@
 use std::mem::ManuallyDrop;
+use std::vec::Vec;
 
 // use externref::externref;
 // #[allow(unused_imports)]

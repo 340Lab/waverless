@@ -2,3 +2,5 @@ fns:
   fn2:
     event:
     - http_app: 
+    args:
+    - http_text:    

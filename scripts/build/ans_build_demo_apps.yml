@@ -1,0 +1,10 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Copy wasm
+      include_tasks: "_ans_build_demo_apps_each.yml"
+      loop:
+        - fn2
+        - word_count
+    - name: App needed data
+      shell: python3 _gen_app_need_data.py

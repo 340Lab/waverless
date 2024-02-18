@@ -4,7 +4,7 @@ use prost::DecodeError;
 use qp2p::{EndpointError, SendError};
 use thiserror::Error;
 
-use crate::sys::NodeID;
+use crate::{sys::NodeID, util::TryUtf8VecU8};
 
 pub type WSResult<T> = Result<T, WSError>;
 
@@ -43,6 +43,27 @@ pub enum WsRaftErr {
 #[derive(Debug)]
 pub enum WsSerialErr {
     BincodeErr(Box<bincode::ErrorKind>),
+    AppMetaKvKeyIndexOutOfBound {
+        app: String,
+        func: String,
+        index: usize,
+        kvs_len: Option<usize>,
+    },
+}
+
+#[derive(Error, Debug)]
+pub enum WsFormatErr {
+    #[error("KeyPatternFormatErr: {key_pattern}, '{{' '}}' should appear in pair, only '_' is allowed to appear as symbol")]
+    KeyPatternFormatErr { key_pattern: String },
+}
+
+#[derive(Debug)]
+pub enum WsPermissionErr {
+    AccessKeyPermissionDenied {
+        app: String,
+        func: String,
+        access_key: TryUtf8VecU8,
+    },
 }
 
 #[derive(Error, Debug)]
@@ -59,8 +80,14 @@ pub enum WSError {
     #[error("Raft error: {0:?}")]
     WsRaftErr(WsRaftErr),
 
+    #[error("Permission error: {0:?}")]
+    WsPermissionErr(WsPermissionErr),
+
     #[error("Serial error: {0:?}")]
     WsSerialErr(WsSerialErr),
+
+    #[error("Format error: {0:?}")]
+    WsFormatErr(WsFormatErr),
 
     #[error("Not Implemented")]
     NotImplemented,
@@ -93,6 +120,12 @@ impl From<WsSerialErr> for WSError {
 impl From<WsIoErr> for WSError {
     fn from(e: WsIoErr) -> Self {
         WSError::WsIoErr(e)
+    }
+}
+
+impl From<WsPermissionErr> for WSError {
+    fn from(e: WsPermissionErr) -> Self {
+        WSError::WsPermissionErr(e)
     }
 }
 

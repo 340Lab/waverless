@@ -1,0 +1,21 @@
+- name: Build the WASM demo 
+  shell: cargo build --target wasm32-wasi --release
+  args:
+    chdir: ../../apps/{{ item }}
+- name: Mkdir
+  file:
+    path: apps/{{ item }}
+    state: directory
+  become: yes
+- name: Copy wasm
+  copy:
+    src: ../../apps/{{ item }}/target/wasm32-wasi/release/{{ item }}.wasm
+    dest: apps/{{ item }}/app.wasm
+    force: yes
+  become: yes
+- name: Copy Config
+  copy:
+    src: ../../apps/{{ item }}/app.yaml
+    dest: apps/{{ item }}/app.yaml
+    force: yes
+  become: yes

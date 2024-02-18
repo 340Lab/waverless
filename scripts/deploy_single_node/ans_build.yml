@@ -1,0 +1,40 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Build the application on the master node
+      shell: cargo build --release
+    - name: Run build ansible script
+      shell: ansible-playbook -i ../local_ansible_conf.ini build/ans_build_demo_apps.yml
+      args:
+        chdir: ../
+    # mkdir -p scripts/deploy_single_node/test_dir/files
+    # mkdir -p scripts/deploy_single_node/test_dir/apps
+    # cp scripts/deploy_single_node/node_config.yaml scripts/deploy_single_node/test_dir/files
+    - name: Clear test_dir
+      shell: rm -rf test_dir
+    - name: Mkdirs
+      file:
+        path: test_dir/{{ item }}
+        state: directory
+      loop:
+        - files
+        - apps
+      become: yes
+    - name: Copy files
+      copy:
+        src: ../build/files
+        dest: test_dir
+        force: yes
+      become: yes
+    - name: Copy node_config.yaml
+      copy:
+        src: node_config.yaml
+        dest: test_dir/files/node_config.yaml
+        force: yes
+      become: yes
+    - name: Copy Apps
+      copy:
+        src: ../build/apps
+        dest: test_dir
+        force: yes
+      become: yes
