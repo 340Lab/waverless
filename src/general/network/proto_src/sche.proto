@@ -9,7 +9,7 @@ message MakeSchePlanReq{
         string func=2;
     }
     enum TriggerType{
-        SetKV = 0;
+        SetKv = 0;
     }
     repeated AppFn app_fns=1;
     TriggerType trigger_type=2;

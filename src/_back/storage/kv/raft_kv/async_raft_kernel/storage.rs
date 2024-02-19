@@ -17,7 +17,7 @@ use crate::kv::kv_interface::SetOptions;
 use crate::network::proto;
 use crate::network::proto::kv::kv_request::{KvDeleteRequest, KvPutRequest};
 use crate::network::proto::kv::{KeyRange, KvPairs};
-use crate::sys::MetaKVView;
+use crate::sys::MetaKvView;
 
 const ERR_INCONSISTENT_LOG: &str =
     "a query was received which was expecting data to be in place which does not exist in the log";
@@ -111,12 +111,12 @@ pub struct MemStore {
     hs: RwLock<Option<HardState>>,
     /// The current snapshot.
     current_snapshot: RwLock<Option<MemStoreSnapshot>>,
-    view: MetaKVView,
+    view: MetaKvView,
 }
 
 impl MemStore {
     /// Create a new `MemStore` instance.
-    pub fn new(id: NodeId, view: MetaKVView) -> Self {
+    pub fn new(id: NodeId, view: MetaKvView) -> Self {
         let log = RwLock::new(BTreeMap::new());
         let sm = RwLock::new(MemStoreStateMachine::default());
         let hs = RwLock::new(None);

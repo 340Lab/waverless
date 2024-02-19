@@ -351,6 +351,7 @@ async fn handle_connection(
                 if let Some(WireMsg((head, _, bytes))) = msg {
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
+                            tracing::debug!("new to dispatch task_id: {}", task_id);
                             // println!("Received from {remote_addr:?} --> {bytes:?}");
                             view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into());
                             // if bytes == *MSG_MARCO {

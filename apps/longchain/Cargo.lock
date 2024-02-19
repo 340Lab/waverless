@@ -21,6 +21,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 
 [[package]]
+name = "longchain"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
+ "wasm_serverless_lib",
+ "wasmedge-bindgen",
+ "wasmedge-bindgen-macro",
+ "wasmedge-wasi-helper",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -152,14 +163,3 @@ name = "wasmedge-wasi-helper"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd351a86b66f511cbeab0cb848cc9dbd06b4165689c2f992a74500fb809b19dd"
-
-[[package]]
-name = "word_count"
-version = "0.1.0"
-dependencies = [
- "wasm-bindgen",
- "wasm_serverless_lib",
- "wasmedge-bindgen",
- "wasmedge-bindgen-macro",
- "wasmedge-wasi-helper",
-]

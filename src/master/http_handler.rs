@@ -49,7 +49,7 @@ impl LogicalModule for MasterHttpHandler {
 impl MasterHttpHandler {
     fn handle_prometheus(&self) -> Response {
         let mut body = String::new();
-        tracing::info!("handle_prometheus");
+        tracing::debug!("handle_prometheus");
         encode(&mut body, &self.view.metric_observor().registry).unwrap();
         let mut resp = (StatusCode::OK, body).into_response();
         // hyper::header::CONTENT_TYPE,

@@ -5,7 +5,7 @@ use crate::result::WSResult;
 // use super::dist_kv::SetOptions;
 
 #[async_trait]
-pub trait LocalKVRaw: Send + Sync + 'static {
+pub trait LocalKvRaw: Send + Sync + 'static {
     async fn get(&self, key: &[u8], end: Option<&[u8]>) -> WSResult<Vec<(Vec<u8>, Vec<u8>)>>;
     async fn set(
         &self,

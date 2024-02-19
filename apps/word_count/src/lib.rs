@@ -82,10 +82,16 @@ pub fn split_file() {
             .map(|(i, _)| i)
         {
             println!("split file one slice with last \\n at{}", last);
-            kv_set_wrapper(
-                format!("wordcount_slice_{}", slice_id).as_bytes(),
-                &buffer[..last],
-            );
+            KvBatch::new()
+                .then_set(
+                    format!("wordcount_slice_{}", slice_id).as_bytes(),
+                    &buffer[..last],
+                )
+                .finally_call();
+            // kv_set_wrapper(
+            //     format!("wordcount_slice_{}", slice_id).as_bytes(),
+            //     &buffer[..last],
+            // );
             slice_id += 1;
             if last + 1 < buffer.len() {
                 for i in last + 1..buffer.len() {

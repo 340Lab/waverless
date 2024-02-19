@@ -41,15 +41,23 @@ mod utils {
     }
 
     pub fn u8slice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> &'a [u8] {
-        // tracing::info!("getting u8 slice");
+        // tracing::debug!("u8slice ptr: {}, len: {}", ptr, len);
         let mem = caller
             .memory(0)
             .unwrap()
             .data_pointer(ptr as u32, len as u32)
             .unwrap();
         let res = unsafe { std::slice::from_raw_parts(mem, len as usize) };
-        // tracing::info!("got u8 slice");
         res
+    }
+
+    pub fn i32slice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> &'a [i32] {
+        let mem = caller
+            .memory(0)
+            .unwrap()
+            .data_pointer(ptr as u32, len as u32)
+            .unwrap();
+        unsafe { std::slice::from_raw_parts(mem as *const i32, len as usize) }
     }
 
     pub fn mutu8sclice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> Option<&'a mut [u8]> {

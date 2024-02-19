@@ -6,5 +6,6 @@
       loop:
         - fn2
         - word_count
+        - longchain
     - name: App needed data
       shell: python3 _gen_app_need_data.py

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     result::{ErrCvt, WSResult},
-    sys::{LogicalModuleNewArgs, MetaKVView, NodeID},
+    sys::{LogicalModuleNewArgs, MetaKvView, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -23,7 +23,7 @@ pub type MemRaft = Raft<ClientRequest, ClientResponse, RaftRouter, MemStore>;
 
 #[derive(LogicalModule)]
 pub struct AsyncRaftModule {
-    view: MetaKVView,
+    view: MetaKvView,
     raft_module: RwLock<Option<MemRaft>>,
 }
 
@@ -40,7 +40,7 @@ impl LogicalModule for AsyncRaftModule {
         Self: Sized,
     {
         Self {
-            view: MetaKVView::new(args.logical_modules_ref.clone()),
+            view: MetaKvView::new(args.logical_modules_ref.clone()),
             raft_module: RwLock::new(None),
         }
     }

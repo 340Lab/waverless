@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 use crate::{
     module_iter::*,
     module_state_trans::LogicalModuleWaiter,
-    module_view::TiKVRaftModuleLMView,
+    module_view::TiKvRaftModuleLMView,
     network::p2p::P2PModule,
     network::serial::MsgPack,
     result::WSResult,
@@ -38,19 +38,19 @@ pub enum RaftMsg {
 }
 
 #[derive(LogicalModuleParent, LogicalModule)]
-pub struct TiKVRaftModule {
-    pub logical_modules_view: TiKVRaftModuleLMView,
+pub struct TiKvRaftModule {
+    pub logical_modules_view: TiKvRaftModuleLMView,
     name: String,
 }
 
-impl LogicalModule for TiKVRaftModule {
+impl LogicalModule for TiKvRaftModule {
     fn inner_new(mut args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
         args.expand_parent_name(Self::self_name());
         Self {
-            logical_modules_view: TiKVRaftModuleLMView::new(),
+            logical_modules_view: TiKvRaftModuleLMView::new(),
             name: args.parent_name,
         }
     }
@@ -108,12 +108,12 @@ struct RaftThreadState {
     remaining_timeout: Duration,
     timeout: Duration,
     rx: std::sync::mpsc::Receiver<RaftMsg>,
-    view: TiKVRaftModuleLMView,
+    view: TiKvRaftModuleLMView,
     proprosed_join: bool,
 }
 
 impl RaftThreadState {
-    fn new(rx: std::sync::mpsc::Receiver<RaftMsg>, view: TiKVRaftModuleLMView) -> Self {
+    fn new(rx: std::sync::mpsc::Receiver<RaftMsg>, view: TiKvRaftModuleLMView) -> Self {
         let mut node = new_node(view.p2p().this_node.1);
         let timeout = Duration::from_millis(100);
 
@@ -177,23 +177,23 @@ impl RaftThreadState {
 }
 
 pub fn new_tick_thread(
-    view: TiKVRaftModuleLMView,
+    view: TiKvRaftModuleLMView,
     rx: std::sync::mpsc::Receiver<RaftMsg>,
     mut waiter: LogicalModuleWaiter,
 ) {
     let mut state = RaftThreadState::new(rx, view);
 
-    sync_loop!("TiKVRaftModule::raft_tick", waiter, { state.tick() });
+    sync_loop!("TiKvRaftModule::raft_tick", waiter, { state.tick() });
 }
 
 fn handle_ready(
-    view: &TiKVRaftModuleLMView,
+    view: &TiKvRaftModuleLMView,
     rx: &mut std::sync::mpsc::Receiver<RaftMsg>,
     remaining_timeout: Duration,
     node: &mut RawNode<MemStorage>,
     mut ready: Ready,
 ) {
-    fn handle_messages(view: &TiKVRaftModuleLMView, msgs: Vec<raft::prelude::Message>) {
+    fn handle_messages(view: &TiKvRaftModuleLMView, msgs: Vec<raft::prelude::Message>) {
         // Send messages to other peers.
         for msg in &msgs {
             let to = msg.to;

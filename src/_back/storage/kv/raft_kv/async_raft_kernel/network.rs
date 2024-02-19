@@ -4,10 +4,10 @@ use super::{
     AsyncRaftModule,
 };
 use crate::{
-    kv::raft_kv::RaftKVNode,
+    kv::raft_kv::RaftKvNode,
     network::proto,
     result::WSError,
-    sys::{MetaKVView, NodeID},
+    sys::{MetaKvView, NodeID},
 };
 use anyhow::Result;
 use async_raft::{
@@ -23,11 +23,11 @@ use async_trait::async_trait;
 /// A type which emulates a network transport and implements the `RaftNetwork` trait.
 pub struct RaftRouter {
     // ... some internal state ...
-    view: MetaKVView,
+    view: MetaKvView,
 }
 
 impl RaftRouter {
-    pub fn new(view: MetaKVView) -> Self {
+    pub fn new(view: MetaKvView) -> Self {
         Self { view }
     }
 }
@@ -260,7 +260,7 @@ impl AsyncRaftModule {
                     //     c
                     // );
                     if let Some(raft_meta) = self_view.meta_kv() {
-                        let reft_meta = raft_meta.downcast_ref::<RaftKVNode>().unwrap();
+                        let reft_meta = raft_meta.downcast_ref::<RaftKvNode>().unwrap();
                         match reft_meta.raft_inner.raft().vote(c.into()).await {
                             Ok(res) => {
                                 // tracing::info!("handled vote request success: {:?}", res);
@@ -300,7 +300,7 @@ impl AsyncRaftModule {
                         //     req
                         // );
                         if let Some(raft_meta) = self_view.meta_kv() {
-                            let reft_meta = raft_meta.downcast_ref::<RaftKVNode>().unwrap();
+                            let reft_meta = raft_meta.downcast_ref::<RaftKvNode>().unwrap();
                             match reft_meta.raft_inner.raft().append_entries(req.into()).await {
                                 Ok(res) => {
                                     // tracing::info!(

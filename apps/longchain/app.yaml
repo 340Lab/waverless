@@ -5,7 +5,8 @@ fns:
     args:
     # - http_text: 
     kvs:
-      chain_key_{}: [set]
+      # chain_lock: [lock]
+      chain_count: [set]
 
   chain_loop:
     # 函数输入参数为触发事件关联数据，比如http就是json（未适配），kv就是key
@@ -15,4 +16,5 @@ fns:
     - kv_key: 0
     # 用于表征数据消费关系，决策时直接将数据存到目标执行位置
     kvs: 
-      chain_key_{}: [set,get,delete]
+      # chain_lock: [unlock]
+      chain_count: [set,get,delete]
