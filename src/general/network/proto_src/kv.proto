@@ -6,44 +6,63 @@ message KeyRange {
   bytes end=2;
 }
 
-message KVPair {
+message KvPair {
   bytes key=1;
   bytes value=2;
 }
 
 
-message KVRequest {
-  message KVPutRequest{
-    KVPairs kvs=1;
+message KvRequest {
+  message KvPutRequest{
+    KvPair kv=1;
   }
-  message KVGetRequest{
+  message KvGetRequest{
     KeyRange range=1;
   }
-  message KVDeleteRequest{
+  message KvDeleteRequest{
     KeyRange range=1;
+  }
+  message KvLockRequest{
+    bool read_or_write=1;
+    repeated uint32 release_id=2;
+    KeyRange range=3;
   }
   oneof op {
-    KVPutRequest set=1;
-    KVGetRequest get=2;
-    KVDeleteRequest delete=3;
+    KvPutRequest set=1;
+    KvGetRequest get=2;
+    KvDeleteRequest delete=3;
+    KvLockRequest lock=4;
   }
 }
 
-message KVPairs{
-  repeated KVPair kvs=1;
+message KvPairs{
+  repeated KvPair kvs=1;
 }
 
-message KVResponse{
-  message KVPairOpt{
-    KVPair kv=1;
+message KvResponse{
+  message KvResponse{
+    repeated KvPair kvs=1;
   }
-  repeated KVPairOpt kvs=1;
+  oneof resp {
+    KvResponse common_resp=1;
+    uint32 lock_id=2;
+  }
 }
 
-message MetaKVRequest{
-  KVRequest request=1;
+message KvRequests{
+  string app=1;
+  string func=2;
+  repeated KvRequest requests=3;
 }
 
-message MetaKVResponse{
-  KVResponse response=1;
+message KvResponses{
+  repeated KvResponse responses=1;
 }
+
+// message MetaKvRequest{
+//   KvRequest request=1;
+// }
+
+// message MetaKvResponse{
+//   KvResponse response=1;
+// }

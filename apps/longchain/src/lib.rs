@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::mem::ManuallyDrop;
+use std::str::from_utf8;
 use wasm_serverless_lib::*;
 #[allow(unused_imports)]
 use wasmedge_bindgen::*;
@@ -53,63 +54,58 @@ use wasmedge_wasi_helper::wasmedge_wasi_helper::_initialize;
 
 #[no_mangle]
 pub fn chain_begin() {
-    _initialize();
-    let file_path = "files/random_words.txt";
-    println!("split file start");
-    // read file
-    let mut file = HostFile::open(file_path);
-    let mut slice_id = 0;
-    let mut offset: usize = 0;
-    // read 1 mb slice, align to \n, write to kv store
-
-    // 读取 1 MB 的数据
-    let mut buffer = Vec::with_capacity(1024 * 1024);
-    loop {
-        println!("buffer begin len {}", buffer.len());
-        let len = file.read_at(offset, &mut buffer);
-        offset += len;
-
-        println!("split file one slice with len {} {}", buffer.len(), len);
-        if buffer.len() == 0 {
-            break;
-        }
-        // find last \n
-        if let Some(last) = buffer
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, &b)| b == b'\n')
-            .map(|(i, _)| i)
-        {
-            println!("split file one slice with last \\n at{}", last);
-            kv_set_wrapper(
-                format!("wordcount_slice_{}", slice_id).as_bytes(),
-                &buffer[..last],
+    let res = KvBatch::new()
+        .then_lock("chain_lock".as_bytes())
+        .then_get("chain_count".as_bytes())
+        .finally_call();
+    let lock_id = if let KvResult::Lock(lock_id) = res[0] {
+        lock_id
+    } else {
+        panic!("chain_begin lock failed");
+    };
+    let mut batch = KvBatch::new();
+    if let KvResult::Get(Some(count)) = &res[1] {
+        let count_str = from_utf8(count).unwrap();
+        println!("chain count: {}", count_str);
+        let count = count_str.parse::<u32>().unwrap();
+        if count < 100 {
+            batch = batch.then_set(
+                "chain_count".as_bytes(),
+                format!("{}", count + 1).as_bytes(),
             );
-            slice_id += 1;
-            if last + 1 < buffer.len() {
-                for i in last + 1..buffer.len() {
-                    buffer[i - last - 1] = buffer[i];
-                }
-                buffer.truncate(buffer.len() - last - 1);
-            } else {
-                buffer.clear();
-            }
-
-            println!("buffer end len {}", buffer.len());
         } else {
-            break;
+            batch = batch.then_set("chain_count".as_bytes(), format!("{}", 0).as_bytes());
         }
+    } else {
+        batch = batch.then_set("chain_count".as_bytes(), "1".as_bytes());
     }
+    batch
+        .then_unlock("chain_lock".as_bytes(), lock_id)
+        .finally_call();
 }
 
-#[no_mangle]
-pub fn chain_loop(key: *mut u8, key_len: u32) {
-    let key = unsafe { Vec::from_raw_parts(key, key_len as usize, key_len as usize) };
-    // let val = kv_get_wrapper(&key);
-    println!(
-        "handle_one_slice k {}",
-        std::str::from_utf8(&key).unwrap(),
-        // std::str::from_utf8(&val).unwrap(),
-    );
-}
+// #[no_mangle]
+// pub fn chain_loop(key: *mut u8, key_len: u32) {
+//     let res = KvBatch::new().then_get("chain_count").finally_call();
+//     match res[0] {
+//         KvResult::Get(value) => {
+//             if let Some(value) = value {
+//                 let mut count = value.parse::<u32>().unwrap();
+//                 count += 1;
+//                 if count < 10 {
+//                     let key = unsafe { std::slice::from_raw_parts(key, key_len as usize) };
+//                     let key = std::str::from_utf8(key).unwrap();
+//                     KvBatch::new()
+//                         .then_set(key, &value)
+//                         .then_set("chain_count", &format!("{}", count))
+//                         .finally_call();
+//                 } else {
+//                     KvBatch::new().then_unlock("chain_lock").finally_call();
+//                 }
+//             }
+//         }
+//         _ => {
+//             panic!("chain_loop get chain_count failed")
+//         }
+//     }
+// }

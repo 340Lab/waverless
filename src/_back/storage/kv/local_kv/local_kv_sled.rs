@@ -1,8 +1,8 @@
-// pub struct LocalKVSled {}
+// pub struct LocalKvSled {}
 
-// impl LocalKV for LocalKVSled {
-//     fn new() -> LocalKVSled {
-//         LocalKVSled {}
+// impl LocalKv for LocalKvSled {
+//     fn new() -> LocalKvSled {
+//         LocalKvSled {}
 //     }
 
 //     fn get(&self, key: &str) -> Option<String> {

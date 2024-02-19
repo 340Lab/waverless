@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use crate::{
     network::proto::kv::{kv_response::KvPairOpt, KeyRange, KvPair},
     result::WSResult,
-    storage::kv::kv_interface::{KVInterface, KVNode, SetOptions},
+    storage::kv::kv_interface::{KvInterface, KvNode, SetOptions},
     sys::{LogicalModule, LogicalModuleNewArgs},
     util::JoinHandleWrapper,
 };
@@ -12,17 +12,17 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use ws_derive::LogicalModule;
 
-// pub struct LocalKV<K: LocalKVRaw> {
+// pub struct LocalKv<K: LocalKvRaw> {
 //     k: K,
 // }
 
 #[derive(LogicalModule)]
-pub struct LocalKVNode {
+pub struct LocalKvNode {
     map: RwLock<BTreeMap<Vec<u8>, Vec<u8>>>,
 }
 
 #[async_trait]
-impl KVInterface for LocalKVNode {
+impl KvInterface for LocalKvNode {
     async fn get(&self, key_range: KeyRange) -> WSResult<Vec<KvPair>> {
         let mut res = vec![];
         if key_range.end.len() > 0 {
@@ -47,19 +47,19 @@ impl KVInterface for LocalKVNode {
 }
 
 #[async_trait]
-impl KVNode for LocalKVNode {
+impl KvNode for LocalKvNode {
     async fn ready(&self) -> bool {
         true
     }
 }
 
 #[async_trait]
-impl LogicalModule for LocalKVNode {
+impl LogicalModule for LocalKvNode {
     fn inner_new(_args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        LocalKVNode {
+        LocalKvNode {
             map: RwLock::new(BTreeMap::new()),
         }
     }
@@ -71,7 +71,7 @@ impl LogicalModule for LocalKVNode {
 }
 
 // #[async_trait]
-// impl<K: LocalKVRaw> LocalKVRaw for LocalKV<K> {
+// impl<K: LocalKvRaw> LocalKvRaw for LocalKv<K> {
 //     #[inline]
 //     async fn get(&self, key: &[u8], end: Option<&[u8]>) -> WSResult<Vec<(Vec<u8>, Vec<u8>)>> {
 //         self.k.get(key, end).await
@@ -87,7 +87,7 @@ impl LogicalModule for LocalKVNode {
 //     }
 // }
 
-// impl<K: LocalKVRaw> LocalKV<K> {
+// impl<K: LocalKvRaw> LocalKv<K> {
 //     pub async fn get_spec(&self, k: &K, end: Option<&K>) -> WSResult<Vec<(K, K::Value)>>
 //     where
 //         K: LocalKey,
@@ -147,7 +147,7 @@ impl LogicalModule for LocalKVNode {
 //     type Value: DeserializeOwned + Serialize;
 // }
 
-// pub trait KVPair {
+// pub trait KvPair {
 //     type Key: DeserializeOwned + Serialize;
 //     type Value: DeserializeOwned + Serialize;
 // }

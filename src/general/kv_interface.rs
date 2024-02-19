@@ -1,10 +1,29 @@
-use crate::{result::WSResult, sys::LogicalModule};
+use crate::{
+    result::WSResult,
+    sys::{LogicalModule, NodeID},
+};
 use async_trait::async_trait;
-use downcast_rs::{impl_downcast, Downcast};
 
 use super::network::proto;
 
-pub struct SetOptions {}
+pub struct KvOptions {
+    spec_node: Option<NodeID>,
+}
+
+impl KvOptions {
+    pub fn new() -> KvOptions {
+        KvOptions { spec_node: None }
+    }
+
+    pub fn spec_node(&self) -> Option<NodeID> {
+        self.spec_node
+    }
+
+    pub fn with_spec_node(mut self, node: NodeID) -> KvOptions {
+        self.spec_node = Some(node);
+        self
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KvOps {
@@ -14,23 +33,10 @@ pub enum KvOps {
 }
 
 #[async_trait]
-pub trait KVInterface: LogicalModule {
-    async fn get(&self, key_range: proto::kv::KeyRange) -> WSResult<Vec<proto::kv::KvPair>>;
-    async fn set(
+pub trait KvInterface: LogicalModule {
+    async fn call(
         &self,
-        kvs: Vec<proto::kv::KvPair>,
-        opts: SetOptions,
-    ) -> WSResult<Vec<proto::kv::kv_response::KvPairOpt>>;
+        kv: proto::kv::KvRequests,
+        opt: KvOptions,
+    ) -> WSResult<proto::kv::KvResponses>;
 }
-
-impl SetOptions {
-    pub fn new() -> SetOptions {
-        SetOptions {}
-    }
-}
-
-#[async_trait]
-pub trait KVNode: KVInterface + Downcast {
-    async fn ready(&self) -> bool;
-}
-impl_downcast!(KVNode);

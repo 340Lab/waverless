@@ -1,5 +1,5 @@
 //!
-//! # Meta Dist KV
+//! # Meta Dist Kv
 //!
 //! stores basical meta data like router table
 //!
@@ -7,15 +7,15 @@
 // mod openraft_adapter;
 // pub mod tikvraft_proxy;
 mod async_raft_kernel;
-// use self::tikvraft_proxy::TiKVRaftModule;
+// use self::tikvraft_proxy::TiKvRaftModule;
 
 // use self::async_raft_kernel::storage::ClientRequest;
 
 use self::async_raft_kernel::storage::{ClientRequest, OpeType};
 
 use super::{
-    dist_kv::KVNode,
-    kv_interface::{KVInterface, SetOptions},
+    dist_kv::KvNode,
+    kv_interface::{KvInterface, SetOptions},
 };
 use crate::{
     network::proto::{
@@ -26,7 +26,7 @@ use crate::{
         },
     },
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, MetaKVView, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, MetaKvView, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -39,21 +39,21 @@ use ws_derive::LogicalModule;
 pub type RaftModule = async_raft_kernel::AsyncRaftModule;
 
 #[derive(LogicalModule)]
-pub struct RaftKVNode {
+pub struct RaftKvNode {
     pub raft_inner: RaftModule,
-    view: MetaKVView,
+    view: MetaKvView,
 }
 
 #[async_trait]
-impl LogicalModule for RaftKVNode {
+impl LogicalModule for RaftKvNode {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
         Self {
             raft_inner: RaftModule::new(args.clone()),
-            view: MetaKVView::new(args.logical_modules_ref.clone()),
-            // raft_module: TiKVRaftModule::new(args.clone()),
+            view: MetaKvView::new(args.logical_modules_ref.clone()),
+            // raft_module: TiKvRaftModule::new(args.clone()),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -66,7 +66,7 @@ impl LogicalModule for RaftKVNode {
 }
 
 #[async_trait]
-impl KVNode for RaftKVNode {
+impl KvNode for RaftKvNode {
     async fn ready(&self) -> bool {
         let res = self.raft_inner.raft().client_read().await;
         match res {
@@ -80,7 +80,7 @@ impl KVNode for RaftKVNode {
 }
 
 #[async_trait]
-impl KVInterface for RaftKVNode {
+impl KvInterface for RaftKvNode {
     async fn get(&self, key_range: KeyRange) -> WSResult<Vec<KvPair>> {
         // get from local persist
         // self.view

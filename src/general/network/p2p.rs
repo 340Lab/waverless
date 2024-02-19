@@ -198,6 +198,12 @@ impl<R: RPCReq> RPCResponsor<R> {
     pub async fn send_resp(&self, resp: R::Resp) -> WSResult<()> {
         self.responsor.send_resp(resp).await
     }
+    pub fn node_id(&self) -> NodeID {
+        self.responsor.node_id
+    }
+    pub fn task_id(&self) -> TaskId {
+        self.responsor.task_id
+    }
 }
 
 pub struct Responser {
@@ -276,7 +282,7 @@ impl P2PModule {
                         *b.downcast::<M>().unwrap()
                     }
                 };
-
+                // tracing::debug!("dispatch from {} msg:{:?}", nid, msg);
                 f(
                     Responser {
                         task_id,
@@ -378,6 +384,7 @@ impl P2PModule {
         REQ: MsgPack,
         RESP: MsgPack,
     {
+        // tracing::debug!("call_rpc_inner req{:?}", r);
         // alloc from global
         let taskid: TaskId = self.next_task_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = tokio::sync::oneshot::channel::<Box<dyn MsgPack>>();
@@ -398,25 +405,27 @@ impl P2PModule {
             return Ok(*resp);
         }
 
-        if self.rpc_holder.read().get(&(r.msg_id(), node_id)).is_none() {
-            let res = self
-                .rpc_holder
-                .write()
-                .insert((r.msg_id(), node_id), Default::default());
-            assert!(res.is_none());
-        }
-        let inner_lock = self
-            .rpc_holder
-            .read()
-            .get(&(r.msg_id(), node_id))
-            .unwrap()
-            .clone();
-        let _hold_lock = inner_lock.lock().await;
+        // if self.rpc_holder.read().get(&(r.msg_id(), node_id)).is_none() {
+        //     let res = self
+        //         .rpc_holder
+        //         .write()
+        //         .insert((r.msg_id(), node_id), Default::default());
+        //     assert!(res.is_none());
+        // }
+        // let inner_lock = self
+        //     .rpc_holder
+        //     .read()
+        //     .get(&(r.msg_id(), node_id))
+        //     .unwrap()
+        //     .clone();
+        // let _hold_lock = inner_lock.lock().await;
         // tracing::info!("holding lock msg:{} node:{}", r.msg_id(), node_id);
 
         let _ = self
             .waiting_tasks
             .insert((taskid, node_id), Some(tx).into());
+
+        // tracing::debug!("rpc send to node {} with taskid {}", node_id, taskid);
         match self
             .p2p_kernel
             .send(node_id, taskid, r.msg_id(), r.encode_to_vec())
@@ -431,15 +440,16 @@ impl P2PModule {
             Err(err) => {
                 let _ = self.waiting_tasks.remove(&(taskid, node_id)).unwrap();
                 // tracing::info!("1stop holding lock msg:{} node:{}", r.msg_id(), node_id);
+                tracing::error!("rpc send failed: {:?}", err);
                 return Err(err);
             }
         }
-        // TODO: handle timeout
-        if node_id == 3 {
-            // tracing::info!("waiting for response from {}", node_id);
-        }
-        // tracing::info!("2holding lock msg:{} node:{}", r.msg_id(), node_id);
 
+        // tracing::debug!(
+        //     "rpc waiting for response from node {} for task {}",
+        //     node_id,
+        //     taskid
+        // );
         let resp = match tokio::time::timeout(dur, rx).await {
             Ok(resp) => resp.unwrap_or_else(|err| {
                 panic!("waiting for response failed: {:?}", err);
@@ -448,20 +458,16 @@ impl P2PModule {
                 // maybe removed or not
                 let _ = self.waiting_tasks.remove(&(taskid, node_id));
                 // let _ = self.p2p_kernel.close(node_id).await;
-                if node_id == 3 {
-                    tracing::warn!("rpc timeout: {:?} to node {}", err, node_id);
-                }
+
+                tracing::error!("rpc timeout: {:?} to node {}", err, node_id);
+
                 // tracing::warn!("rpc timeout: {:?} to node {}", err, node_id);
                 // tracing::info!("2stop holding lock msg:{} node:{}", r.msg_id(), node_id);
                 return Err(WsNetworkConnErr::RPCTimout(node_id).into());
             }
         };
-        // tracing::info!("3holding lock msg:{} node:{}", r.msg_id(), node_id);
-        if node_id == 3 {
-            // tracing::info!("got response from {}", node_id);
-        }
+
         let resp = resp.downcast::<RESP>().unwrap();
-        // tracing::info!("3stop holding lock msg:{} node:{}", r.msg_id(), node_id);
 
         Ok(*resp)
     }
@@ -475,6 +481,7 @@ impl P2PModule {
     ) -> WSResult<()> {
         let read = self.dispatch_map.read();
         if let Some(cb) = read.get(&id) {
+            // tracing::debug!("dispatch {} from: {}", id, nid);
             cb(nid, self, taskid, data)?;
             Ok(())
         } else {

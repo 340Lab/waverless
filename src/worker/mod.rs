@@ -3,6 +3,7 @@ pub mod executor;
 pub mod function_event;
 pub mod http_handler;
 pub mod instance_manager;
+pub mod kv_storage;
 pub mod kv_user_client;
 pub mod wasm;
 pub mod wasm_host_funcs;

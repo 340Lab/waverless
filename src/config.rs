@@ -15,6 +15,9 @@ pub struct NodesConfig {
 }
 
 impl NodesConfig {
+    pub fn node_cnt(&self) -> usize {
+        self.peers.len() + 1
+    }
     pub fn this_node(&self) -> NodeID {
         self.this.0
     }

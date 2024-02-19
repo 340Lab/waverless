@@ -1,10 +1,14 @@
 use crate::{
     config::NodesConfig,
     general::{
-        fs::Fs, metric_publisher::MetricPublisher, network::http_handler::HttpHandler,
-        network::p2p::P2PModule,
+        fs::Fs,
+        metric_publisher::MetricPublisher,
+        network::{http_handler::HttpHandler, p2p::P2PModule},
     },
-    master::{http_handler::MasterHttpHandler, master::Master, metric_observor::MetricObservor},
+    master::{
+        http_handler::MasterHttpHandler, master::Master, master_kv::MasterKv,
+        metric_observor::MetricObservor,
+    },
     util,
     worker::{
         executor::Executor, http_handler::WorkerHttpHandler, instance_manager::InstanceManager,
@@ -12,7 +16,7 @@ use crate::{
     },
 };
 use crate::{
-    // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KVClient},
+    // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KvClient},
     // module_iter::LogicalModuleParent,
     // network::p2p::P2PModule,
     result::WSResult,
@@ -165,7 +169,7 @@ macro_rules! logical_modules {
 
 // pub struct LogicalModules {
 //     // #[sub]
-//     // pub kv_client: KVClient, // each module need a kv service
+//     // pub kv_client: KvClient, // each module need a kv service
 //     // #[sub]
 //     // #[view()]
 //     // pub data_router_client: DataRouterClient, // kv_client_need a data_router service
@@ -174,20 +178,20 @@ macro_rules! logical_modules {
 //     // #[parent]
 //     // pub p2p: P2PModule, // network basic service
 //     // pub scheduler_node: Option<SchedulerNode>, // scheduler service
-//     // pub general_kv_client: GKV::KVClient,
-//     // pub general_kv: Option<GKV>,
+//     // pub general_kv_client: GKv::KvClient,
+//     // pub general_kv: Option<GKv>,
 //     // #[view(p2p, local_kv_client)]
 //     // pub raft: Option<Box<dyn Raft>>,
-//     pub meta_kv_client: Box<dyn KVClient>, // get set key range
+//     pub meta_kv_client: Box<dyn KvClient>, // get set key range
 //     // #[view(p2p, raft)]
-//     // pub meta_kv: Option<Box<dyn KVNode>>, // run the raft or other consensus algorithm, handle meta_kv request
+//     // pub meta_kv: Option<Box<dyn KvNode>>, // run the raft or other consensus algorithm, handle meta_kv request
 //     /// get set by metakv or generalkv directly
-//     pub local_kv_client: Box<dyn KVClient>,
+//     pub local_kv_client: Box<dyn KvClient>,
 //     // handle request, local storage operations
-//     pub local_kv: Option<Box<dyn KVNode>>,
+//     pub local_kv: Option<Box<dyn KvNode>>,
 //     // #[parent]
 //     // pub data_router: Option<DataRouter>, // data_router service
-//     // pub kv_node: Option<KVNode>,               // kv service
+//     // pub kv_node: Option<KvNode>,               // kv service
 // }
 
 #[derive(Clone)]
@@ -310,6 +314,8 @@ logical_modules!(
     Option<MetricObservor>,
     master,
     Option<Master>,
+    master_kv,
+    Option<MasterKv>,
     ////////////////////////////
     // worker
     worker,
@@ -324,15 +330,15 @@ logical_modules!(
     Option<Executor>
 );
 
-// logical_module_view_impl!(MetaKVClientView);
-// logical_module_view_impl!(MetaKVClientView, meta_kv_client, Box<dyn KVClient>);
-// logical_module_view_impl!(MetaKVClientView, meta_kv, Option<Box<dyn KVNode>>);
-// logical_module_view_impl!(MetaKVClientView, p2p, P2PModule);
+// logical_module_view_impl!(MetaKvClientView);
+// logical_module_view_impl!(MetaKvClientView, meta_kv_client, Box<dyn KvClient>);
+// logical_module_view_impl!(MetaKvClientView, meta_kv, Option<Box<dyn KvNode>>);
+// logical_module_view_impl!(MetaKvClientView, p2p, P2PModule);
 
-logical_module_view_impl!(MetaKVView);
-// logical_module_view_impl!(MetaKVView, p2p, P2PModule);
-// logical_module_view_impl!(MetaKVView, meta_kv, Option<Box<dyn KVNode>>);
-// logical_module_view_impl!(MetaKVView, local_kv, Option<Box<dyn KVNode>>);
+logical_module_view_impl!(MetaKvView);
+// logical_module_view_impl!(MetaKvView, p2p, P2PModule);
+// logical_module_view_impl!(MetaKvView, meta_kv, Option<Box<dyn KvNode>>);
+// logical_module_view_impl!(MetaKvView, local_kv, Option<Box<dyn KvNode>>);
 
 logical_module_view_impl!(P2PView);
 logical_module_view_impl!(P2PView, p2p, P2PModule);
@@ -398,6 +404,7 @@ logical_module_view_impl!(FsView, fs, Fs);
 logical_module_view_impl!(MasterView);
 logical_module_view_impl!(MasterView, p2p, P2PModule);
 logical_module_view_impl!(MasterView, master, Option<Master>);
+logical_module_view_impl!(MasterView, master_kv, Option<MasterKv>);
 
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
     // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -440,6 +447,7 @@ impl LogicalModules {
             },
             metric_observor: None,
             master: None,
+            master_kv: None,
             worker: None,
             kv_user_client: None,
             instance_manager: None,
@@ -451,6 +459,7 @@ impl LogicalModules {
         if is_master {
             logical_modules.metric_observor = Some(MetricObservor::new(args.clone()));
             logical_modules.master = Some(Master::new(args.clone()));
+            logical_modules.master_kv = Some(MasterKv::new(args.clone()));
         } else {
             logical_modules.kv_user_client = Some(KvUserClient::new(args.clone()));
             logical_modules.instance_manager = Some(InstanceManager::new(args.clone()));
@@ -471,6 +480,7 @@ impl LogicalModules {
         // master
         start_module_opt!(self, sys, metric_observor);
         start_module_opt!(self, sys, master);
+        start_module_opt!(self, sys, master_kv);
         //worker
         start_module_opt!(self, sys, worker);
         start_module_opt!(self, sys, kv_user_client);
