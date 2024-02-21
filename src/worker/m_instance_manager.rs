@@ -1,7 +1,9 @@
-use super::{app_meta::AppMetaManager, executor::FunctionCtx, wasm::WasmInstance};
+use super::{app_meta::AppMetaManager, m_executor::FunctionCtx, wasm::WasmInstance};
 use crate::{
+    general::network::m_p2p::P2PModule,
+    logical_module_view_impl,
     result::WSResult,
-    sys::{InstanceManagerView, LogicalModule, LogicalModuleNewArgs},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
     worker::wasm_host_funcs, // worker::host_funcs,
 };
@@ -155,7 +157,8 @@ impl EachAppCache {
             let vm = vm
                 .register_module(
                     Some(&format!(
-                        "{}",
+                        "{}{}",
+                        instance_name,
                         self.next_instance_id.fetch_add(1, Ordering::Relaxed)
                     )),
                     module,
@@ -171,6 +174,14 @@ impl EachAppCache {
         self.getting.notify_waiters();
     }
 }
+
+logical_module_view_impl!(InstanceManagerView);
+logical_module_view_impl!(InstanceManagerView, p2p, P2PModule);
+logical_module_view_impl!(
+    InstanceManagerView,
+    instance_manager,
+    Option<InstanceManager>
+);
 
 #[derive(LogicalModule)]
 pub struct InstanceManager {

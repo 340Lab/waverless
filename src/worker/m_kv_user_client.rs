@@ -4,12 +4,13 @@ use crate::{
     general::{
         kv_interface::{KvInterface, KvOptions},
         network::{
-            p2p::RPCCaller,
+            m_p2p::{P2PModule, RPCCaller},
             proto::kv::{KvRequests, KvResponses},
         },
     },
+    logical_module_view_impl,
     result::WSResult,
-    sys::{KvUserClientView, LogicalModule, LogicalModuleNewArgs},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
@@ -17,7 +18,16 @@ use async_trait::async_trait;
 
 use ws_derive::LogicalModule;
 
+use super::{m_executor::Executor, m_instance_manager::InstanceManager, m_worker::WorkerCore};
+
 // use super::super::kv_interface::KvInterface;
+
+logical_module_view_impl!(KvUserClientView);
+logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
+logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
+logical_module_view_impl!(KvUserClientView, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(KvUserClientView, worker, Option<WorkerCore>);
+logical_module_view_impl!(KvUserClientView, executor, Option<Executor>);
 
 #[derive(LogicalModule)]
 pub struct KvUserClient {
@@ -74,10 +84,11 @@ lazy_static::lazy_static! {
     // static ref NEXT_CACHE_ID: AtomicI32=AtomicI32::new(0);
 }
 
-pub fn kv_user_client() -> &'static KvUserClient {
-    let res = &*KV_USER_CLIENT as *const Option<KvUserClientView> as *mut Option<KvUserClientView>;
-    unsafe { (*res).as_ref().unwrap().kv_user_client() }
-}
+// pub fn kv_user_client() -> &'static KvUserClient {
+//     let res = &*KV_USER_CLIENT as *const Option<KvUserClientView> as *mut Option<KvUserClientView>;
+//     unsafe { (*res).as_ref().unwrap().kv_user_client() }
+// }
+
 
 #[async_trait]
 impl KvInterface for KvUserClient {

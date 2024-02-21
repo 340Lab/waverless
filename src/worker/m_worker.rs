@@ -1,12 +1,18 @@
-use crate::{sys::WorkerView, util::JoinHandleWrapper};
+use crate::{
+    general::network::m_p2p::P2PModule, logical_module_view_impl, sys::LogicalModulesRef,
+    util::JoinHandleWrapper,
+};
 use async_trait::async_trait;
 use ws_derive::LogicalModule;
 
 use crate::{
-    general::network::{p2p::RPCCaller, proto},
+    general::network::{m_p2p::RPCCaller, proto},
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs},
 };
+
+logical_module_view_impl!(WorkerView);
+logical_module_view_impl!(WorkerView, p2p, P2PModule);
 
 #[derive(LogicalModule)]
 pub struct WorkerCore {

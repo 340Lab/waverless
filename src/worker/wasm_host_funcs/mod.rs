@@ -2,9 +2,12 @@
 use wasmedge_sdk::{ImportObject, ImportObjectBuilder, NeverType};
 mod fs;
 mod kv;
+mod result;
 
 use fs::FsFuncsRegister;
 use kv::KvFuncsRegister;
+
+use crate::sys::LogicalModulesRef;
 
 mod utils {
 
@@ -13,8 +16,13 @@ mod utils {
     use wasmedge_sdk::{Caller, CallingFrame, Instance, Memory};
 
     use crate::{
+        general::m_fs::Fs,
+        sys::LogicalModulesRef,
         util::SendNonNull,
-        worker::{executor::FunctionCtx, kv_user_client::kv_user_client},
+        worker::{
+            m_executor::FunctionCtx, m_instance_manager::InstanceManager,
+            m_kv_user_client::KvUserClient,
+        },
     };
 
     trait WasmCtx {
@@ -84,9 +92,7 @@ mod utils {
 
     pub fn current_app_fn_ctx(caller: &impl WasmCtx) -> SendNonNull<FunctionCtx> {
         let app_fn = SendNonNull(NonNull::from(
-            kv_user_client()
-                .view
-                .instance_manager()
+            m_instance_manager()
                 .instance_running_function
                 .read()
                 .get(&caller.instance().unwrap().name().unwrap())
@@ -94,6 +100,49 @@ mod utils {
         ));
         app_fn
     }
+
+    lazy_static::lazy_static! {
+        pub(super) static ref MODULES: Option<LogicalModulesRef>=None;
+    }
+
+    pub fn m_kv_user_client() -> &'static KvUserClient {
+        unsafe {
+            &(*MODULES.as_ref().unwrap().inner.as_ptr())
+                .as_ref()
+                .unwrap()
+                .kv_user_client
+                .as_ref()
+                .unwrap()
+        }
+    }
+
+    pub fn m_fs<'a>() -> &'a Fs {
+        unsafe {
+            &(*MODULES.as_ref().unwrap().inner.as_ptr())
+                .as_ref()
+                .unwrap()
+                .fs
+        }
+    }
+
+    pub fn m_instance_manager() -> &'static InstanceManager {
+        unsafe {
+            &(*MODULES.as_ref().unwrap().inner.as_ptr())
+                .as_ref()
+                .unwrap()
+                .instance_manager
+                .as_ref()
+                .unwrap()
+        }
+    }
+}
+
+pub fn set_singleton_modules(modules: LogicalModulesRef) {
+    // *utils::MODULES = Some(modules);
+    unsafe {
+        *(&*utils::MODULES as *const _ as *mut _) = Some(modules);
+    }
+    assert!(utils::MODULES.is_some());
 }
 
 // #[cfg(target_os = "macos")]
@@ -115,9 +164,12 @@ trait HostFuncRegister {
 
 #[cfg(target_os = "linux")]
 pub fn new_import_obj() -> ImportObject {
+    use crate::worker::wasm_host_funcs::result::ResultFuncsRegister;
+
     let builder = ImportObjectBuilder::new();
     let builder = KvFuncsRegister {}.register(builder);
     let builder = FsFuncsRegister {}.register(builder);
+    let builder = ResultFuncsRegister.register(builder);
 
     builder.build::<NeverType>("env", None).unwrap()
 }

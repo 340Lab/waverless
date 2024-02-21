@@ -5,13 +5,16 @@ use ws_derive::LogicalModule;
 
 use crate::{
     general::network::{
-        p2p::{RPCHandler, RPCResponsor},
+        m_p2p::{P2PModule, RPCHandler, RPCResponsor},
         proto::{self, sche::MakeSchePlanResp},
     },
+    logical_module_view_impl,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, MasterView, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
+
+use super::m_master_kv::MasterKv;
 
 trait NodeWeighteFetcher: Send + Sync + 'static {
     // NOTE: get weight return node weight
@@ -68,6 +71,11 @@ impl NodeSelector for HashNodeSelector {
         (n % all_node_cnt as u64 + 1) as NodeID
     }
 }
+
+logical_module_view_impl!(MasterView);
+logical_module_view_impl!(MasterView, p2p, P2PModule);
+logical_module_view_impl!(MasterView, master, Option<Master>);
+logical_module_view_impl!(MasterView, master_kv, Option<MasterKv>);
 
 #[derive(LogicalModule)]
 pub struct Master {

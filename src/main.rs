@@ -23,7 +23,7 @@ pub mod worker;
 pub mod cmd_arg;
 pub mod config;
 pub mod result;
-mod sys;
+pub mod sys;
 pub mod util;
 
 #[tokio::main]

@@ -1,5 +1,4 @@
-use super::{utils, HostFuncRegister};
-use crate::general::fs::fs;
+use super::{utils, utils::m_fs, HostFuncRegister};
 
 #[cfg(target_os = "macos")]
 use wasmer::{imports, Function, FunctionType, Imports};
@@ -16,17 +15,29 @@ type OpenFileArgs = (i32, i32, i32);
 fn open_file(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, HostFuncError> {
     let fname = utils::u8slice(&caller, args[0].to_i32(), args[1].to_i32());
     let res = utils::mutref::<i32>(&caller, args[2].to_i32());
-    *res = fs().open_file(std::str::from_utf8(fname).unwrap()).unwrap();
+    if let Ok(f) = m_fs().open_file(std::str::from_utf8(fname).unwrap()) {
+        *res = f;
+    } else {
+        tracing::error!(
+            "function failed to open file {}",
+            std::str::from_utf8(fname).unwrap()
+        );
+        *res = -1;
+    }
 
     Ok(vec![])
 }
 
 fn read_file_at(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, HostFuncError> {
     let fd = args[0].to_i32();
+    if fd < 0 {
+        tracing::error!("function read_file_at: invalid fd");
+        return Ok(vec![]);
+    }
     let data = utils::mutu8sclice(&caller, args[1].to_i32(), args[2].to_i32()).unwrap();
     let offset = args[3].to_i32();
     let retlen = utils::mutref::<i32>(&caller, args[4].to_i32());
-    *retlen = fs().read_file_at(fd, offset, data).unwrap() as i32;
+    *retlen = m_fs().read_file_at(fd, offset, data).unwrap() as i32;
 
     Ok(vec![])
 }
@@ -40,15 +51,17 @@ async fn read_file_at_async<T>(
     args: Vec<WasmValue>,
     _ctx: *mut T,
 ) -> Result<Vec<WasmValue>, HostFuncError> {
-    tokio::task::spawn_blocking(move || {
+    if let Err(err) = tokio::task::spawn_blocking(move || {
         let fd = args[0].to_i32();
         let data = utils::mutu8sclice(&caller, args[1].to_i32(), args[2].to_i32()).unwrap();
         let offset = args[3].to_i32();
         let retlen = utils::mutref::<i32>(&caller, args[4].to_i32());
-        *retlen = fs().read_file_at(fd, offset, data).unwrap() as i32;
+        *retlen = m_fs().read_file_at(fd, offset, data).unwrap() as i32;
     })
     .await
-    .unwrap();
+    {
+        tracing::error!("function read_file_at_async: {}", err);
+    }
 
     Ok(vec![])
 }
@@ -57,7 +70,7 @@ fn read_file_at(fd: i32, data_ptr: i32, data_len: i32, offset: i32, retlen_ptr: 
     let data = utils::mutu8sclice(&caller, args[1].to_i32(), args[2].to_i32()).unwrap();
     let offset = args[3].to_i32();
     let retlen = utils::mutref::<i32>(&caller, args[4].to_i32());
-    *retlen = fs().read_file_at(fd, offset, data).unwrap() as i32;
+    *retlen = m_fs().read_file_at(fd, offset, data).unwrap() as i32;
 }
 
 pub(super) struct FsFuncsRegister;

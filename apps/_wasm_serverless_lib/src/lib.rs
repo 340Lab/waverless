@@ -1,6 +1,6 @@
 use std::mem::ManuallyDrop;
 use std::vec::Vec;
-
+pub use wasmedge_bindgen::*;
 // use externref::externref;
 // #[allow(unused_imports)]
 // use wasmedge_bindgen::*;
@@ -14,6 +14,26 @@ extern "C" {
     fn kv_batch_res(ope_id: i32, args_ptr: *const i32, args_len: i32);
     fn open_file(fname: *const u8, fnamelen: i32, fd: &mut i32);
     fn read_file_at(fd: i32, buf: *const u8, buflen: i32, offset: i32, readlen: &mut i32);
+    pub fn write_result(res_ptr: *const u8, res_len: i32);
+}
+
+pub trait KvResTrans {
+    fn res_str(&self) -> Option<&str>;
+}
+
+impl KvResTrans for Vec<KvResult> {
+    fn res_str(&self) -> Option<&str> {
+        if let KvResult::Get(Some(s)) = &self[0] {
+            return std::str::from_utf8(s).map_or_else(
+                |err| {
+                    println!("err when get kv res str:{}", err);
+                    None
+                },
+                |v| Some(v),
+            );
+        }
+        None
+    }
 }
 
 // pub enum KvOpe {
@@ -191,6 +211,7 @@ impl HostFile {
         Self { fd }
     }
 
+    // data will be append to `buf` until the file is read to the end or `buf` is full to capacity
     pub fn read_at(&self, offset: usize, buf: &mut Vec<u8>) -> usize {
         let mut readlen = 0;
         let buf_old_len = buf.len();

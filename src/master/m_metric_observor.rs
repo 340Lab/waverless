@@ -1,7 +1,11 @@
 use crate::{
-    general::network::{p2p::MsgHandler, proto},
+    general::network::{
+        m_p2p::{MsgHandler, P2PModule},
+        proto,
+    },
+    logical_module_view_impl,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, MetricObservorView, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
@@ -82,6 +86,10 @@ pub mod prometheus {
 }
 
 pub struct NodeFnCacheMetric(HashSet<String>);
+
+logical_module_view_impl!(MetricObservorView);
+logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
+logical_module_view_impl!(MetricObservorView, metric_observor, Option<MetricObservor>);
 
 #[derive(LogicalModule)]
 pub struct MetricObservor {

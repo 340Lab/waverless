@@ -8,3 +8,4 @@ edition = "2021"
 crate-type = ["lib"]
 
 [dependencies]
+wasmedge-bindgen = "0.4.1"

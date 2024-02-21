@@ -33,12 +33,10 @@ use ws_derive::LogicalModule;
 
 use crate::{
     // module_view::P2PQuicNodeLMView,
-    result::{ErrCvt, WSResult, WsNetworkConnErr, WsSerialErr},
-    sys::{BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID, P2PView},
-    util::JoinHandleWrapper,
+    logical_module_view_impl, result::{ErrCvt, WSResult, WsNetworkConnErr, WsSerialErr}, sys::{LogicalModulesRef,BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID}, util::JoinHandleWrapper
 };
 
-use super::p2p::{MsgId, P2PKernel, P2PModule, TaskId};
+use super::m_p2p::{MsgId, P2PKernel, P2PModule, TaskId};
 
 // #[derive(Default, Ord, PartialEq, PartialOrd, Eq, Clone, Copy)]
 // struct XId(pub [u8; 32]);
@@ -81,9 +79,12 @@ impl P2PQuicNodeShared {
     }
 }
 
+logical_module_view_impl!(View);
+logical_module_view_impl!(View, p2p, P2PModule);
+
 #[derive(LogicalModule)]
 pub struct P2PQuicNode {
-    pub logical_modules_view: P2PView,
+    pub logical_modules_view: View,
     shared: Arc<P2PQuicNodeShared>,
 }
 
@@ -100,7 +101,7 @@ impl LogicalModule for P2PQuicNode {
         Self: Sized,
     {
         Self {
-            logical_modules_view: P2PView::new(args.logical_modules_ref.clone()),
+            logical_modules_view: View::new(args.logical_modules_ref.clone()),
             shared: P2PQuicNodeShared {
                 btx: args.btx,
                 locked: Mutex::new(P2PQuicNodeLocked { sub_tasks: vec![] }),
@@ -295,7 +296,7 @@ impl LogicalModule for P2PQuicNode {
 
 fn new_handle_connection_task(
     remote_addr: SocketAddr,
-    view: &P2PView,
+    view: &View,
     shared: Arc<P2PQuicNodeShared>,
     endpoint: Endpoint,
     connection: Connection,
@@ -314,7 +315,7 @@ fn new_handle_connection_task(
 
 async fn handle_connection(
     remote_addr: SocketAddr,
-    view: &P2PView,
+    view: &View,
     shared: Arc<P2PQuicNodeShared>,
     _endpoint: &Endpoint,
     connection: Connection,
@@ -351,17 +352,7 @@ async fn handle_connection(
                 if let Some(WireMsg((head, _, bytes))) = msg {
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
-                            tracing::debug!("new to dispatch task_id: {}", task_id);
-                            // println!("Received from {remote_addr:?} --> {bytes:?}");
                             view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into());
-                            // if bytes == *MSG_MARCO {
-                            //     let reply = Bytes::from(MSG_POLO);
-                            //     connection
-                            //         .send((Bytes::new(), Bytes::new(), reply.clone()))
-                            //         .await?;
-                            //     println!("Replied to {src:?} --> {reply:?}");
-                            // }
-                            // println!();
                         }
                         Err(err) => {
                             tracing::warn!("incoming deserial head error: {:?}", err);

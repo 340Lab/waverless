@@ -8,18 +8,33 @@ use ws_derive::LogicalModule;
 // use
 
 use crate::{
-    general::network::http_handler::{self, HttpHandler},
+    general::network::{
+        http_handler::{self, HttpHandler},
+        m_p2p::P2PModule,
+    },
+    logical_module_view_impl,
     result::WSResult,
-    sys::{HttpHandlerView, LogicalModule, LogicalModuleNewArgs, MasterHttpHandlerView},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
+
+use super::{m_master::Master, m_metric_observor::MetricObservor};
+
+logical_module_view_impl!(MasterHttpHandlerView);
+logical_module_view_impl!(MasterHttpHandlerView, p2p, P2PModule);
+logical_module_view_impl!(MasterHttpHandlerView, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(MasterHttpHandlerView, master, Option<Master>);
+logical_module_view_impl!(
+    MasterHttpHandlerView,
+    metric_observor,
+    Option<MetricObservor>
+);
 
 #[derive(LogicalModule)]
 pub struct MasterHttpHandler {
     // local_req_id_allocator: LocalReqIdAllocator,
     // view: ScheMasterView,
     view: MasterHttpHandlerView,
-    http_handler_view: HttpHandlerView,
 }
 
 #[async_trait]
@@ -29,19 +44,15 @@ impl LogicalModule for MasterHttpHandler {
         Self: Sized,
     {
         Self {
-            // each_fn_caching: HashMap::new(),
             view: MasterHttpHandlerView::new(args.logical_modules_ref.clone()),
-            http_handler_view: HttpHandlerView::new(args.logical_modules_ref.clone()),
-            // local_req_id_allocator: LocalReqIdAllocator::new(),
-            // view: ,
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
 
-        let view = self.http_handler_view.clone();
+        let view = self.view.clone();
         Ok(vec![JoinHandleWrapper::from(tokio::spawn(async move {
-            http_handler::start_http_handler(view).await;
+            http_handler::start_http_handler(view.inner).await;
         }))])
     }
 }
@@ -67,7 +78,8 @@ impl HttpHandler for MasterHttpHandler {
     // fn alloc_local_req_id(&self) -> ReqId {
     //     self.local_req_id_allocator.alloc()
     // }
-    async fn handle_request(&self, app: &str) -> Response {
+    async fn handle_request(&self, app: &str, _http_text: String) -> Response {
+        tracing::debug!("handle_request {}", app);
         if app == "metrics" {
             return self.handle_prometheus();
         }
@@ -101,7 +113,16 @@ impl HttpHandler for MasterHttpHandler {
             .unwrap()
             .addr;
         target_node.set_port(target_node.port() + 1);
-        Redirect::to(&*format!("http://{}/{}", target_node, app)).into_response()
+        tracing::debug!(
+            "redirect to http://hanbaoaaa.xyz/waverless_api{}/{}",
+            target_node,
+            app
+        );
+        Redirect::temporary(&*format!(
+            "http://hanbaoaaa.xyz/waverless_api{}/{}",
+            node, app
+        ))
+        .into_response()
         // }
     }
     // async fn select_node(
