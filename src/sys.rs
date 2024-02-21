@@ -1,18 +1,20 @@
 use crate::{
     config::NodesConfig,
     general::{
-        fs::Fs,
-        metric_publisher::MetricPublisher,
-        network::{http_handler::HttpHandler, p2p::P2PModule},
+        m_fs::Fs,
+        m_kv_store_engine::KvStoreEngine,
+        m_metric_publisher::MetricPublisher,
+        network::{http_handler::HttpHandler, m_p2p::P2PModule},
     },
     master::{
-        http_handler::MasterHttpHandler, master::Master, master_kv::MasterKv,
-        metric_observor::MetricObservor,
+        m_http_handler::MasterHttpHandler, m_master::Master, m_master_kv::MasterKv,
+        m_metric_observor::MetricObservor,
     },
     util,
     worker::{
-        executor::Executor, http_handler::WorkerHttpHandler, instance_manager::InstanceManager,
-        kv_user_client::KvUserClient, worker::WorkerCore,
+        m_executor::Executor, m_http_handler::WorkerHttpHandler,
+        m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient, m_worker::WorkerCore,
+        wasm_host_funcs::set_singleton_modules,
     },
 };
 use crate::{
@@ -196,7 +198,7 @@ macro_rules! logical_modules {
 
 #[derive(Clone)]
 pub struct LogicalModulesRef {
-    inner: Weak<Option<LogicalModules>>,
+    pub inner: Weak<Option<LogicalModules>>,
 }
 
 impl LogicalModulesRef {
@@ -211,6 +213,7 @@ impl LogicalModulesRef {
 //     }
 // }
 
+#[macro_export]
 macro_rules! logical_module_view_impl {
     ($module:ident,$module_name:ident,Option<$type:ty>) => {
         impl $module {
@@ -235,7 +238,7 @@ macro_rules! logical_module_view_impl {
     };
     ($module:ident) => {
         #[derive(Clone)]
-        pub struct $module {
+        struct $module {
             inner: LogicalModulesRef,
         }
         impl $module {
@@ -308,6 +311,8 @@ logical_modules!(
     MetricPublisher,
     fs,
     Fs,
+    kv_store_engine,
+    KvStoreEngine,
     ////////////////////////////
     // master
     metric_observor,
@@ -329,82 +334,6 @@ logical_modules!(
     executor,
     Option<Executor>
 );
-
-// logical_module_view_impl!(MetaKvClientView);
-// logical_module_view_impl!(MetaKvClientView, meta_kv_client, Box<dyn KvClient>);
-// logical_module_view_impl!(MetaKvClientView, meta_kv, Option<Box<dyn KvNode>>);
-// logical_module_view_impl!(MetaKvClientView, p2p, P2PModule);
-
-logical_module_view_impl!(MetaKvView);
-// logical_module_view_impl!(MetaKvView, p2p, P2PModule);
-// logical_module_view_impl!(MetaKvView, meta_kv, Option<Box<dyn KvNode>>);
-// logical_module_view_impl!(MetaKvView, local_kv, Option<Box<dyn KvNode>>);
-
-logical_module_view_impl!(P2PView);
-logical_module_view_impl!(P2PView, p2p, P2PModule);
-
-logical_module_view_impl!(ScheMasterView);
-logical_module_view_impl!(ScheMasterView, p2p, P2PModule);
-
-logical_module_view_impl!(WorkerView);
-logical_module_view_impl!(WorkerView, p2p, P2PModule);
-
-logical_module_view_impl!(HttpHandlerView);
-logical_module_view_impl!(HttpHandlerView, p2p, P2PModule);
-logical_module_view_impl!(HttpHandlerView, http_handler, Box<dyn HttpHandler>);
-
-logical_module_view_impl!(WorkerHttpHandlerView);
-logical_module_view_impl!(WorkerHttpHandlerView, p2p, P2PModule);
-logical_module_view_impl!(WorkerHttpHandlerView, http_handler, Box<dyn HttpHandler>);
-logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
-
-logical_module_view_impl!(MasterHttpHandlerView);
-logical_module_view_impl!(MasterHttpHandlerView, p2p, P2PModule);
-logical_module_view_impl!(MasterHttpHandlerView, http_handler, Box<dyn HttpHandler>);
-logical_module_view_impl!(MasterHttpHandlerView, master, Option<Master>);
-logical_module_view_impl!(
-    MasterHttpHandlerView,
-    metric_observor,
-    Option<MetricObservor>
-);
-
-logical_module_view_impl!(MetricObservorView);
-logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
-logical_module_view_impl!(MetricObservorView, metric_observor, Option<MetricObservor>);
-
-logical_module_view_impl!(MetricPublisherView);
-logical_module_view_impl!(MetricPublisherView, p2p, P2PModule);
-// logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
-logical_module_view_impl!(MetricPublisherView, metric_publisher, MetricPublisher);
-
-logical_module_view_impl!(KvUserClientView);
-logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
-logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
-logical_module_view_impl!(KvUserClientView, instance_manager, Option<InstanceManager>);
-logical_module_view_impl!(KvUserClientView, worker, Option<WorkerCore>);
-logical_module_view_impl!(KvUserClientView, executor, Option<Executor>);
-
-logical_module_view_impl!(ExecutorView);
-logical_module_view_impl!(ExecutorView, p2p, P2PModule);
-logical_module_view_impl!(ExecutorView, instance_manager, Option<InstanceManager>);
-logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
-logical_module_view_impl!(ExecutorView, kv_user_client, Option<KvUserClient>);
-
-logical_module_view_impl!(InstanceManagerView);
-logical_module_view_impl!(InstanceManagerView, p2p, P2PModule);
-logical_module_view_impl!(
-    InstanceManagerView,
-    instance_manager,
-    Option<InstanceManager>
-);
-
-logical_module_view_impl!(FsView);
-logical_module_view_impl!(FsView, fs, Fs);
-
-logical_module_view_impl!(MasterView);
-logical_module_view_impl!(MasterView, p2p, P2PModule);
-logical_module_view_impl!(MasterView, master, Option<Master>);
-logical_module_view_impl!(MasterView, master_kv, Option<MasterKv>);
 
 fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
     // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -433,6 +362,8 @@ impl LogicalModules {
                 inner: Arc::downgrade(&arc),
             },
         };
+        set_singleton_modules(args.logical_modules_ref.clone());
+
         let is_master = config.this.1.is_master();
         assert!(is_master || config.this.1.is_worker());
 
@@ -440,6 +371,7 @@ impl LogicalModules {
             p2p: P2PModule::new(args.clone()),
             metric_publisher: MetricPublisher::new(args.clone()),
             fs: Fs::new(args.clone()),
+            kv_store_engine: KvStoreEngine::new(args.clone()),
             http_handler: if is_master {
                 Box::new(MasterHttpHandler::new(args.clone()))
             } else {
@@ -476,6 +408,7 @@ impl LogicalModules {
         start_module!(self, sys, http_handler);
         start_module!(self, sys, metric_publisher);
         start_module!(self, sys, fs);
+        start_module!(self, sys, kv_store_engine);
 
         // master
         start_module_opt!(self, sys, metric_observor);

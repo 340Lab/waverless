@@ -6,25 +6,34 @@ use tokio::sync::Notify;
 use ws_derive::LogicalModule;
 
 use crate::{
-    general::network::{
-        msg_pack::KvResponseExt,
-        p2p::{RPCHandler, RPCResponsor, TaskId},
-        proto::{
-            self,
-            kv::{KvRequests, KvResponse, KvResponses},
+    general::{
+        m_kv_store_engine::{KeyTypeKv, KeyTypeKvPosition, KvStoreEngine},
+        network::{
+            m_p2p::{P2PModule, RPCHandler, RPCResponsor, TaskId},
+            msg_pack::KvResponseExt,
+            proto::{
+                self,
+                kv::{KvRequests, KvResponse, KvResponses},
+            },
         },
     },
+    logical_module_view_impl,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, MasterView, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
+
+logical_module_view_impl!(MasterKvView);
+logical_module_view_impl!(MasterKvView, p2p, P2PModule);
+logical_module_view_impl!(MasterKvView, master_kv, Option<MasterKv>);
+logical_module_view_impl!(MasterKvView, kv_store_engine, KvStoreEngine);
 
 #[derive(LogicalModule)]
 pub struct MasterKv {
     kv_map: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
     lock_notifiers: RwLock<HashMap<Vec<u8>, (NodeID, u32, Arc<Notify>)>>,
     rpc_handler: RPCHandler<proto::kv::KvRequests>,
-    view: MasterView,
+    view: MasterKvView,
 }
 
 #[async_trait]
@@ -37,7 +46,7 @@ impl LogicalModule for MasterKv {
             kv_map: RwLock::new(HashMap::new()),
             lock_notifiers: RwLock::new(HashMap::new()),
             rpc_handler: RPCHandler::default(),
-            view: MasterView::new(args.logical_modules_ref.clone()),
+            view: MasterKvView::new(args.logical_modules_ref.clone()),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -85,21 +94,29 @@ impl MasterKv {
         _from: NodeID,
     ) -> KvResponse {
         tracing::debug!("handle_kv_set:{:?}", set);
-        let mut kvs = vec![];
+
         if let Some(kv) = set.kv {
-            let key = kv.key.clone();
-            let res = self.kv_map.write().insert(kv.key, kv.value);
-            if let Some(v) = res {
-                kvs.push(proto::kv::KvPair { key, value: v });
-            }
+            self.view
+                .kv_store_engine()
+                .set(KeyTypeKv(&kv.key), &kv.value);
+            self.view.kv_store_engine().set(
+                KeyTypeKvPosition(&kv.key),
+                &self.view.p2p().nodes_config.this_node(),
+            );
+
+            self.view.kv_store_engine().flush();
         }
 
-        KvResponse::new_common(kvs)
+        KvResponse::new_common(vec![])
     }
     async fn handle_kv_get(&self, get: proto::kv::kv_request::KvGetRequest) -> KvResponse {
         tracing::debug!("handle_kv_get:{:?}", get);
         let mut kvs = vec![];
-        if let Some(v) = self.kv_map.read().get(&get.range.as_ref().unwrap().start) {
+        if let Some(v) = self
+            .view
+            .kv_store_engine()
+            .get(KeyTypeKv(&get.range.as_ref().unwrap().start))
+        {
             kvs.push(proto::kv::KvPair {
                 key: get.range.unwrap().start,
                 value: v.clone(),
@@ -109,18 +126,25 @@ impl MasterKv {
     }
     async fn handle_kv_delete(&self, delete: proto::kv::kv_request::KvDeleteRequest) -> KvResponse {
         tracing::debug!("handle_kv_delete:{:?}", delete);
-        let res = self
-            .kv_map
-            .write()
-            .remove(&delete.range.as_ref().unwrap().start);
-        let mut kvs = vec![];
-        if let Some(v) = res {
-            kvs.push(proto::kv::KvPair {
-                key: delete.range.unwrap().start,
-                value: v,
-            });
-        }
-        KvResponse::new_common(kvs)
+        // let res = self
+        //     .kv_map
+        //     .write()
+        //     .remove(&delete.range.as_ref().unwrap().start);
+        self.view
+            .kv_store_engine()
+            .del(KeyTypeKvPosition(&delete.range.as_ref().unwrap().start));
+        self.view
+            .kv_store_engine()
+            .del(KeyTypeKv(&delete.range.as_ref().unwrap().start));
+        self.view.kv_store_engine().flush();
+        // let mut kvs = vec![];
+        // if let Some(v) = res {
+        //     kvs.push(proto::kv::KvPair {
+        //         key: delete.range.unwrap().start,
+        //         value: v,
+        //     });
+        // }
+        KvResponse::new_common(vec![])
     }
     async fn handle_kv_lock(
         &self,

@@ -10,14 +10,14 @@ use std::{
 };
 
 use super::{
+    m_p2p_quic::P2PQuicNode,
     msg_pack::{MsgPack, RPCReq},
-    p2p_quic::P2PQuicNode,
 };
 use crate::{
     config::NodesConfig,
-    // module_view::P2PModuleLMView,
+    logical_module_view_impl,
     result::{ErrCvt, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
-    sys::{LogicalModule, LogicalModuleNewArgs, NodeID, P2PView},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
 
@@ -163,6 +163,9 @@ pub struct P2PModule {
 // // dispatch_map Box<dyn Fn(Bytes) -> WSResult<()>>
 // unsafe impl Send for P2PModule {}
 // unsafe impl Sync for P2PModule {}
+
+logical_module_view_impl!(P2PView);
+logical_module_view_impl!(P2PView, p2p, P2PModule);
 
 #[async_trait]
 impl LogicalModule for P2PModule {

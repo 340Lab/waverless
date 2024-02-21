@@ -54,7 +54,7 @@ use wasmedge_wasi_helper::wasmedge_wasi_helper::_initialize;
 #[no_mangle]
 pub fn split_file() {
     _initialize();
-    let file_path = "files/random_words.txt";
+    let file_path = "random_words.txt";
     println!("split file start");
     // read file
     let mut file = HostFile::open(file_path);

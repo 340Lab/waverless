@@ -1,7 +1,7 @@
 use downcast_rs::{impl_downcast, Downcast};
 
 use super::{
-    p2p::MsgId,
+    m_p2p::MsgId,
     proto::{self, kv::KvResponse},
 };
 

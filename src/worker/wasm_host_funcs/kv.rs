@@ -1,4 +1,4 @@
-use super::{utils, HostFuncRegister};
+use super::{utils, utils::m_kv_user_client, HostFuncRegister};
 use crate::general::{
     kv_interface::{KvInterface, KvOptions},
     network::{
@@ -9,7 +9,6 @@ use crate::general::{
         },
     },
 };
-use crate::worker::kv_user_client::kv_user_client;
 use moka::sync::Cache;
 use std::{sync::atomic::AtomicI32, time::Duration};
 #[cfg(target_os = "macos")]
@@ -219,7 +218,7 @@ async fn kv_batch_ope<T>(
         }
     }
     // tracing::debug!("requests:{:?}", requests);
-    match kv_user_client()
+    match m_kv_user_client()
         .call(
             KvRequests {
                 requests,

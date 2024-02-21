@@ -3,12 +3,21 @@ use sysinfo::{CpuExt, CpuRefreshKind, RefreshKind, System, SystemExt};
 use ws_derive::LogicalModule;
 
 use crate::{
+    logical_module_view_impl,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, MetricPublisherView},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
 
-use super::network::{p2p::MsgSender, proto};
+use super::network::{
+    m_p2p::{MsgSender, P2PModule},
+    proto,
+};
+
+logical_module_view_impl!(MetricPublisherView);
+logical_module_view_impl!(MetricPublisherView, p2p, P2PModule);
+// logical_module_view_impl!(MetricPublisherView, metric_observor, Option<MetricObservor>);
+logical_module_view_impl!(MetricPublisherView, metric_publisher, MetricPublisher);
 
 #[derive(LogicalModule)]
 pub struct MetricPublisher {

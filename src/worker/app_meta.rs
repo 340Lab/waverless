@@ -15,12 +15,14 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FnEventYaml {
+    HttpFn { http_fn: () },
     HttpApp { http_app: () },
     KvSet { kv_set: usize },
 }
 
 #[derive(PartialEq, Eq)]
 pub enum FnEvent {
+    HttpFn,
     HttpApp,
     KvSet(usize),
 }
@@ -28,6 +30,7 @@ pub enum FnEvent {
 impl From<FnEventYaml> for FnEvent {
     fn from(yaml: FnEventYaml) -> Self {
         match yaml {
+            FnEventYaml::HttpFn { http_fn: _ } => Self::HttpFn,
             FnEventYaml::HttpApp { http_app: _ } => Self::HttpApp,
             FnEventYaml::KvSet { kv_set } => Self::KvSet(kv_set),
         }
@@ -250,6 +253,7 @@ impl FnMeta {
                         }
                     }
                 }
+                FnEvent::HttpFn => {}
             }
             None
         })
@@ -353,6 +357,9 @@ impl From<AppMetaYaml> for AppMeta {
 }
 
 impl AppMeta {
+    pub fn fns(&self) -> Vec<String> {
+        self.fns.iter().map(|(fnname, _)| fnname.clone()).collect()
+    }
     pub fn get_fn_meta(&self, fnname: &str) -> Option<&FnMeta> {
         self.fns.get(fnname)
     }
@@ -415,6 +422,7 @@ impl AppMetaManager {
                 for event in &fnmeta.event {
                     match event {
                         // not kv event, no key pattern
+                        FnEvent::HttpFn => {}
                         FnEvent::HttpApp => {}
                         FnEvent::KvSet(key_index) => {
                             let kvmeta = fnmeta.try_get_kv_meta_by_index(*key_index).unwrap();

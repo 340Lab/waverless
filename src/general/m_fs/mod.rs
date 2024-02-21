@@ -1,3 +1,6 @@
+use async_trait::async_trait;
+use crossbeam_skiplist::SkipMap;
+use parking_lot::Mutex;
 use std::{
     fs::File,
     io::{Read, Seek},
@@ -5,31 +8,21 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-
-use async_trait::async_trait;
-use crossbeam_skiplist::SkipMap;
-use parking_lot::Mutex;
 use ws_derive::LogicalModule;
 
 use crate::{
+    logical_module_view_impl,
     result::{ErrCvt, WSResult},
-    sys::{FsView, LogicalModule, LogicalModuleNewArgs},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
 
-lazy_static::lazy_static! {
-    static ref FS: Option<FsView>=None;
-}
-pub fn fs<'a>() -> &'a Fs {
-    let res = &*FS as *const Option<FsView> as *mut Option<FsView>;
-
-    unsafe { (*res).as_ref().unwrap().fs() }
-}
-
+logical_module_view_impl!(FsView);
+logical_module_view_impl!(FsView, fs, Fs);
 #[derive(LogicalModule)]
 pub struct Fs {
     fd_files: SkipMap<i32, Arc<Mutex<File>>>,
-    file_path: PathBuf,
+    pub file_path: PathBuf,
 }
 
 #[async_trait]
@@ -38,11 +31,6 @@ impl LogicalModule for Fs {
     where
         Self: Sized,
     {
-        unsafe {
-            let res = &*FS as *const Option<FsView> as *mut Option<FsView>;
-            *res = Some(FsView::new(args.logical_modules_ref.clone()));
-        }
-
         Self {
             fd_files: SkipMap::new(),
             file_path: args.nodes_config.file_dir.clone(),
@@ -57,7 +45,9 @@ impl LogicalModule for Fs {
 
 impl Fs {
     pub fn open_file(&self, fname: &str) -> WSResult<i32> {
-        let f = File::open(self.file_path.join(fname)).map_err(|e| ErrCvt(e).to_ws_io_err())?;
+        let fp = self.file_path.join("files").join(fname);
+        tracing::debug!("openning file {:?}", fp);
+        let f = File::open(fp).map_err(|e| ErrCvt(e).to_ws_io_err())?;
         let fd = f.as_raw_fd();
         let _ = self.fd_files.insert(fd, Arc::new(Mutex::new(f)));
         Ok(fd)
@@ -67,13 +57,19 @@ impl Fs {
         Ok(())
     }
     pub fn read_file_at(&self, fd: i32, offset: i32, buf: &mut [u8]) -> WSResult<usize> {
-        let f = self.fd_files.get(&fd).unwrap().value().clone();
-        let mut f = f.lock();
-        let _ = f
-            .seek(std::io::SeekFrom::Start(offset as u64))
-            .map_err(|e| ErrCvt(e).to_ws_io_err())?;
-        // Read into the buffer
-        let bytes_read = f.read(buf).map_err(|e| ErrCvt(e).to_ws_io_err())?;
-        Ok(bytes_read)
+        if let Some(f) = self.fd_files.get(&fd).map(|v| v.value().clone()) {
+            let mut f = f.lock();
+            let _ = f
+                .seek(std::io::SeekFrom::Start(offset as u64))
+                .map_err(|e| ErrCvt(e).to_ws_io_err())?;
+            // Read into the buffer
+            let bytes_read = f.read(buf).map_err(|e| ErrCvt(e).to_ws_io_err())?;
+
+            Ok(bytes_read)
+        } else {
+            tracing::error!("function read_file_at: invalid fd {}", fd);
+
+            Ok(0)
+        }
     }
 }

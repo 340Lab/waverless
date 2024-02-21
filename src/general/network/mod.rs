@@ -1,7 +1,7 @@
 pub mod http_handler;
+pub mod m_p2p;
+pub mod m_p2p_quic;
 pub mod msg_pack;
-pub mod p2p;
-pub mod p2p_quic;
 
 pub mod proto {
     pub mod kv {
