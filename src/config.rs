@@ -46,15 +46,38 @@ impl NodesConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub addr: SocketAddr,
+    domain: Option<String>,
     pub spec: HashSet<String>,
 }
 
 impl NodeConfig {
+    pub fn new(addr: SocketAddr, domain: Option<String>, spec: HashSet<String>) -> Self {
+        Self { addr, domain, spec }
+    }
     pub fn is_master(&self) -> bool {
         self.spec.contains("master")
     }
     pub fn is_worker(&self) -> bool {
         self.spec.contains("worker")
+    }
+    pub fn set_domain(&mut self, domain: Option<String>) {
+        self.domain = domain;
+    }
+    pub fn get_http_domain<'a>(&'a self) -> Option<&'a str> {
+        // check domain valid
+        self.domain
+            .as_ref()
+            .filter(|d| {
+                let ok = d.starts_with("http://") || d.starts_with("https://");
+                if !ok {
+                    tracing::warn!(
+                        "Current domain is {}, domain should starts with http:// or https://",
+                        d
+                    );
+                }
+                ok
+            })
+            .map(|d| &**d)
     }
 }
 

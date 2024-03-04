@@ -8,6 +8,7 @@ use ws_derive::LogicalModule;
 // use
 
 use crate::{
+    config::NodeConfig,
     general::network::{
         http_handler::{self, HttpHandler},
         m_p2p::P2PModule,
@@ -73,6 +74,16 @@ impl MasterHttpHandler {
     }
 }
 
+fn construct_target_path(node_config: &NodeConfig, sub_api: &str) -> String {
+    if let Some(d) = node_config.get_http_domain() {
+        format!("{}/{}", d, sub_api)
+    } else {
+        let mut addr = node_config.addr;
+        addr.set_port(addr.port() + 1);
+        format!("http://{}/{}", addr, sub_api)
+    }
+}
+
 #[async_trait]
 impl HttpHandler for MasterHttpHandler {
     // fn alloc_local_req_id(&self) -> ReqId {
@@ -104,25 +115,19 @@ impl HttpHandler for MasterHttpHandler {
         //     StatusCode::OK.into_response()
         // } else {
         // 转发
-        let mut target_node = self
+        let target_node = self
             .view
             .p2p()
             .nodes_config
             .peers
             .get(&(node as u32))
-            .unwrap()
-            .addr;
-        target_node.set_port(target_node.port() + 1);
-        tracing::debug!(
-            "redirect to http://hanbaoaaa.xyz/waverless_api{}/{}",
-            target_node,
-            app
-        );
-        Redirect::temporary(&*format!(
-            "http://hanbaoaaa.xyz/waverless_api{}/{}",
-            node, app
-        ))
-        .into_response()
+            .unwrap();
+
+        let target_path = construct_target_path(target_node, app);
+
+        // target_node.set_port(target_node.port() + 1);
+        tracing::debug!("redirect to {}", target_path);
+        Redirect::temporary(&target_path).into_response()
         // }
     }
     // async fn select_node(
@@ -131,4 +136,26 @@ impl HttpHandler for MasterHttpHandler {
     // ) -> proto::sche::FnEventScheResponse {
     //     proto::sche::FnEventScheResponse { target_node: 2 }
     // }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // test construct_target_path
+    #[test]
+    fn test_construct_target_path() {
+        let mut node_config =
+            NodeConfig::new("127.0.0.1:2500".parse().unwrap(), None, Default::default());
+        let sub_api = "test";
+        assert_eq!(
+            construct_target_path(&node_config, sub_api),
+            "http://127.0.0.1:2501/test",
+        );
+        node_config.set_domain(Some("http://hanbaoaaa.xyz/waverless_api1".to_owned()));
+        assert_eq!(
+            construct_target_path(&node_config, sub_api),
+            "http://hanbaoaaa.xyz/waverless_api1/test",
+        );
+    }
 }

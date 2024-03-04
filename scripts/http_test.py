@@ -3,9 +3,18 @@ from pprint import pprint
 import time
 import threading
 
+# pa's blog
+# GATEWAY='http://hanbaoaaa.xyz/waverless_api1'
+
+# deploy cluster
+# GATEWAY='http://192.168.31.162:'
+
+# deploy single node
+GATEWAY='http://127.0.0.1:2501'
+
 def run_one():
     ms = time.time()*1000.0
-    res = requests.post('http://hanbaoaaa.xyz/waverless_api1/panote_auth/verify_token',json={"token": "hhhh"})
+    res = requests.post(f'{GATEWAY}/panote_auth/verify_token',json={"token": "hhhh"})
     #   json={'after_which': 0,
     #         'order_by': 0,
     #         'tags': [],
