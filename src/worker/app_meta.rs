@@ -44,6 +44,7 @@ pub enum FnArgYaml {
     HttpText { http_text: () },
 }
 
+#[derive(Debug)]
 pub enum FnArg {
     KvKey(usize),
     HttpText,
