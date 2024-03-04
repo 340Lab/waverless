@@ -1,3 +1,4 @@
+use core::panic;
 use std::{mem::ManuallyDrop, sync::atomic::AtomicU32};
 
 use super::{app_meta::FnArg, m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient};
@@ -79,14 +80,14 @@ impl VmExt for Vm {
 //     }
 // }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EventCtx {
     Http(String),
     KvSet { key: Vec<u8> },
 }
 
 impl EventCtx {
-    pub fn conv_to_wasm_params(&self, fn_arg: &FnArg, vm: &WasmInstance) -> Option<Vec<WasmValue>> {
+    pub fn conv_to_wasm_params(&self, fn_arg: &FnArg, vm: &WasmInstance) -> Vec<WasmValue> {
         fn prepare_vec_in_vm(vm: &WasmInstance, v: &[u8]) -> (i32, i32) {
             let vm_ins = vm.vm_instance_name();
             let ptr = vm
@@ -116,14 +117,17 @@ impl EventCtx {
         }
         match (self, fn_arg) {
             (EventCtx::Http(text), FnArg::HttpText) => {
+                if text.len() == 0 {
+                    return vec![];
+                }
                 let (ptr, len) = prepare_vec_in_vm(vm, text.as_bytes());
-                Some(vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)])
+                vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)]
             }
             (EventCtx::KvSet { key }, FnArg::KvKey(_)) => {
                 let (ptr, len) = prepare_vec_in_vm(vm, &key);
-                Some(vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)])
+                vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)]
             }
-            _ => None,
+            (e, f) => panic!("not support event ctx and fn arg: {:?} {:?}", e, f),
         }
     }
 }
@@ -315,7 +319,7 @@ impl Executor {
                 let params = fnmeta
                     .args
                     .iter()
-                    .map(|arg| event.conv_to_wasm_params(arg, &vm).unwrap())
+                    .map(|arg| event.conv_to_wasm_params(arg, &vm))
                     .flatten()
                     .collect::<Vec<_>>();
 

@@ -14,12 +14,8 @@ GATEWAY='http://127.0.0.1:2501'
 
 def run_one():
     ms = time.time()*1000.0
-    res = requests.post(f'{GATEWAY}/panote_auth/verify_token',json={"token": "hhhh"})
-    #   json={'after_which': 0,
-    #         'order_by': 0,
-    #         'tags': [],
-    #         'search_str': "",
-    #         'price_range': []}, verify=False)
+    res = requests.post(f'{GATEWAY}/fn2')
+
     ms_ret = time.time()*1000.0
     print(res, ms_ret-ms,res.text)
 
