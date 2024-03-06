@@ -1,16 +1,23 @@
+use super::m_fs::Fs;
+use crate::{
+    general::kv_interface::KvOps,
+    logical_module_view_impl,
+    result::{ErrCvt, WSResult},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    util::JoinHandleWrapper,
+};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     fs,
     path::Path,
 };
+use tokio::sync::RwLock;
+use ws_derive::LogicalModule;
 
-use serde::{Deserialize, Serialize};
-
-use crate::{
-    general::kv_interface::KvOps,
-    result::{ErrCvt, WSResult},
-};
+pub mod fn_event;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -59,56 +66,6 @@ impl From<FnArgYaml> for FnArg {
     }
 }
 
-// pub enum FnArgPayload {
-//     Vec(Vec<u8>),
-// }
-
-// pub fn arg_payloads_into_wasm_params(arg_payloads: Vec<FnArgPayload>, vm: &Vm) -> Vec<WasmValue> {
-//     fn prepare_vec_in_vm(vm: &Vm, v: &[u8]) -> (i32, i32) {
-//         let ptr = vm
-//             .run_func(
-//                 Some(&vm.instance_names()[0]),
-//                 "allocate",
-//                 vec![WasmValue::from_i32(v.len() as i32)],
-//             )
-//             .unwrap()[0]
-//             .to_i32();
-//         let mut mem = ManuallyDrop::new(unsafe {
-//             Vec::from_raw_parts(
-//                 vm.named_module(&vm.instance_names()[0])
-//                     .unwrap()
-//                     .memory("memory")
-//                     .unwrap()
-//                     .data_pointer_mut(ptr as u32, v.len() as u32)
-//                     .unwrap(),
-//                 v.len(),
-//                 v.len(),
-//             )
-//         });
-//         mem.copy_from_slice(v);
-//         (ptr, v.len() as i32)
-//     }
-//     let mut params = vec![];
-//     for arg in arg_payloads {
-//         match arg {
-//             FnArgPayload::KvKey(key) => {
-//                 let (ptr, len) = prepare_vec_in_vm(&vm, &key);
-//                 params.push(WasmValue::from_i32(ptr));
-//                 params.push(WasmValue::from_i32(len));
-//             }
-//             FnArgPayload::HttpText(text) => {
-//                 if text.len() > 0 {
-//                     let (ptr, len) = prepare_vec_in_vm(&vm, &text);
-//                     params.push(WasmValue::from_i32(ptr));
-//                     params.push(WasmValue::from_i32(len));
-//                 }
-//             }
-//         }
-//     }
-
-//     params
-// }
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FnMetaYaml {
     pub event: Vec<FnEventYaml>,
@@ -144,10 +101,16 @@ pub struct AppMeta {
     fns: HashMap<String, FnMeta>,
 }
 
-pub struct AppMetaManager {
+pub struct AppMetas {
     app_metas: HashMap<String, AppMeta>,
     pattern_2_app_fn: HashMap<String, Vec<(String, String)>>,
 }
+
+logical_module_view_impl!(View);
+logical_module_view_impl!(View, fs, Fs);
+
+#[derive(LogicalModule)]
+pub struct AppMetaManager(pub RwLock<AppMetas>, View);
 
 // impl FnEvent {
 //     pub fn match_kv_ope(&self, ope: KvOps) -> bool {
@@ -375,13 +338,37 @@ impl AppMeta {
     }
 }
 
-impl AppMetaManager {
-    pub fn new() -> Self {
-        Self {
-            app_metas: HashMap::new(),
-            pattern_2_app_fn: HashMap::new(),
-        }
+#[async_trait]
+impl LogicalModule for AppMetaManager {
+    fn inner_new(args: LogicalModuleNewArgs) -> Self
+    where
+        Self: Sized,
+    {
+        Self(
+            RwLock::new(AppMetas {
+                app_metas: HashMap::new(),
+                pattern_2_app_fn: HashMap::new(),
+            }),
+            View::new(args.logical_modules_ref.clone()),
+        )
     }
+    async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        self.0
+            .write()
+            .await
+            .load_all_app_meta(&self.1.fs().file_path)
+            .await?;
+        Ok(vec![])
+    }
+}
+
+impl AppMetas {
+    // pub fn new() -> Self {
+    //     Self {
+    //         app_metas: HashMap::new(),
+    //         pattern_2_app_fn: HashMap::new(),
+    //     }
+    // }
     pub fn get_app_meta(&self, app: &str) -> Option<&AppMeta> {
         self.app_metas.get(app)
     }
@@ -391,7 +378,7 @@ impl AppMetaManager {
     ) -> Option<&Vec<(String, String)>> {
         self.pattern_2_app_fn.get(pattern.borrow())
     }
-    pub async fn load_all_app_meta(&mut self, file_dir: impl AsRef<Path>) -> WSResult<()> {
+    async fn load_all_app_meta(&mut self, file_dir: impl AsRef<Path>) -> WSResult<()> {
         let entries =
             fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
 

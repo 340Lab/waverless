@@ -1,12 +1,15 @@
-use std::{collections::hash_map::DefaultHasher, hash::Hasher};
+use std::{collections::hash_map::DefaultHasher, hash::Hasher, time::Duration};
 
 use async_trait::async_trait;
 use ws_derive::LogicalModule;
 
 use crate::{
     general::network::{
-        m_p2p::{P2PModule, RPCHandler, RPCResponsor},
-        proto::{self, sche::MakeSchePlanResp},
+        m_p2p::{P2PModule, RPCCaller},
+        proto::{
+            self,
+            sche::{distribute_task_req::Trigger, DistributeTaskReq},
+        },
     },
     logical_module_view_impl,
     result::WSResult,
@@ -81,7 +84,7 @@ logical_module_view_impl!(MasterView, master_kv, Option<MasterKv>);
 pub struct Master {
     // each_fn_caching: HashMap<String, HashSet<NodeId>>,
     node_selector: Box<dyn NodeSelector>,
-    rpc_handler: RPCHandler<proto::sche::MakeSchePlanReq>,
+    pub rpc_caller_distribute_task: RPCCaller<proto::sche::DistributeTaskReq>,
     view: MasterView,
 }
 
@@ -93,22 +96,13 @@ impl LogicalModule for Master {
     {
         Self {
             view: MasterView::new(args.logical_modules_ref.clone()),
-            rpc_handler: RPCHandler::default(),
             node_selector: Box::new(HashNodeSelector),
+            rpc_caller_distribute_task: RPCCaller::default(),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
-
-        let view = self.view.clone();
-        self.rpc_handler
-            .regist(&self.view.p2p(), move |responser, r| {
-                let view = view.clone();
-                let _ = tokio::spawn(async move {
-                    view.master().handle_remote_schedule(responser, r).await;
-                });
-                Ok(())
-            });
+        self.rpc_caller_distribute_task.regist(&self.view.p2p());
 
         Ok(vec![])
     }
@@ -118,25 +112,29 @@ impl Master {
     pub async fn handle_http_schedule(&self, _app: &str) -> NodeID {
         self.select_node()
     }
-    pub async fn handle_remote_schedule(
-        &self,
-        responsor: RPCResponsor<proto::sche::MakeSchePlanReq>,
-        req: proto::sche::MakeSchePlanReq,
-    ) {
-        let mut resp = MakeSchePlanResp {
-            sche_target_node: req
-                .app_fns
-                .iter()
-                .map(|_app_fn| self.select_node())
-                .collect(),
-            data_target_node: 0,
-        };
-        resp.data_target_node = resp.sche_target_node[0];
-        // let res = self.request_handler().select_node(r).await;
-        // let _ = responser.send_resp(res).await;
-        if let Err(err) = responsor.send_resp(resp).await {
-            tracing::error!("send resp failed with err: {}", err);
-        };
+    pub async fn schedule_one_trigger(&self, app: String, func: String, trigger_data: Trigger) {
+        match self
+            .view
+            .master()
+            .rpc_caller_distribute_task
+            .call(
+                self.view.p2p(),
+                self.select_node(),
+                DistributeTaskReq {
+                    app,
+                    func,
+                    task_id: 0, // TODO: Context task id for one request
+                    trigger: Some(trigger_data),
+                },
+                Duration::from_secs(60).into(),
+            )
+            .await
+        {
+            Ok(_) => {}
+            Err(err) => {
+                tracing::error!("schedule_one_trigger err: {:?}", err);
+            }
+        }
     }
     fn select_node(&self) -> NodeID {
         2

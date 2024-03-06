@@ -52,8 +52,6 @@ define_msg_ids!(
     proto::raft::VoteResponse,
     proto::raft::AppendEntriesRequest,
     proto::raft::AppendEntriesResponse,
-    proto::sche::MakeSchePlanReq,
-    proto::sche::MakeSchePlanResp,
     proto::sche::DistributeTaskReq,
     proto::sche::DistributeTaskResp,
     proto::metric::RscMetric,
@@ -71,10 +69,6 @@ impl RPCReq for proto::raft::VoteRequest {
 
 impl RPCReq for proto::raft::AppendEntriesRequest {
     type Resp = proto::raft::AppendEntriesResponse;
-}
-
-impl RPCReq for proto::sche::MakeSchePlanReq {
-    type Resp = proto::sche::MakeSchePlanResp;
 }
 
 impl RPCReq for proto::sche::DistributeTaskReq {

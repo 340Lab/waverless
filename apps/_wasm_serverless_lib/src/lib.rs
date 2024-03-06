@@ -1,3 +1,5 @@
+use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::mem::ManuallyDrop;
 use std::vec::Vec;
 pub use wasmedge_bindgen::*;
@@ -6,6 +8,7 @@ pub use wasmedge_bindgen::*;
 // use wasmedge_bindgen::*;
 // use wasmedge_bindgen_macro::*;
 
+#[cfg(not(feature = "test"))]
 extern "C" {
     // fn kv_set(kptr: *const u8, klen: i32, v: *const u8, vlen: i32);
     // fn kv_get_len(kptr: *const u8, klen: i32, vlen: &mut i32, id: &mut i32);
@@ -17,10 +20,12 @@ extern "C" {
     pub fn write_result(res_ptr: *const u8, res_len: i32);
 }
 
+#[cfg(not(feature = "test"))]
 pub trait KvResTrans {
     fn res_str(&self) -> Option<&str>;
 }
 
+#[cfg(not(feature = "test"))]
 impl KvResTrans for Vec<KvResult> {
     fn res_str(&self) -> Option<&str> {
         if let KvResult::Get(Some(s)) = &self[0] {
@@ -44,9 +49,13 @@ impl KvResTrans for Vec<KvResult> {
 //     Unlock(u32),
 // }
 
+#[cfg(not(feature = "test"))]
 const SET_ID: i32 = 1;
+#[cfg(not(feature = "test"))]
 const GET_ID: i32 = 2;
+#[cfg(not(feature = "test"))]
 const LOCK_ID: i32 = 3;
+#[cfg(not(feature = "test"))]
 const DELETE_ID: i32 = 4;
 
 pub enum KvResult {
@@ -59,6 +68,7 @@ pub enum KvResult {
 }
 
 impl KvResult {
+    #[cfg(not(feature = "test"))]
     fn one_ptr(&self) -> Option<i32> {
         match self {
             KvResult::Set => None,
@@ -71,11 +81,79 @@ impl KvResult {
     }
 }
 
+#[cfg(feature = "test")]
+lazy_static::lazy_static! {
+    static ref KV_BATCH: Mutex<KvBatchInner> = Mutex::new(KvBatchInner::new());
+}
+
+#[cfg(feature = "test")]
+struct KvBatchInner {
+    map: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+#[cfg(feature = "test")]
+impl KvBatchInner {
+    pub fn new() -> Self {
+        Self {
+            map: BTreeMap::new(),
+        }
+    }
+}
+
+#[cfg(feature = "test")]
+pub struct KvBatch {
+    res: Vec<KvResult>,
+}
+
+// moke impl
+#[cfg(feature = "test")]
+impl KvBatch {
+    pub fn new() -> Self {
+        Self { res: Vec::new() }
+    }
+    pub fn reset(mut self) -> Self {
+        self.res.clear();
+        self
+    }
+    pub fn then_set(mut self, key: &[u8], value: &[u8]) -> Self {
+        let mut k = KV_BATCH.lock();
+        k.map.insert(key.to_vec(), value.to_vec());
+        self.res.push(KvResult::Set);
+        self
+    }
+    pub fn then_get(mut self, key: &[u8]) -> Self {
+        let k = KV_BATCH.lock();
+        self.res.push(KvResult::Get(k.map.get(key).cloned()));
+        self
+    }
+    pub fn then_delete(mut self, key: &[u8]) -> Self {
+        let mut k = KV_BATCH.lock();
+        k.map.remove(key);
+        self.res.push(KvResult::Delete);
+        self
+    }
+    pub fn then_lock(mut self, _key: &[u8]) -> Self {
+        tracing::warn!("mock lock not implemented");
+
+        self.res.push(KvResult::Lock(0));
+        self
+    }
+    pub fn then_unlock(self, _key: &[u8], _id: u32) -> Self {
+        tracing::warn!("mock unlock not implemented");
+        self
+    }
+    pub fn finally_call(self) -> Vec<KvResult> {
+        self.res
+    }
+}
+
+#[cfg(not(feature = "test"))]
 pub struct KvBatch {
     batch_args: Vec<i32>,
     results: Vec<KvResult>,
 }
 
+#[cfg(not(feature = "test"))]
 impl KvBatch {
     pub fn new() -> Self {
         Self {
@@ -198,10 +276,11 @@ impl KvBatch {
 //     }
 // }
 
+#[cfg(not(feature = "test"))]
 pub struct HostFile {
     fd: i32,
 }
-
+#[cfg(not(feature = "test"))]
 impl HostFile {
     pub fn open(fname: &str) -> Self {
         let mut fd = 0;

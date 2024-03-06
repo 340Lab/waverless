@@ -127,7 +127,7 @@
           - word_count
       - name: Copy wasm
         copy:
-          src: ../../apps/{{ item }}/target/wasm32-wasi/release/{{ item }}.wasm
+          src: ../../target/wasm32-wasi/release/{{ item }}.wasm
           dest: /root/wasm_serverless_deploy/apps/{{ item }}/app.wasm
           force: yes
         become: yes

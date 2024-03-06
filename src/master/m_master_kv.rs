@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicU32, Arc},
+};
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -7,6 +10,10 @@ use ws_derive::LogicalModule;
 
 use crate::{
     general::{
+        m_appmeta_manager::{
+            fn_event::{self, EventTriggerInfo},
+            AppMetaManager,
+        },
         m_kv_store_engine::{KeyTypeKv, KeyTypeKvPosition, KvStoreEngine},
         network::{
             m_p2p::{P2PModule, RPCHandler, RPCResponsor, TaskId},
@@ -23,8 +30,12 @@ use crate::{
     util::JoinHandleWrapper,
 };
 
+use super::m_master::Master;
+
 logical_module_view_impl!(MasterKvView);
 logical_module_view_impl!(MasterKvView, p2p, P2PModule);
+logical_module_view_impl!(MasterKvView, appmeta_manager, AppMetaManager);
+logical_module_view_impl!(MasterKvView, master, Option<Master>);
 logical_module_view_impl!(MasterKvView, master_kv, Option<MasterKv>);
 logical_module_view_impl!(MasterKvView, kv_store_engine, KvStoreEngine);
 
@@ -34,6 +45,8 @@ pub struct MasterKv {
     lock_notifiers: RwLock<HashMap<Vec<u8>, (NodeID, u32, Arc<Notify>)>>,
     rpc_handler: RPCHandler<proto::kv::KvRequests>,
     view: MasterKvView,
+    kv_ope_id_allocator: AtomicU32,
+    kv_ope_notify: tokio::sync::RwLock<HashMap<u32, Arc<Notify>>>,
 }
 
 #[async_trait]
@@ -47,6 +60,8 @@ impl LogicalModule for MasterKv {
             lock_notifiers: RwLock::new(HashMap::new()),
             rpc_handler: RPCHandler::default(),
             view: MasterKvView::new(args.logical_modules_ref.clone()),
+            kv_ope_id_allocator: AtomicU32::new(0),
+            kv_ope_notify: tokio::sync::RwLock::new(HashMap::new()),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -65,13 +80,67 @@ impl LogicalModule for MasterKv {
 }
 
 impl MasterKv {
+    // for each operation, find it's sub-trigger func
+    async fn collect_event_infos(
+        &self,
+        reqs: &proto::kv::KvRequests,
+    ) -> Vec<Option<EventTriggerInfo>> {
+        let metas = self.view.appmeta_manager().0.read().await;
+        reqs.requests
+            .iter()
+            .map(|req| fn_event::try_match_kv_event(&metas, req, &reqs.app, &reqs.func))
+            .collect()
+    }
+
     async fn handle_kv_requests(
         &self,
         reqs: proto::kv::KvRequests,
         responsor: RPCResponsor<KvRequests>,
     ) {
+        if reqs.prev_kv_opeid >= 0 {
+            let hold_nots = self.kv_ope_notify.read().await;
+            if let Some(not) = hold_nots
+                .get(&(reqs.prev_kv_opeid as u32))
+                .map(|v| v.clone())
+            {
+                let noted = not.notified();
+                drop(hold_nots);
+                noted.await;
+            }
+        }
         let mut kv_responses = KvResponses { responses: vec![] };
-        for req in reqs.requests {
+        // pre-collect each operation's event trigger info
+        let trigger = self.collect_event_infos(&reqs).await;
+        let mut kv_opeid = None;
+        for (req, event) in reqs.requests.into_iter().zip(trigger) {
+            let mut sub_tasks = vec![];
+            // if with event
+            if let Some(mut trigger) = event {
+                let app_fns = std::mem::take(&mut trigger.trigger_appfns);
+
+                for (app, func) in app_fns {
+                    if kv_opeid.is_none() {
+                        kv_opeid = Some(
+                            self.kv_ope_id_allocator
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                        );
+                        assert!(self
+                            .kv_ope_notify
+                            .write()
+                            .await
+                            .insert(kv_opeid.unwrap(), Notify::new().into())
+                            .is_none());
+                    }
+                    let trigger_data = trigger.to_trigger(kv_opeid.unwrap());
+                    let view = self.view.clone();
+                    // schedule sub tasks parallelly
+                    sub_tasks.push(tokio::spawn(async move {
+                        view.master()
+                            .schedule_one_trigger(app, func, trigger_data)
+                            .await;
+                    }));
+                }
+            }
             kv_responses.responses.push(match req.op.unwrap() {
                 proto::kv::kv_request::Op::Set(set) => {
                     self.handle_kv_set(set, responsor.node_id()).await
@@ -81,9 +150,23 @@ impl MasterKv {
                 proto::kv::kv_request::Op::Lock(lock) => {
                     self.handle_kv_lock(lock, responsor.node_id(), responsor.task_id())
                         .await
+                } // notify sub tasks to run because data's persisted
+            });
+            tracing::debug!("notify all waiting kv operations");
+            // notify all waiting kv operations
+            if let Some(opeid) = kv_opeid {
+                if let Some(notify) = self.kv_ope_notify.write().await.remove(&opeid) {
+                    notify.notify_waiters();
+                } else {
+                    panic!("fatal logical error, kv opeid:{} not found", opeid);
                 }
-            })
+            }
+            // make sure each task is triggered
+            for task in sub_tasks {
+                task.await.unwrap();
+            }
         }
+
         if let Err(err) = responsor.send_resp(kv_responses).await {
             tracing::error!("handle kv requests error:{}", err);
         };
@@ -93,7 +176,7 @@ impl MasterKv {
         set: proto::kv::kv_request::KvPutRequest,
         _from: NodeID,
     ) -> KvResponse {
-        tracing::debug!("handle_kv_set:{:?}", set);
+        tracing::debug!("handle_kv_set:{:?}", set.kv.as_ref().map(|v| &v.key));
 
         if let Some(kv) = set.kv {
             self.view

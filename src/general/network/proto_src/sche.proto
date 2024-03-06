@@ -3,32 +3,35 @@ package sche;
 
 // import "network/proto_src/kv.proto";
 
-message MakeSchePlanReq{
-    message AppFn{
-        string app=1;
-        string func=2;
-    }
-    enum TriggerType{
-        SetKv = 0;
-    }
-    repeated AppFn app_fns=1;
-    TriggerType trigger_type=2;
-}
+// message MakeSchePlanReq{
+//     message AppFn{
+//         string app=1;
+//         string func=2;
+//     }
+//     enum TriggerType{
+//         SetKv = 0;
+//     }
+//     repeated AppFn app_fns=1;
+//     TriggerType trigger_type=2;
+// }
 
-message MakeSchePlanResp{
-    // align to AppFn[]
-    repeated uint32 sche_target_node=1;
-    // the data target position
-    uint32 data_target_node=2;
-}
-
+// message MakeSchePlanResp{
+//     // align to AppFn[]
+//     repeated uint32 sche_target_node=1;
+//     // the data target position
+//     uint32 data_target_node=2;
+// }
 
 message DistributeTaskReq{
+    message TriggerKvSet{
+        bytes key=1;
+        uint32 opeid=2;
+    }
     string app=1;
     string func=2;
     uint32 task_id=3;
     oneof trigger{
-        bytes kv_key_set=4;
+        TriggerKvSet kv_set=4;
     }
 }
 

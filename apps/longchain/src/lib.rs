@@ -52,60 +52,102 @@ use wasmedge_wasi_helper::wasmedge_wasi_helper::_initialize;
 //     }
 // }
 
+const LOOP_TIME: u32 = 100;
+
 #[no_mangle]
 pub fn chain_begin() {
     let res = KvBatch::new()
-        .then_lock("chain_lock".as_bytes())
-        .then_get("chain_count".as_bytes())
-        .finally_call();
-    let lock_id = if let KvResult::Lock(lock_id) = res[0] {
-        lock_id
-    } else {
-        panic!("chain_begin lock failed");
-    };
-    let mut batch = KvBatch::new();
-    if let KvResult::Get(Some(count)) = &res[1] {
-        let count_str = from_utf8(count).unwrap();
-        println!("chain count: {}", count_str);
-        let count = count_str.parse::<u32>().unwrap();
-        if count < 100 {
-            batch = batch.then_set(
-                "chain_count".as_bytes(),
-                format!("{}", count + 1).as_bytes(),
-            );
-        } else {
-            batch = batch.then_set("chain_count".as_bytes(), format!("{}", 0).as_bytes());
-        }
-    } else {
-        batch = batch.then_set("chain_count".as_bytes(), "1".as_bytes());
-    }
-    batch
-        .then_unlock("chain_lock".as_bytes(), lock_id)
+        .then_set("chain_count".as_bytes(), "1".as_bytes())
         .finally_call();
 }
 
-// #[no_mangle]
-// pub fn chain_loop(key: *mut u8, key_len: u32) {
-//     let res = KvBatch::new().then_get("chain_count").finally_call();
-//     match res[0] {
-//         KvResult::Get(value) => {
-//             if let Some(value) = value {
-//                 let mut count = value.parse::<u32>().unwrap();
-//                 count += 1;
-//                 if count < 10 {
-//                     let key = unsafe { std::slice::from_raw_parts(key, key_len as usize) };
-//                     let key = std::str::from_utf8(key).unwrap();
-//                     KvBatch::new()
-//                         .then_set(key, &value)
-//                         .then_set("chain_count", &format!("{}", count))
-//                         .finally_call();
-//                 } else {
-//                     KvBatch::new().then_unlock("chain_lock").finally_call();
-//                 }
-//             }
-//         }
-//         _ => {
-//             panic!("chain_loop get chain_count failed")
-//         }
-//     }
-// }
+fn get_count() -> u32 {
+    let res = KvBatch::new()
+        .then_get("chain_count".as_bytes())
+        .finally_call();
+    match &res[0] {
+        KvResult::Get(value) => {
+            if let Some(value) = value.as_ref().map(|v| {
+                std::str::from_utf8(v.as_slice())
+                    .map_err(|e| {
+                        panic!("get_count get chain_count failed: {:?}", e);
+                    })
+                    .unwrap()
+            }) {
+                value.parse::<u32>().unwrap()
+            } else {
+                panic!("get_count get chain_count failed")
+            }
+        }
+        _ => {
+            panic!("get_count get chain_count failed")
+        }
+    }
+}
+
+#[no_mangle]
+pub fn chain_loop(key: *mut u8, key_len: u32) {
+    let key = unsafe { std::slice::from_raw_parts(key, key_len as usize) };
+    let key = std::str::from_utf8(key).unwrap();
+    assert_eq!(key, "chain_count");
+
+    let res = KvBatch::new()
+        .then_get("chain_count".as_bytes())
+        .finally_call();
+    match &res[0] {
+        KvResult::Get(value) => {
+            if let Some(value) = value.as_ref().map(|v| {
+                std::str::from_utf8(v.as_slice())
+                    .map_err(|e| {
+                        panic!("chain_loop get chain_count failed: {:?}", e);
+                    })
+                    .unwrap()
+            }) {
+                let mut count = value.parse::<u32>().unwrap();
+                count += 1;
+                println!("chain_loop count: {}", count - 1);
+                if count - 1 < LOOP_TIME {
+                    KvBatch::new()
+                        .then_set("chain_count".as_bytes(), format!("{}", count).as_bytes())
+                        .finally_call();
+                }
+            }
+        }
+        _ => {
+            panic!("chain_loop get chain_count failed")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chain_begin() {
+        chain_begin();
+    }
+
+    #[test]
+    fn test_chain_loop() {
+        chain_begin();
+        for _ in 0..LOOP_TIME - 1 {
+            let bfcnt = get_count();
+            chain_loop(
+                "chain_count".as_bytes().as_ptr() as *mut u8,
+                "chain_count".len() as u32,
+            );
+            let afcnt = get_count();
+            assert_eq!(afcnt, bfcnt + 1);
+        }
+
+        // the last time don't update the count
+        let bfcnt = get_count();
+        chain_loop(
+            "chain_count".as_bytes().as_ptr() as *mut u8,
+            "chain_count".len() as u32,
+        );
+        let afcnt = get_count();
+        assert_eq!(afcnt, bfcnt);
+    }
+}
