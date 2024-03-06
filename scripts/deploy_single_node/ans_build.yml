@@ -2,9 +2,21 @@
 - hosts: localhost
   tasks:
     - name: Build the application on the master node
-      shell: cargo build --release
+      become: yes
+      shell: |
+        cat > /tmp/compile.sh <<'END'
+          #!/bin/bash
+
+          echo $PATH
+          export PATH="/root/.cargo/bin/:$PATH"
+          export PATH="/root/.wasmedge/bin/:$PATH"
+          cargo build --release
+        END
+
+        bash /tmp/compile.sh
+        rm -f /tmp/compile.sh
     - name: Run build ansible script
-      shell: ansible-playbook -i local_ansible_conf.ini build/ans_build_demo_apps.yml
+      shell: ansible-playbook -vvv build/ans_build_demo_apps.yml -i local_ansible_conf.ini
       args:
         chdir: ../
     # mkdir -p scripts/deploy_single_node/test_dir/files

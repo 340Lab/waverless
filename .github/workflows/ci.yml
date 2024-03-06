@@ -19,14 +19,19 @@ jobs:
       run: sudo bash scripts/install/install_python_and_ansible.sh
 
     - name: Install build
-      run: sudo bash scripts/install/run_ans_install_build.sh
+      run: ansible-playbook -vvv scripts/install/ans_install_build.yml -i scripts/local_ansible_conf.ini
 
     - name: Build Locally
-      run: bash scripts/deploy_single_node/run_ans_build.sh
+      run: ansible-playbook -vvv scripts/deploy_single_node/ans_build.yml -i scripts/local_ansible_conf.ini
     
+    - name: Integirty Test
+      run: ansible-playbook -vvv scripts/ans_integity_test.yml -i scripts/local_ansible_conf.ini
+
     - name: Build WasmEdge Image
       run: bash scripts/docker/WasmEdge/build_image.sh
       
     - name: Build Waverless Image
       run: bash scripts/docker/Waverless/build_image.sh
+    
+    
     
