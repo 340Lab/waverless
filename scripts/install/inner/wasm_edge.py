@@ -1622,9 +1622,11 @@ def main(args):
         wasmedge_output = run_shell_command(
             ". {0}/env && {0}/bin/wasmedge --version".format(args.path)
         )
-
+        
         if args.version in wasmedge_output:
-            logging.info("WasmEdge Successfully installed")
+            ls_dir=run_shell_command(f"ls {args.path}/bin")
+            logging.info(f"ls install dir: {ls_dir}")
+            logging.info(f"WasmEdge Successfully installed at: {args.path}/bin/wasmedge")
         else:
             logging.critical(
                 "WasmEdge installation incorrect: {0}".format(wasmedge_output)

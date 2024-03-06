@@ -1,5 +1,17 @@
 - name: Build the WASM demo 
-  shell: cargo build --target wasm32-wasi --release
+  become: yes
+  shell: |
+    cat > /tmp/compile.sh <<'END'
+      #!/bin/bash
+
+      echo $PATH
+      export PATH="/root/.cargo/bin/:$PATH"
+      export PATH="/root/.wasmedge/bin/:$PATH"
+      cargo build --target wasm32-wasi --release
+    END
+
+    bash /tmp/compile.sh
+    rm -f /tmp/compile.sh
   args:
     chdir: ../../apps/{{ item }}
 - name: Mkdir

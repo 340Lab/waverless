@@ -276,6 +276,23 @@ impl KvBatch {
 //     }
 // }
 
+#[cfg(feature = "test")]
+pub struct HostFile;
+
+#[cfg(feature = "test")]
+impl HostFile {
+    pub fn open(fname: &str) -> Self {
+        tracing::warn!("test HostFile open not implemented");
+        Self
+    }
+
+    // data will be append to `buf` until the file is read to the end or `buf` is full to capacity
+    pub fn read_at(&self, offset: usize, buf: &mut Vec<u8>) -> usize {
+        tracing::warn!("test HostFile read_at not implemented");
+        0
+    }
+}
+
 #[cfg(not(feature = "test"))]
 pub struct HostFile {
     fd: i32,
