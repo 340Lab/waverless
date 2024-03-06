@@ -1,6 +1,7 @@
 use crate::{
     config::NodesConfig,
     general::{
+        m_appmeta_manager::AppMetaManager,
         m_fs::Fs,
         m_kv_store_engine::KvStoreEngine,
         m_metric_publisher::MetricPublisher,
@@ -313,6 +314,8 @@ logical_modules!(
     Fs,
     kv_store_engine,
     KvStoreEngine,
+    appmeta_manager,
+    AppMetaManager,
     ////////////////////////////
     // master
     metric_observor,
@@ -334,13 +337,6 @@ logical_modules!(
     executor,
     Option<Executor>
 );
-
-fn modules_mut_ref(modules: &Arc<LogicalModules>) -> &mut LogicalModules {
-    // let _ = SETTED_MODULES_COUNT.fetch_add(1, Ordering::SeqCst);
-    let mu = unsafe { &mut *(Arc::downgrade(modules).as_ptr() as *mut LogicalModules) };
-    mu.new_cnt += 1;
-    mu
-}
 
 impl LogicalModules {
     // pub fn iter<'a(&'a self) -> LogicalModuleIter<'a> {
@@ -377,6 +373,7 @@ impl LogicalModules {
             } else {
                 Box::new(WorkerHttpHandler::new(args.clone()))
             },
+            appmeta_manager: AppMetaManager::new(args.clone()),
             metric_observor: None,
             master: None,
             master_kv: None,
@@ -409,6 +406,7 @@ impl LogicalModules {
         start_module!(self, sys, metric_publisher);
         start_module!(self, sys, fs);
         start_module!(self, sys, kv_store_engine);
+        start_module!(self, sys, appmeta_manager);
 
         // master
         start_module_opt!(self, sys, metric_observor);

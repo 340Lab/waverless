@@ -5,6 +5,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = [
+    ".",
+    "./apps/fn2",
+    "./apps/longchain",
+    "./apps/word_count",
+]
 
 [dependencies]
 qp2p = "0.36.4"                                     #{ path = "qp2p" }

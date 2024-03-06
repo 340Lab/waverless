@@ -9,3 +9,9 @@ crate-type = ["lib"]
 
 [dependencies]
 wasmedge-bindgen = "0.4.1"
+tracing = "0.1.40"
+parking_lot = "0.12.1"
+lazy_static = "1.4.0"
+
+[features]
+test = []

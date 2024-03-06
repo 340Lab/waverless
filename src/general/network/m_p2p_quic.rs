@@ -349,7 +349,9 @@ async fn handle_connection(
         let res = incoming.next().await;
         match res {
             Ok(msg) => {
-                if let Some(WireMsg((head, _, bytes))) = msg {
+                if let Some(WireMsg((_, _, mut bytes))) = msg {
+                    let headlen=bytes.split_to(1)[0];
+                    let head=bytes.split_to(headlen as usize);
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
                             view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into());
@@ -390,9 +392,10 @@ fn deserialize_msg_id_task_id(head: &[u8]) -> WSResult<(MsgId, TaskId)> {
         .map_err(|err| WsSerialErr::BincodeErr(err))?;
     Ok((msg_id, task_id))
 }
-fn serialize_msg_id_task_id(msg_id: MsgId, task_id: TaskId) -> Bytes {
-    let head: Vec<u8> = bincode::serialize(&(msg_id, task_id)).unwrap();
-    Bytes::from(head)
+fn serialize_msg_id_task_id(msg_id: MsgId, task_id: TaskId) -> Vec<u8> {
+    let mut head: Vec<u8> = bincode::serialize(&(msg_id, task_id)).unwrap();
+    head.insert(0, head.len() as u8);
+    head
 }
 
 #[async_trait]
@@ -428,12 +431,14 @@ impl P2PKernel for P2PQuicNode {
                     let dataref = req_data.as_ptr();
                     // transfer to static slice
                     let data = std::slice::from_raw_parts::<'static>(dataref, req_data.len());
-                    Bytes::from(data)
+                    let mut v=serialize_msg_id_task_id(msg_id, task_id);
+                    v.extend_from_slice(data);
+                    Bytes::from(v)
                 };
 
                 if let Err(err) = reading_conns[idx]
                     .send((
-                        serialize_msg_id_task_id(msg_id, task_id),
+                        Bytes::new(),
                         Bytes::new(),
                         bytes,
                         // Bytes::new(),

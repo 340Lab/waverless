@@ -53,6 +53,7 @@ message KvRequests{
   string app=1;
   string func=2;
   repeated KvRequest requests=3;
+  int64 prev_kv_opeid=4;
 }
 
 message KvResponses{

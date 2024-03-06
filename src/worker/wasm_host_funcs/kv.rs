@@ -130,7 +130,7 @@ async fn kv_batch_ope<T>(
     let opes_arg_len = args[1].to_i32();
     let opes_id = utils::mutref::<i32>(&caller, args[2].to_i32());
     let args = utils::i32slice(&caller, opes_arg_ptr, opes_arg_len);
-    let func_ctx = unsafe { utils::current_app_fn_ctx(&caller).0.as_ref() };
+    let func_ctx = unsafe { utils::current_app_fn_ctx(&caller).0.as_mut() };
 
     // request and response mem position
     let ope_cnt = args[0];
@@ -224,6 +224,10 @@ async fn kv_batch_ope<T>(
                 requests,
                 app: func_ctx.app.clone(),
                 func: func_ctx.func.clone(),
+                prev_kv_opeid: func_ctx
+                    .event_ctx
+                    .take_prev_kv_opeid()
+                    .map_or(-1, |v| v as i64),
             },
             KvOptions::new(),
         )

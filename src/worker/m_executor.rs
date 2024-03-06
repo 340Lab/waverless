@@ -1,14 +1,17 @@
 use core::panic;
 use std::{mem::ManuallyDrop, sync::atomic::AtomicU32};
 
-use super::{app_meta::FnArg, m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient};
+use super::{m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient};
 use crate::{
-    general::network::{
-        http_handler::ReqId,
-        m_p2p::{P2PModule, RPCHandler, RPCResponsor},
-        proto::{
-            self,
-            sche::{distribute_task_req, DistributeTaskResp},
+    general::{
+        m_appmeta_manager::{AppMetaManager, FnArg},
+        network::{
+            http_handler::ReqId,
+            m_p2p::{P2PModule, RPCHandler, RPCResponsor},
+            proto::{
+                self,
+                sche::{distribute_task_req, DistributeTaskResp},
+            },
         },
     },
     logical_module_view_impl,
@@ -32,6 +35,7 @@ pub type SubTaskWaiter = oneshot::Receiver<bool>;
 
 logical_module_view_impl!(ExecutorView);
 logical_module_view_impl!(ExecutorView, p2p, P2PModule);
+logical_module_view_impl!(ExecutorView, appmeta_manager, AppMetaManager);
 logical_module_view_impl!(ExecutorView, instance_manager, Option<InstanceManager>);
 logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
 logical_module_view_impl!(ExecutorView, kv_user_client, Option<KvUserClient>);
@@ -83,10 +87,16 @@ impl VmExt for Vm {
 #[derive(Clone, Debug)]
 pub enum EventCtx {
     Http(String),
-    KvSet { key: Vec<u8> },
+    KvSet { key: Vec<u8>, opeid: Option<u32> },
 }
 
 impl EventCtx {
+    pub fn take_prev_kv_opeid(&mut self) -> Option<u32> {
+        match self {
+            EventCtx::KvSet { opeid, .. } => opeid.take(),
+            _ => None,
+        }
+    }
     pub fn conv_to_wasm_params(&self, fn_arg: &FnArg, vm: &WasmInstance) -> Vec<WasmValue> {
         fn prepare_vec_in_vm(vm: &WasmInstance, v: &[u8]) -> (i32, i32) {
             let vm_ins = vm.vm_instance_name();
@@ -123,7 +133,7 @@ impl EventCtx {
                 let (ptr, len) = prepare_vec_in_vm(vm, text.as_bytes());
                 vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)]
             }
-            (EventCtx::KvSet { key }, FnArg::KvKey(_)) => {
+            (EventCtx::KvSet { key, .. }, FnArg::KvKey(_)) => {
                 let (ptr, len) = prepare_vec_in_vm(vm, &key);
                 vec![WasmValue::from_i32(ptr), WasmValue::from_i32(len)]
             }
@@ -193,6 +203,7 @@ impl Executor {
         resp: RPCResponsor<proto::sche::DistributeTaskReq>,
         req: proto::sche::DistributeTaskReq,
     ) {
+        tracing::debug!("receive distribute task: {:?}", req);
         let app = req.app.to_owned();
         let func = req.func.to_owned();
         let ctx = FunctionCtx {
@@ -201,14 +212,17 @@ impl Executor {
             req_id: 0,
             res: None,
             event_ctx: match req.trigger.unwrap() {
-                distribute_task_req::Trigger::KvKeySet(key) => EventCtx::KvSet { key },
+                distribute_task_req::Trigger::KvSet(set) => EventCtx::KvSet {
+                    key: set.key,
+                    opeid: Some(set.opeid),
+                },
             },
             sub_waiters: vec![],
         };
-        let _ = self.execute(ctx).await;
         if let Err(err) = resp.send_resp(DistributeTaskResp {}).await {
             tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
         }
+        let _ = self.execute(ctx).await;
     }
     pub async fn handle_http_task(
         &self,
@@ -220,7 +234,7 @@ impl Executor {
 
         // trigger app
         let appname = split[0];
-        let app_meta_man = self.view.instance_manager().app_meta_manager.read().await;
+        let app_meta_man = self.view.appmeta_manager().0.read().await;
         if let Some(app) = app_meta_man.get_app_meta(appname) {
             if split.len() == 1 {
                 if let Some(funcname) = app.http_trigger_fn() {
@@ -299,7 +313,7 @@ impl Executor {
         let event = fn_ctx.event_ctx.clone();
 
         // Get app meta data for func and args
-        let app_metas = self.view.instance_manager().app_meta_manager.read().await;
+        let app_metas = self.view.appmeta_manager().0.read().await;
         if let Some(app_meta) = app_metas.get_app_meta(&app) {
             if let Some(fnmeta) = app_meta.get_fn_meta(&func) {
                 let vm = self.view.instance_manager().load_instance(&app).await;

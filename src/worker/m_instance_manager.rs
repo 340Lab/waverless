@@ -1,4 +1,4 @@
-use super::{app_meta::AppMetaManager, m_executor::FunctionCtx, wasm::WasmInstance};
+use super::{m_executor::FunctionCtx, wasm::WasmInstance};
 use crate::{
     general::network::m_p2p::P2PModule,
     logical_module_view_impl,
@@ -15,7 +15,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::Notify;
 use ws_derive::LogicalModule;
 
 #[cfg(target_os = "macos")]
@@ -188,7 +188,6 @@ pub struct InstanceManager {
     // cache: Mutex<LRUCache<Vm>>,
     using_map: SkipMap<String, EachAppCache>,
     file_dir: PathBuf,
-    pub app_meta_manager: RwLock<AppMetaManager>,
     /// instance addr 2 running function
     pub instance_running_function: parking_lot::RwLock<HashMap<String, FunctionCtx>>,
     pub next_instance_id: AtomicU64,
@@ -206,7 +205,6 @@ impl LogicalModule for InstanceManager {
             // cache: Mutex::new(LRUCache::new(10)),
             using_map: SkipMap::new(),
             file_dir: args.nodes_config.file_dir.clone(),
-            app_meta_manager: RwLock::new(AppMetaManager::new()),
             instance_running_function: parking_lot::RwLock::new(HashMap::new()),
             next_instance_id: AtomicU64::new(0),
             view: InstanceManagerView::new(args.logical_modules_ref.clone()),
@@ -214,11 +212,6 @@ impl LogicalModule for InstanceManager {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        self.app_meta_manager
-            .write()
-            .await
-            .load_all_app_meta(&self.file_dir)
-            .await?;
         Ok(vec![])
     }
 }

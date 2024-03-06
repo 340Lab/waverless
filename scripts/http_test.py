@@ -12,9 +12,13 @@ import threading
 # deploy single node
 GATEWAY='http://127.0.0.1:2501'
 
+# APP='fn2'
+# APP='longchain'
+APP='word_count'
+
 def run_one():
     ms = time.time()*1000.0
-    res = requests.post(f'{GATEWAY}/fn2')
+    res = requests.post(f'{GATEWAY}/{APP}')
 
     ms_ret = time.time()*1000.0
     print(res, ms_ret-ms,res.text)
