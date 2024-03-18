@@ -1,9 +1,7 @@
 use super::{m_executor::FunctionCtx, wasm::WasmInstance};
 use crate::{
-    general::network::m_p2p::P2PModule,
-    logical_module_view_impl,
     result::WSResult,
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    sys::{LogicalModule, LogicalModuleNewArgs},
     util::JoinHandleWrapper,
     worker::wasm_host_funcs, // worker::host_funcs,
 };
@@ -175,14 +173,6 @@ impl EachAppCache {
     }
 }
 
-logical_module_view_impl!(InstanceManagerView);
-logical_module_view_impl!(InstanceManagerView, p2p, P2PModule);
-logical_module_view_impl!(
-    InstanceManagerView,
-    instance_manager,
-    Option<InstanceManager>
-);
-
 #[derive(LogicalModule)]
 pub struct InstanceManager {
     // cache: Mutex<LRUCache<Vm>>,
@@ -191,8 +181,6 @@ pub struct InstanceManager {
     /// instance addr 2 running function
     pub instance_running_function: parking_lot::RwLock<HashMap<String, FunctionCtx>>,
     pub next_instance_id: AtomicU64,
-    pub view: InstanceManagerView,
-    // exe_view: ExecutorView,
 }
 
 #[async_trait]
@@ -202,13 +190,10 @@ impl LogicalModule for InstanceManager {
         Self: Sized,
     {
         Self {
-            // cache: Mutex::new(LRUCache::new(10)),
             using_map: SkipMap::new(),
             file_dir: args.nodes_config.file_dir.clone(),
             instance_running_function: parking_lot::RwLock::new(HashMap::new()),
             next_instance_id: AtomicU64::new(0),
-            view: InstanceManagerView::new(args.logical_modules_ref.clone()),
-            // exe_view: ExecutorView::new(args.logical_modules_ref.clone()),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {

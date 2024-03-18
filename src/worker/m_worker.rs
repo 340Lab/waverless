@@ -1,7 +1,4 @@
-use crate::{
-    general::network::m_p2p::P2PModule, logical_module_view_impl, sys::LogicalModulesRef,
-    util::JoinHandleWrapper,
-};
+use crate::util::JoinHandleWrapper;
 use async_trait::async_trait;
 use ws_derive::LogicalModule;
 
@@ -10,23 +7,16 @@ use crate::{
     sys::{LogicalModule, LogicalModuleNewArgs},
 };
 
-logical_module_view_impl!(WorkerView);
-logical_module_view_impl!(WorkerView, p2p, P2PModule);
-
 #[derive(LogicalModule)]
-pub struct WorkerCore {
-    pub view: WorkerView,
-}
+pub struct WorkerCore {}
 
 #[async_trait]
 impl LogicalModule for WorkerCore {
-    fn inner_new(args: LogicalModuleNewArgs) -> Self
+    fn inner_new(_args: LogicalModuleNewArgs) -> Self
     where
         Self: Sized,
     {
-        Self {
-            view: WorkerView::new(args.logical_modules_ref.clone()),
-        }
+        Self {}
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         let all = vec![];

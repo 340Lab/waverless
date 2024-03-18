@@ -14,25 +14,15 @@ use crate::{
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
-// use crossbeam_skiplist::SkipMap;
-
 use ws_derive::LogicalModule;
-
-use super::{m_executor::Executor, m_instance_manager::InstanceManager, m_worker::WorkerCore};
-
-// use super::super::kv_interface::KvInterface;
 
 logical_module_view_impl!(KvUserClientView);
 logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
-logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
-logical_module_view_impl!(KvUserClientView, instance_manager, Option<InstanceManager>);
-logical_module_view_impl!(KvUserClientView, worker, Option<WorkerCore>);
-logical_module_view_impl!(KvUserClientView, executor, Option<Executor>);
 
 #[derive(LogicalModule)]
 pub struct KvUserClient {
     // testmap: SkipMap<Vec<u8>, Vec<u8>>,
-    pub view: KvUserClientView,
+    view: KvUserClientView,
     rpc_caller_kv: RPCCaller<KvRequests>,
 }
 
@@ -88,7 +78,6 @@ lazy_static::lazy_static! {
 //     let res = &*KV_USER_CLIENT as *const Option<KvUserClientView> as *mut Option<KvUserClientView>;
 //     unsafe { (*res).as_ref().unwrap().kv_user_client() }
 // }
-
 
 #[async_trait]
 impl KvInterface for KvUserClient {

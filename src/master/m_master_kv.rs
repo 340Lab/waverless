@@ -41,7 +41,6 @@ logical_module_view_impl!(MasterKvView, kv_store_engine, KvStoreEngine);
 
 #[derive(LogicalModule)]
 pub struct MasterKv {
-    kv_map: RwLock<HashMap<Vec<u8>, Vec<u8>>>,
     lock_notifiers: RwLock<HashMap<Vec<u8>, (NodeID, u32, Arc<Notify>)>>,
     rpc_handler: RPCHandler<proto::kv::KvRequests>,
     view: MasterKvView,
@@ -57,7 +56,6 @@ impl LogicalModule for MasterKv {
         Self: Sized,
     {
         Self {
-            kv_map: RwLock::new(HashMap::new()),
             lock_notifiers: RwLock::new(HashMap::new()),
             rpc_handler: RPCHandler::default(),
             view: MasterKvView::new(args.logical_modules_ref.clone()),

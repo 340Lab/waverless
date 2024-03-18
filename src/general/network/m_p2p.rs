@@ -2,10 +2,7 @@ use std::{
     collections::HashMap,
     marker::PhantomData,
     net::SocketAddr,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
 
@@ -152,7 +149,6 @@ pub struct P2PModule {
         (TaskId, NodeID),
         Mutex<Option<tokio::sync::oneshot::Sender<Box<dyn MsgPack>>>>,
     >,
-    rpc_holder: RwLock<HashMap<(MsgId, NodeID), Arc<tokio::sync::Mutex<()>>>>,
     pub p2p_kernel: P2PQuicNode,
     // pub state_trans_tx: tokio::sync::broadcast::Sender<ModuleSignal>,
     pub nodes_config: NodesConfig,
@@ -180,7 +176,6 @@ impl LogicalModule for P2PModule {
             p2p_kernel: P2PQuicNode::new(args.clone()),
             dispatch_map: HashMap::new().into(),
             waiting_tasks: Default::default(),
-            rpc_holder: HashMap::new().into(),
             nodes_config,
             next_task_id: AtomicU32::new(0),
             view: P2PView::new(args.logical_modules_ref.clone()),
@@ -499,19 +494,3 @@ impl P2PModule {
         )
     }
 }
-
-// #[async_trait]
-// impl P2P for P2PModule {
-//     async fn send_for_response(&self, nodeid: NodeID, req_data: Vec<u8>) -> WSResult<Vec<u8>> {
-//         // let (tx, rx) = tokio::sync::oneshot::channel();
-//         // self.p2p_kernel.send(nodeid, req_data, tx).await?;
-//         // let res = rx.await?;
-
-//         Ok(vec![])
-//     }
-
-//     async fn send(&self, nodeid: NodeID, msg_id:u64,req_data: Vec<u8>) -> WSResult<()> {
-//         self.p2p_kernel.send(nodeid, req_data).await?;
-//         Ok(())
-//     }
-// }

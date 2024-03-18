@@ -28,19 +28,6 @@ fn open_file(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, Hos
     Ok(vec![])
 }
 
-fn read_file_at(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, HostFuncError> {
-    let fd = args[0].to_i32();
-    if fd < 0 {
-        tracing::error!("function read_file_at: invalid fd");
-        return Ok(vec![]);
-    }
-    let data = utils::mutu8sclice(&caller, args[1].to_i32(), args[2].to_i32()).unwrap();
-    let offset = args[3].to_i32();
-    let retlen = utils::mutref::<i32>(&caller, args[4].to_i32());
-    *retlen = m_fs().read_file_at(fd, offset, data).unwrap() as i32;
-
-    Ok(vec![])
-}
 // fd, data, len, offset, retlen_ptr
 type ReadFileArgs = (i32, i32, i32, i32, i32);
 #[cfg_attr(target_os = "linux", async_host_function)]

@@ -1,7 +1,7 @@
 use core::panic;
 use std::{mem::ManuallyDrop, sync::atomic::AtomicU32};
 
-use super::{m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient};
+use super::m_instance_manager::InstanceManager;
 use crate::{
     general::{
         m_appmeta_manager::{AppMetaManager, FnArg},
@@ -38,7 +38,6 @@ logical_module_view_impl!(ExecutorView, p2p, P2PModule);
 logical_module_view_impl!(ExecutorView, appmeta_manager, AppMetaManager);
 logical_module_view_impl!(ExecutorView, instance_manager, Option<InstanceManager>);
 logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
-logical_module_view_impl!(ExecutorView, kv_user_client, Option<KvUserClient>);
 
 #[derive(LogicalModule)]
 pub struct Executor {

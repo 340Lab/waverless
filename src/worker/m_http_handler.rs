@@ -1,8 +1,5 @@
 use crate::{
-    general::network::{
-        http_handler::{start_http_handler, HttpHandler, LocalReqIdAllocator},
-        m_p2p::P2PModule,
-    },
+    general::network::http_handler::{start_http_handler, HttpHandler, LocalReqIdAllocator},
     logical_module_view_impl,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
@@ -45,8 +42,6 @@ impl LogicalModule for WorkerHttpHandler {
 }
 
 logical_module_view_impl!(WorkerHttpHandlerView);
-logical_module_view_impl!(WorkerHttpHandlerView, p2p, P2PModule);
-logical_module_view_impl!(WorkerHttpHandlerView, http_handler, Box<dyn HttpHandler>);
 logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
 
 #[async_trait]
