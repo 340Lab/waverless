@@ -11,14 +11,11 @@ use std::{
 use ws_derive::LogicalModule;
 
 use crate::{
-    logical_module_view_impl,
     result::{ErrCvt, WSResult},
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    sys::{LogicalModule, LogicalModuleNewArgs},
     util::JoinHandleWrapper,
 };
 
-logical_module_view_impl!(FsView);
-logical_module_view_impl!(FsView, fs, Fs);
 #[derive(LogicalModule)]
 pub struct Fs {
     fd_files: SkipMap<i32, Arc<Mutex<File>>>,

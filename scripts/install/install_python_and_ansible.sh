@@ -54,9 +54,11 @@ fi
 # 调用函数，将要检查的命令和对应的包名称传递给函数
 install_command "python3" "python3"
 install_command "pip3" "python3-pip"
+install_command "unrar" "unrar"
 
 # 示例：调用函数检查并安装 'requests' 包
 check_and_install_python_package "requests"
 check_and_install_python_package "ansible" #==4.9.0
 check_and_install_python_package "wordlist"
 check_and_install_python_package "jsondiff"
+check_and_install_python_package "numpy"

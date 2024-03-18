@@ -17,8 +17,6 @@ use crate::{
     util::JoinHandleWrapper,
 };
 
-use super::m_master_kv::MasterKv;
-
 trait NodeWeighteFetcher: Send + Sync + 'static {
     // NOTE: get weight return node weight
     // larger is better
@@ -27,12 +25,6 @@ trait NodeWeighteFetcher: Send + Sync + 'static {
 
 struct StrawNodeSelector {
     weight_fetcher: Box<dyn NodeWeighteFetcher>,
-}
-
-impl StrawNodeSelector {
-    fn new(weight_fetcher: Box<dyn NodeWeighteFetcher>) -> Self {
-        Self { weight_fetcher }
-    }
 }
 
 // NOTE: Straw2 algorithm
@@ -78,12 +70,9 @@ impl NodeSelector for HashNodeSelector {
 logical_module_view_impl!(MasterView);
 logical_module_view_impl!(MasterView, p2p, P2PModule);
 logical_module_view_impl!(MasterView, master, Option<Master>);
-logical_module_view_impl!(MasterView, master_kv, Option<MasterKv>);
 
 #[derive(LogicalModule)]
 pub struct Master {
-    // each_fn_caching: HashMap<String, HashSet<NodeId>>,
-    node_selector: Box<dyn NodeSelector>,
     pub rpc_caller_distribute_task: RPCCaller<proto::sche::DistributeTaskReq>,
     view: MasterView,
 }
@@ -96,7 +85,6 @@ impl LogicalModule for Master {
     {
         Self {
             view: MasterView::new(args.logical_modules_ref.clone()),
-            node_selector: Box::new(HashNodeSelector),
             rpc_caller_distribute_task: RPCCaller::default(),
         }
     }

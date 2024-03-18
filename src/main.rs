@@ -4,8 +4,10 @@
     unused_imports,
     unused_variables,
     unused_mut,
+    unused_attributes,
+    dead_code,
     clippy::unnecessary_mut_passed,
-    unused_results
+    unused_results,
 )]
 
 use clap::Parser;

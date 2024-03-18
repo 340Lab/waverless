@@ -132,7 +132,6 @@ macro_rules! logical_modules {
     ($($modules:ident,$ts:ty),+)=>{
 
         pub struct LogicalModules {
-            new_cnt:usize,
             start_cnt:usize,
             $(pub $modules: $ts),+
         }
@@ -381,7 +380,6 @@ impl LogicalModules {
             kv_user_client: None,
             instance_manager: None,
             executor: None,
-            new_cnt: 0,
             start_cnt: 0,
         };
 

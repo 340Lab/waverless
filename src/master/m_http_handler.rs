@@ -23,7 +23,6 @@ use super::{m_master::Master, m_metric_observor::MetricObservor};
 
 logical_module_view_impl!(MasterHttpHandlerView);
 logical_module_view_impl!(MasterHttpHandlerView, p2p, P2PModule);
-logical_module_view_impl!(MasterHttpHandlerView, http_handler, Box<dyn HttpHandler>);
 logical_module_view_impl!(MasterHttpHandlerView, master, Option<Master>);
 logical_module_view_impl!(
     MasterHttpHandlerView,
