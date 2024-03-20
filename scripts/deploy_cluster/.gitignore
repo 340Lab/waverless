@@ -1,3 +1,5 @@
+promtail.yaml
 gen_ansible.ini
 gen_docker_stack.yml
 compose_*
+/pack

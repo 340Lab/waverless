@@ -1,0 +1,8 @@
+- name: Copy wasm
+  include_tasks: "../build/1.1.1_ans_build_demo_apps_each.yml"
+  loop:
+    - fn2
+    - word_count
+    - longchain
+- name: App needed data
+  shell: python3 ../build/1.2_gen_app_need_data.py
