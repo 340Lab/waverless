@@ -16,13 +16,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Ansible
-      run: sudo bash scripts/install/install_python_and_ansible.sh
+      run: sudo bash scripts/install/1.install_basic.sh
 
     - name: Install build
-      run: ansible-playbook -vvv scripts/install/ans_install_build.yml -i scripts/local_ansible_conf.ini
+      run: ansible-playbook -vvv scripts/install/2.ans_install_build.yml -i scripts/local_ansible_conf.ini
 
     - name: Build Locally
-      run: ansible-playbook -vvv scripts/deploy_single_node/ans_build.yml -i scripts/local_ansible_conf.ini
+      run: ansible-playbook -vvv scripts/deploy_single_node/1.ans_build.yml -i scripts/local_ansible_conf.ini
     
     - name: Integirty Test
       run: ansible-playbook -vvv scripts/ans_integity_test.yml -i scripts/local_ansible_conf.ini

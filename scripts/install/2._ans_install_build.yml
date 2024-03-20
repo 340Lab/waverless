@@ -16,7 +16,7 @@
 
 - name: Install Docker
   become: true
-  shell: bash install_docker.sh
+  shell: bash ../install/3.install_docker.sh
 
 - name: Check if Rust is installed
   become: true
@@ -47,4 +47,4 @@
   when: "'rustc' not in rust_installed.stdout"
 
 - name: Install WasmEdge
-  include_tasks: _ans_install_wasmedge.yml
+  include_tasks: 2.1_ans_install_wasmedge.yml

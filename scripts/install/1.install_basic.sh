@@ -51,10 +51,24 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# - clang
+# - lldb
+# - lld
+# - build-essential
+# - curl
+# - protobuf-compiler
+# - pkg-config
+# - libssl-dev
+# - snap
+
 # 调用函数，将要检查的命令和对应的包名称传递给函数
 install_command "python3" "python3"
 install_command "pip3" "python3-pip"
+<<<<<<< HEAD:scripts/install/install_python_and_ansible.sh
 install_command "unrar" "unrar"
+=======
+install_command "tree" "tree"
+>>>>>>> test(deploy_cluster): fit deploy_cluster and deploy_monitor to latest scripts:scripts/install/1.install_basic.sh
 
 # 示例：调用函数检查并安装 'requests' 包
 check_and_install_python_package "requests"

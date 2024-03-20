@@ -53,3 +53,4 @@ fi
 
 # 调用函数，将要检查的命令和对应的包名称传递给函数
 install_command "docker" "docker.io"
+install_command "docker-compose" "docker-compose"

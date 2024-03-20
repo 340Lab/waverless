@@ -1,0 +1,53 @@
+- name: Build the main system on the master node
+  become: yes
+  shell: |
+    cat > /tmp/compile.sh <<'END'
+      #!/bin/bash
+
+      echo $PATH
+      export PATH="/root/.cargo/bin/:$PATH"
+      export PATH="/root/.wasmedge/bin/:$PATH"
+      cargo build --release
+    END
+
+    bash /tmp/compile.sh
+    rm -f /tmp/compile.sh
+- name: Build the demo apps
+  include_tasks: ../build/1.1._ans_build_demo_apps.yml
+# mkdir -p scripts/deploy_single_node/test_dir/files
+# mkdir -p scripts/deploy_single_node/test_dir/apps
+# cp scripts/deploy_single_node/node_config.yaml scripts/deploy_single_node/test_dir/files
+- name: Clear pack
+  shell: rm -rf pack
+- name: Mkdirs
+  file:
+    path: pack/test_dir/{{ item }}
+    state: directory
+  loop:
+    - files
+    - apps
+  become: yes
+- name: Move files from build to cur dir
+  shell: mv files pack/test_dir
+  become: yes
+- name: Copy node_config.yaml
+  copy:
+    src: node_config.yaml
+    dest: pack/test_dir/files/node_config.yaml
+    force: yes
+  become: yes
+- name: Move apps from build to cur dir
+  shell: mv apps pack/test_dir
+  become: yes
+- name: Copy bin
+  copy:
+    src: ../../target/release/wasm_serverless
+    dest: pack
+    force: yes
+  become: yes
+- name: Cat run_node.py
+  shell: cp ../build/run_node.py pack
+  become: yes
+- name: Permissions
+  shell: chmod -R 775 pack
+  become: yes
