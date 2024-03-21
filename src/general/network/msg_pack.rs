@@ -40,6 +40,8 @@ macro_rules! define_msg_ids {
 
 // pub struct MsgCoder<M: prost::Message> {}
 
+// 定义了发送的消息的格式，所有发送出去的消息泛型都要实现了这个trait
+// Defines the format of the message to be sent, and all generics that are sent should implement this trait
 pub trait MsgPack: prost::Message + Downcast {
     fn msg_id(&self) -> MsgId;
     // fn construct_from_raw_mem(bytes: Bytes) {}
