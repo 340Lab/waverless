@@ -26,3 +26,21 @@
   args:
     chdir: "../.."
     creates: "/usr/local/bin/wasmedge" # Skip if WasmEdge is already installed
+
+- name: Debug WasmEdge version
+  become: true
+  shell: |
+    cat > /tmp/debug_wasmedge.sh <<'END'
+      #!/bin/bash
+      ls /root/.wasmedge/bin/
+      export PATH="/root/.wasmedge/bin/":$PATH
+      # source ~/.bashrc
+      whereis wasmedge
+      wasmedge --version
+    END
+
+    bash /tmp/debug_wasmedge.sh
+    rm -f /tmp/debug_wasmedge.sh
+  
+
+

@@ -29,13 +29,18 @@ pub mod util;
 #[tokio::main]
 async fn main() {
     start_tracing();
+    // 解析命令行参数。
     let args = CmdArgs::parse();
     let config = config::read_config(args.this_id, args.files_dir);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
+    
+    // 创建 Sys 类型的实例，传入配置信息，并调用 wait_for_end().await 来启动系统。
     Sys::new(config).wait_for_end().await;
 }
 
+
+// 配置和启动日志追踪（tracing）
 pub fn start_tracing() {
     let my_filter = tracing_subscriber::filter::filter_fn(|v| {
         // println!("{}", v.module_path().unwrap());

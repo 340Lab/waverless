@@ -74,6 +74,9 @@ impl LogicalModuleNewArgs {
     }
 }
 
+
+// 一个定义标准的trait，所有模块都要实现这个创建新实例和启动的功能函数
+// A defining standard trait that all modules implement to create new instances and launch functions
 #[async_trait]
 pub trait LogicalModule: Send + Sync + 'static {
     fn inner_new(args: LogicalModuleNewArgs) -> Self

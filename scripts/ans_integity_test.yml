@@ -1,0 +1,17 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Build the application on the master node
+      become: yes
+      shell: |
+        cat > /tmp/cargotest.sh <<'END'
+          #!/bin/bash
+
+          echo $PATH
+          export PATH="/root/.cargo/bin/:$PATH"
+          export PATH="/root/.wasmedge/bin/:$PATH"
+          cargo test --workspace
+        END
+
+        bash /tmp/cargotest.sh
+        rm -f /tmp/cargotest.sh
