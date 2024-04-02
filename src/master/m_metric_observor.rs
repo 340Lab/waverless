@@ -10,7 +10,6 @@ use crate::{
 };
 use async_trait::async_trait;
 use prometheus_client::registry::Registry;
-use std::collections::HashSet;
 use ws_derive::LogicalModule;
 
 use self::prometheus::{Metrics, RscLabels, RscType};
@@ -85,7 +84,7 @@ pub mod prometheus {
     }
 }
 
-pub struct NodeFnCacheMetric(HashSet<String>);
+pub struct NodeFnCacheMetric();
 
 logical_module_view_impl!(MetricObservorView);
 logical_module_view_impl!(MetricObservorView, p2p, P2PModule);
