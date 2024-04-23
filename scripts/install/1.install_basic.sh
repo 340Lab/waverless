@@ -73,3 +73,6 @@ check_and_install_python_package "ansible" #==4.9.0
 check_and_install_python_package "wordlist"
 check_and_install_python_package "jsondiff"
 check_and_install_python_package "numpy"
+
+apt-get install language-pack-en
+locale-gen en_US.UTF-8
