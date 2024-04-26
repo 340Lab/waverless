@@ -56,7 +56,11 @@ define_msg_ids!(
     proto::sche::DistributeTaskResp,
     proto::metric::RscMetric,
     proto::kv::KvRequests,
-    proto::kv::KvResponses
+    proto::kv::KvResponses,
+    proto::remote_sys::GetDirContentReq,
+    proto::remote_sys::GetDirContentResp,
+    proto::remote_sys::RunCmdReq,
+    proto::remote_sys::RunCmdResp
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -77,6 +81,14 @@ impl RPCReq for proto::sche::DistributeTaskReq {
 
 impl RPCReq for proto::kv::KvRequests {
     type Resp = proto::kv::KvResponses;
+}
+
+impl RPCReq for proto::remote_sys::GetDirContentReq {
+    type Resp = proto::remote_sys::GetDirContentResp;
+}
+
+impl RPCReq for proto::remote_sys::RunCmdReq {
+    type Resp = proto::remote_sys::RunCmdResp;
 }
 
 pub trait KvResponseExt {

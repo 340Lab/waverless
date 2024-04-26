@@ -1,0 +1,39 @@
+syntax = "proto3";
+package remote_sys;
+
+message GetDirContentReq {
+    string path=1;
+}
+
+message GetDirContentResp {
+    message GetDirContentRespFail{
+        string error=1;
+    }
+    message GetDirContentRespOk{
+        repeated string files=1;
+        repeated string dirs=2;
+    }
+    oneof dispatch {
+        GetDirContentRespFail fail=1;
+        GetDirContentRespOk ok=2;
+    }
+}
+
+message RunCmdReq {
+    string cmd=1;
+    string workdir=2;
+}
+
+message RunCmdResp {
+    message RunCmdRespOk {
+        string output=1;
+    }
+    message RunCmdRespErr {
+        string error=1;
+    }
+    oneof dispatch {
+        RunCmdRespOk ok=1;
+        RunCmdRespErr err=2;
+    }
+}
+

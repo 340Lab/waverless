@@ -368,7 +368,7 @@ impl P2PModule {
     where
         R: RPCReq,
     {
-        let dur = dur.unwrap_or(Duration::from_millis(500));
+        let dur = dur.unwrap_or(Duration::from_millis(10000));
         self.call_rpc_inner::<R, R::Resp>(node_id, req, dur).await
     }
 

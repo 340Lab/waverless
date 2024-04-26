@@ -3,19 +3,16 @@ nodes:
     addr: 192.168.31.162:2500
     spec: [meta,master]
   2: 
-    addr: 192.168.31.162:2505
-    spec: [meta,worker]
-  3: 
     addr: 192.168.31.87:2500
     spec: [meta,worker]
-  4: 
-    addr: 192.168.31.87:2505
-    spec: [meta,worker]
-  5: 
+  3: 
     addr: 192.168.31.96:2500
     spec: [meta,worker]
-  6: 
-    addr: 192.168.31.96:2505
+  4: 
+    addr: 192.168.31.109:2500
+    spec: [meta,worker]
+  5: 
+    addr: 192.168.31.56:2500
     spec: [meta,worker]
 
 loki:

@@ -85,7 +85,7 @@ impl MasterKv {
         &self,
         reqs: &proto::kv::KvRequests,
     ) -> Vec<Option<EventTriggerInfo>> {
-        let metas = self.view.appmeta_manager().0.read().await;
+        let metas = self.view.appmeta_manager().meta.read().await;
         reqs.requests
             .iter()
             .map(|req| fn_event::try_match_kv_event(&metas, req, &reqs.app, &reqs.func))

@@ -27,15 +27,15 @@
     - files
     - apps
   become: yes
-- name: Move files from build to cur dir
-  shell: mv files pack/test_dir
-  become: yes
-- name: Copy node_config.yaml
-  copy:
-    src: node_config.yaml
-    dest: pack/test_dir/files/node_config.yaml
-    force: yes
-  become: yes
+# - name: Move files from build to cur dir
+#   shell: mv files pack/test_dir
+#   become: yes
+# - name: Copy node_config.yaml
+#   copy:
+#     src: node_config.yaml
+#     dest: pack/test_dir/files/node_config.yaml
+#     force: yes
+#   become: yes
 - name: Move apps from build to cur dir
   shell: mv apps pack/test_dir
   become: yes
@@ -45,8 +45,8 @@
     dest: pack
     force: yes
   become: yes
-- name: Cat run_node.py
-  shell: cp ../build/run_node.py pack
+- name: Copy run_node.py
+  shell: cp ../build/template/run_node.py pack
   become: yes
 - name: Permissions
   shell: chmod -R 775 pack

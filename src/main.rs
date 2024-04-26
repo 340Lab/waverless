@@ -7,7 +7,7 @@
     unused_attributes,
     dead_code,
     clippy::unnecessary_mut_passed,
-    unused_results,
+    unused_results
 )]
 
 use clap::Parser;
@@ -22,6 +22,7 @@ pub mod general;
 pub mod master;
 pub mod worker;
 
+pub mod apis;
 pub mod cmd_arg;
 pub mod config;
 pub mod result;

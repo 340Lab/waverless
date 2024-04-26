@@ -233,7 +233,7 @@ impl Executor {
 
         // trigger app
         let appname = split[0];
-        let app_meta_man = self.view.appmeta_manager().0.read().await;
+        let app_meta_man = self.view.appmeta_manager().meta.read().await;
         if let Some(app) = app_meta_man.get_app_meta(appname) {
             if split.len() == 1 {
                 if let Some(funcname) = app.http_trigger_fn() {
@@ -312,7 +312,7 @@ impl Executor {
         let event = fn_ctx.event_ctx.clone();
 
         // Get app meta data for func and args
-        let app_metas = self.view.appmeta_manager().0.read().await;
+        let app_metas = self.view.appmeta_manager().meta.read().await;
         if let Some(app_meta) = app_metas.get_app_meta(&app) {
             if let Some(fnmeta) = app_meta.get_fn_meta(&func) {
                 let vm = self.view.instance_manager().load_instance(&app).await;

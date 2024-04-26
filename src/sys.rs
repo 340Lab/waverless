@@ -2,9 +2,9 @@ use crate::{
     config::NodesConfig,
     general::{
         m_appmeta_manager::AppMetaManager,
-        m_fs::Fs,
         m_kv_store_engine::KvStoreEngine,
         m_metric_publisher::MetricPublisher,
+        m_os::OperatingSystem,
         network::{http_handler::HttpHandler, m_p2p::P2PModule},
     },
     master::{
@@ -309,8 +309,8 @@ logical_modules!(
     Box<dyn HttpHandler>,
     metric_publisher,
     MetricPublisher,
-    fs,
-    Fs,
+    os,
+    OperatingSystem,
     kv_store_engine,
     KvStoreEngine,
     appmeta_manager,
@@ -365,7 +365,7 @@ impl LogicalModules {
         let mut logical_modules = LogicalModules {
             p2p: P2PModule::new(args.clone()),
             metric_publisher: MetricPublisher::new(args.clone()),
-            fs: Fs::new(args.clone()),
+            os: OperatingSystem::new(args.clone()),
             kv_store_engine: KvStoreEngine::new(args.clone()),
             http_handler: if is_master {
                 Box::new(MasterHttpHandler::new(args.clone()))
@@ -402,7 +402,7 @@ impl LogicalModules {
         start_module!(self, sys, p2p);
         start_module!(self, sys, http_handler);
         start_module!(self, sys, metric_publisher);
-        start_module!(self, sys, fs);
+        start_module!(self, sys, os);
         start_module!(self, sys, kv_store_engine);
         start_module!(self, sys, appmeta_manager);
 

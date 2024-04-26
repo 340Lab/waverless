@@ -3,7 +3,7 @@
 //     pub view: KvStorageView,
 // }
 
-use super::{m_fs::Fs, network::m_p2p::P2PModule};
+use super::{m_os::OperatingSystem, network::m_p2p::P2PModule};
 use crate::{
     logical_module_view_impl,
     result::WSResult,
@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(View);
-logical_module_view_impl!(View, fs, Fs);
+logical_module_view_impl!(View, os, OperatingSystem);
 logical_module_view_impl!(View, p2p, P2PModule);
 
 #[derive(LogicalModule)]
@@ -40,7 +40,7 @@ impl LogicalModule for KvStoreEngine {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        let db_path = self.view.fs().file_path.join(format!(
+        let db_path = self.view.os().file_path.join(format!(
             "kv_store_engine_{}",
             self.view.p2p().nodes_config.this_node()
         ));
@@ -112,6 +112,10 @@ pub struct KeyTypeKv<'a>(pub &'a [u8]);
 
 pub struct KeyTypeKvPosition<'a>(pub &'a [u8]);
 
+pub struct KeyTypeServiceMeta<'a>(pub &'a [u8]);
+
+pub struct KeyTypeServiceList;
+
 impl KeyType for KeyTypeKvPosition<'_> {
     type Value = NodeID;
     fn id(&self) -> u8 {
@@ -124,6 +128,18 @@ impl KeyType for KeyTypeKv<'_> {
         1
     }
 }
+impl KeyType for KeyTypeServiceMeta<'_> {
+    type Value = Vec<u8>;
+    fn id(&self) -> u8 {
+        2
+    }
+}
+impl KeyType for KeyTypeServiceList {
+    type Value = Vec<u8>;
+    fn id(&self) -> u8 {
+        3
+    }
+}
 
 impl Serialize for KeyTypeKvPosition<'_> {
     fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -134,5 +150,17 @@ impl Serialize for KeyTypeKvPosition<'_> {
 impl Serialize for KeyTypeKv<'_> {
     fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
+    }
+}
+
+impl Serialize for KeyTypeServiceMeta<'_> {
+    fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl Serialize for KeyTypeServiceList {
+    fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit()
     }
 }

@@ -84,7 +84,7 @@ logical_module_view_impl!(View, p2p, P2PModule);
 
 #[derive(LogicalModule)]
 pub struct P2PQuicNode {
-    pub logical_modules_view: View,
+    logical_modules_view: View,
     shared: Arc<P2PQuicNodeShared>,
 }
 

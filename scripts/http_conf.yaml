@@ -1,0 +1,72 @@
+backend:
+    dir: "../src"
+    lan: "rs"
+    header: "use crate::general::network::http_handler::ApiHandlerImpl;"
+
+frontend:
+    dir: "../waverless_ui/src"
+    lan: "ts"
+    header: 'import axios from "axios"'
+    http_call: 'await axios.post("/api/{}", {})'
+
+structs:
+    NodeBasic:
+        name: String
+        online: Bool
+        ip: String
+        ssh_port: String
+        cpu_sum: Float
+        cpu_cur: Float
+        mem_sum: Float
+        mem_cur: Float 
+        passwd: String # only valid when set
+        system: String
+    
+    Action:
+        name: String
+        cmd: String
+
+    ServiceBasic:
+        name: String # left empty to get template
+        node: String
+        dir: String
+        actions: [Array , Action]
+
+
+api_list:
+
+    add_service:
+        req:
+            service: ServiceBasic
+        resp_dispatch:
+            Succ:
+            Template:
+                nodes: [Array,String]
+            Fail:
+                msg: String
+
+    delete_service:
+        req:
+            service: String
+        resp_dispatch:
+            Succ:
+            Fail:
+                msg: String
+
+    get_service_list:
+        req:
+        resp_dispatch:
+            Exist:
+                services: [Array, ServiceBasic]
+
+    run_service_action:
+        req:
+            service: String
+            action_cmd: String
+            sync: Bool
+        resp_dispatch:
+            Succ:
+                output: String
+            Fail:
+                msg: String
+

@@ -1,3 +1,27 @@
+### chdir
+import os
+CUR_FPATH = os.path.abspath(__file__)
+CUR_FDIR = os.path.dirname(CUR_FPATH)
+# chdir to the directory of this script
+os.chdir(CUR_FDIR)
+
+
+### utils
+def os_system_sure(command):
+    print(f"执行命令：{command}")
+    result = os.system(command)
+    if result != 0:
+        print(f"命令执行失败：{command}")
+        exit(1)
+    print(f"命令执行成功：{command}\n\n")
+
+def os_system(command):
+    print(f"执行命令：{command}")
+    result = os.system(command)
+    print("\n\n")
+
+
+### pack waverless_ui & waverless_backend to pack.tar.gz
 import os
 import yaml
 import argparse
@@ -41,15 +65,15 @@ def read_yaml(f):
 
 def entry():
     # read cluster-nodes.yml
-    with open('scripts/deploy_cluster/node_config.yaml', 'r') as f:
+    with open('node_config.yaml', 'r') as f:
         # run_cmd("scripts/install/install_ansible.sh")
 
         # write to gen_ansible.ini
         ansible="[web]\n"
 
         # # gen ssh key if not exist
-        # if not os.path.exists("/root/.ssh/id_rsa"):
-        #     run_cmd("ssh-keygen -t rsa -b 2048")
+        if not os.path.exists("/root/.ssh/id_rsa"):
+            run_cmd("ssh-keygen -t rsa -b 2048")
 
         cluster_nodes = read_yaml(f)
         appeared_node={}
@@ -63,11 +87,11 @@ def entry():
                 ansible+="webserver{} ansible_host={} ansible_user=root\n".format(nid,ip)
                 appeared_node[ip]=1
 
-            # run_cmd("ssh root@{} 'apt install python'".format(ip))
-            # run_cmd("ssh-copy-id root@{}".format(ip))
+            # run_cmd("ssh root@{} 'apt install python3'".format(ip))
+            run_cmd("ssh-copy-id root@{}".format(ip))
         
         # write to gen_ansible.ini
-        with open("scripts/deploy_cluster/gen_ansible.ini","w") as f:
+        with open("gen_ansible.ini","w") as f:
             f.write(ansible)
         
 
@@ -81,6 +105,6 @@ def entry():
         #     )
         
         # run ansible
-        run_cmd("ansible -i scripts/deploy_cluster/gen_ansible.ini -m ping all")
+        run_cmd("ansible -i gen_ansible.ini -m ping all")
         
 entry()
