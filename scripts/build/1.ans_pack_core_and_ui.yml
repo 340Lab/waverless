@@ -1,0 +1,32 @@
+---
+- hosts: localhost
+  tasks:
+    # - name: Build the application on the master node
+    #   become: yes
+    #   shell: |
+    #     cat > /tmp/compile.sh <<'END'
+    #       #!/bin/bash
+
+    #       echo $PATH
+    #       export PATH="/root/.cargo/bin/:$PATH"
+    #       export PATH="/root/.wasmedge/bin/:$PATH"
+    #       cargo build --release
+    #     END
+
+    #     bash /tmp/compile.sh
+    #     rm -f /tmp/compile.sh
+    # mkdir -p scripts/deploy_single_node/test_dir/files
+    # mkdir -p scripts/deploy_single_node/test_dir/apps
+    # cp scripts/deploy_single_node/node_config.yaml scripts/deploy_single_node/test_dir/files
+    - name: Clear pack
+      shell: rm -rf pack
+    - name: Install Build Related
+      include_tasks: ../install/2._ans_install_build.yml
+    - name: Build sys and demo apps
+      include_tasks: ../build/1._ans_build_sys_with_apps.yml  
+    # - name: Copy node_config.yaml
+    #   copy:
+    #     src: node_config.yaml
+    #     dest: pack/test_dir/files/node_config.yaml
+    #     force: yes
+    #   become: yes

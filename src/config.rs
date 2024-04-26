@@ -41,6 +41,9 @@ impl NodesConfig {
             .map(|(id, _)| *id)
             .collect()
     }
+    pub fn node_exist(&self, id: NodeID) -> bool {
+        self.peers.contains_key(&id) || self.this.0 == id
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

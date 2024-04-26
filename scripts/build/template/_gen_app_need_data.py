@@ -2,6 +2,11 @@ import random
 import wordlist
 import os
 
+CUR_FPATH = os.path.abspath(__file__)
+CUR_FDIR = os.path.dirname(CUR_FPATH)
+os.chdir(CUR_FDIR)
+
+
 def generate_random_word(word_map):
     return random.choice(word_map)
 
@@ -26,13 +31,13 @@ def generate_random_words(file_path, file_size, word_map, seed=None):
 
 
 if __name__ == "__main__":
-    file_path = "files/random_words.txt"
+    file_path = "test_dir/files/random_words.txt"
     file_size = 1000000000  # 1 billion words
     seed_value = 42  # Adjust the seed value as needed
 
     #return if file already exists
     if os.path.exists(file_path):
-        print(f"File {file_path} already exists. Exiting.")
+        print(f"\nFile {file_path} already exists. Exiting.\n")
         exit(0)
 
     # Example: Use a built-in English word list

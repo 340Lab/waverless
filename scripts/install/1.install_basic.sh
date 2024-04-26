@@ -66,6 +66,7 @@ install_command "python3" "python3"
 install_command "pip3" "python3-pip"
 install_command "unrar" "unrar"
 install_command "tree" "tree"
+install_command "curl" "curl"
 
 # 示例：调用函数检查并安装 'requests' 包
 check_and_install_python_package "requests"
@@ -74,5 +75,5 @@ check_and_install_python_package "wordlist"
 check_and_install_python_package "jsondiff"
 check_and_install_python_package "numpy"
 
-apt-get install language-pack-en
+apt-get install language-pack-en locales -y
 locale-gen en_US.UTF-8

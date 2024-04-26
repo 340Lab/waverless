@@ -16,15 +16,14 @@
     cat > /tmp/install_wasmedge.sh <<'END'
       #!/bin/bash
 
-      mkdir /tmp/install
-      cp scripts/install/inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz /tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
-      python3 scripts/install/inner/wasm_edge.py -v 0.13.3
+      mkdir -p /tmp/install
+      cp inner/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz /tmp/install/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+      python3 inner/wasm_edge.py -v 0.13.3
     END
 
     bash /tmp/install_wasmedge.sh
     rm -f /tmp/install_wasmedge.sh
   args:
-    chdir: "../.."
     creates: "/usr/local/bin/wasmedge" # Skip if WasmEdge is already installed
 
 - name: Debug WasmEdge version

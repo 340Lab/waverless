@@ -16,7 +16,7 @@ mod utils {
     use wasmedge_sdk::{Caller, CallingFrame, Instance, Memory};
 
     use crate::{
-        general::m_fs::Fs,
+        general::m_os::OperatingSystem,
         sys::LogicalModulesRef,
         util::SendNonNull,
         worker::{
@@ -25,7 +25,7 @@ mod utils {
         },
     };
 
-    trait WasmCtx {
+    pub trait WasmCtx {
         fn memory(&self, idx: u32) -> Option<Memory>;
         fn instance(&self) -> Option<&Instance>;
     }
@@ -116,12 +116,12 @@ mod utils {
         }
     }
 
-    pub fn m_fs<'a>() -> &'a Fs {
+    pub fn m_fs<'a>() -> &'a OperatingSystem {
         unsafe {
             &(*MODULES.as_ref().unwrap().inner.as_ptr())
                 .as_ref()
                 .unwrap()
-                .fs
+                .os
         }
     }
 

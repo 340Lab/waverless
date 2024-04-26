@@ -1,20 +1,25 @@
+use super::m_p2p::P2PModule;
 use crate::{
+    apis::{
+        self, AddServiceReq, AddServiceResp, ApiHandler, DeleteServiceReq, DeleteServiceResp,
+        GetServiceListResp, RunServiceActionReq, RunServiceActionResp,
+    },
+    general::m_appmeta_manager::AppMetaManager,
     logical_module_view_impl,
     sys::{LogicalModule, LogicalModulesRef},
 };
 use async_trait::async_trait;
 use axum::{
-    extract::{Path, State},
+    extract::Path,
     response::{IntoResponse, Response},
     routing::post,
     Router,
 };
-use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
+use std::{net::SocketAddr, sync::OnceLock};
 use tower_http::cors::CorsLayer;
-
-use super::m_p2p::P2PModule;
 pub type ReqId = usize;
+
 pub struct LocalReqIdAllocator {
     id: AtomicUsize,
 }
@@ -42,21 +47,87 @@ pub trait HttpHandler: LogicalModule {
 logical_module_view_impl!(HttpHandlerView);
 logical_module_view_impl!(HttpHandlerView, p2p, P2PModule);
 logical_module_view_impl!(HttpHandlerView, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(HttpHandlerView, appmeta_manager, AppMetaManager);
+
+pub struct ApiHandlerImpl;
+
+#[async_trait]
+impl ApiHandler for ApiHandlerImpl {
+    async fn handle_add_service(&self, req: AddServiceReq) -> AddServiceResp {
+        let view = http_handler_view();
+        // request for selection info when name is empty
+        if req.service.name.len() == 0 {
+            let nodes = view
+                .p2p()
+                .nodes_config
+                .peers
+                .iter()
+                .map(|v| format!("{}", v.0))
+                .chain(vec![format!(
+                    "{}",
+                    http_handler_view().p2p().nodes_config.this_node()
+                )])
+                .collect::<Vec<_>>();
+            return AddServiceResp::Template { nodes };
+        }
+
+        // if view.p2p().nodes_config
+        view.appmeta_manager().add_service(req).await
+    }
+
+    async fn handle_delete_service(&self, _req: DeleteServiceReq) -> DeleteServiceResp {
+        DeleteServiceResp::Fail {
+            msg: "not implemented".to_owned(),
+        }
+    }
+
+    async fn handle_get_service_list(&self) -> GetServiceListResp {
+        let view = http_handler_view();
+        GetServiceListResp::Exist {
+            services: view.appmeta_manager().get_app_meta_basicinfo_list(),
+        }
+    }
+
+    async fn handle_run_service_action(&self, req: RunServiceActionReq) -> RunServiceActionResp {
+        http_handler_view()
+            .appmeta_manager()
+            .run_service_action(req)
+            .await
+    }
+}
+
+lazy_static::lazy_static!(
+    static ref HTTP_HANDLER_VIEW: OnceLock<HttpHandlerView> = OnceLock::new();
+);
+
+fn http_handler_view() -> &'static HttpHandlerView {
+    HTTP_HANDLER_VIEW.get().unwrap()
+}
 
 pub async fn start_http_handler(modsref: LogicalModulesRef) {
-    let view = HttpHandlerView::new(modsref);
+    let view: HttpHandlerView = HttpHandlerView::new(modsref);
+    let view_clone = view.clone();
+    let _ = HTTP_HANDLER_VIEW.get_or_init(move || view_clone);
+
     let addr = SocketAddr::new(
         "0.0.0.0".parse().unwrap(),
         view.p2p().nodes_config.this.1.addr.port() + 1,
     );
     tracing::info!("http start on {}", addr);
-    let app = Router::new()
-        // prometheus metrics
-        // .route("metrics")
+    let app = Router::new();
+    // prometheus metrics
+    // .route("metrics")
+    //
+    let app = if view.p2p().nodes_config.this_node() == view.p2p().nodes_config.get_master_node() {
+        apis::add_routers(app)
+    } else {
+        app
+    };
+
+    let app = app
         .route("/:app/:fn", post(handler2))
         .route("/:route", post(handler))
-        .layer(CorsLayer::permissive())
-        .with_state(view);
+        .layer(CorsLayer::permissive());
 
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -66,28 +137,16 @@ pub async fn start_http_handler(modsref: LogicalModulesRef) {
     tracing::info!("http end on {}", addr);
 }
 
-async fn handler2(
-    Path((app, func)): Path<(String, String)>,
-
-    // Json(json): Json<String>,
-    view: State<HttpHandlerView>, /* _post: String*/
-
-    body: String,
-) -> impl IntoResponse {
-    view.http_handler()
+async fn handler2(Path((app, func)): Path<(String, String)>, body: String) -> impl IntoResponse {
+    http_handler_view()
+        .http_handler()
         .handle_request(&format!("{app}/{func}"), body)
         .await
 }
 
-async fn handler(
-    route: Path<String>,
-
-    // Json(json): Json<String>,
-    view: State<HttpHandlerView>, /* _post: String*/
-
-    body: String,
-) -> impl IntoResponse {
-    view.http_handler()
+async fn handler(route: Path<String>, body: String) -> impl IntoResponse {
+    http_handler_view()
+        .http_handler()
         .handle_request(route.as_str(), body)
         .await
 }

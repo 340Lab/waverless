@@ -2,4 +2,10 @@ promtail.yaml
 gen_ansible.ini
 gen_docker_stack.yml
 compose_*
-/pack
+/waverless_backend
+/waverless_ui
+pack.tar.gz
+node_config.yaml
+deploy_config.yml
+install.tar.gz
+log

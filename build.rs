@@ -6,6 +6,7 @@ fn main() -> Result<()> {
             "src/general/network/proto_src/raft.proto",
             "src/general/network/proto_src/sche.proto",
             "src/general/network/proto_src/metric.proto",
+            "src/general/network/proto_src/remote_sys.proto",
         ],
         &["src/"],
     )?;

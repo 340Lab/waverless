@@ -18,4 +18,7 @@ pub mod proto {
     pub mod metric {
         include!(concat!(env!("OUT_DIR"), "/metric.rs"));
     }
+    pub mod remote_sys {
+        include!(concat!(env!("OUT_DIR"), "/remote_sys.rs"));
+    }
 }
