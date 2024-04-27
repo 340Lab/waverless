@@ -5,6 +5,9 @@ import { share_var } from "@/share_var";
 import { h } from "vue";
 import { ElNotification } from "element-plus";
 
+import { AnsiUp } from "ansi_up";
+var ansi_up = new AnsiUp();
+
 export default {
   data() {
     return {
@@ -23,7 +26,13 @@ export default {
   watch: {
     "share_var.service_basic_showing": {
       handler: function (val, oldVal) {
-        this.reset_data();
+        let oldname = undefined;
+        if (oldVal) {
+          oldname = oldVal.name;
+        }
+        if (val) {
+          this.reset_data(oldname, val.name);
+        }
         // console.log("watch", val, oldVal);
       },
       deep: false,
@@ -31,9 +40,17 @@ export default {
   },
 
   methods: {
-    reset_data() {
+    reset_data(old_service: string | undefined, new_service: string) {
       this.requesting_actions = {};
       this.editing_service = false;
+      if (old_service !== undefined) {
+        this.share_var.set_service_recent_actions(old_service, this.actions_records);
+      }
+      this.actions_records = this.share_var.get_service_recent_actions(
+        new_service,
+        this.actions_records
+      );
+      // this.actions_records = {};
     },
     select_service(service_basic) {},
     // init(_select_bar: (select: number, select_name: string) => void) {
@@ -46,11 +63,21 @@ export default {
       this.$refs.edit_service.confirm();
     },
 
-    add_action_record(action, res) {
+    add_action_record(service, action, res) {
       if (!(action in this.actions_records)) {
         this.actions_records[action] = [];
       }
-      this.actions_records[action].push(res);
+      let split = res.split("\n");
+      let map = split.map((line) => {
+        //<span></span>
+        return "<div>" + ansi_up.ansi_to_html(line) + "</div>";
+      });
+      let join = map.join("\n");
+      console.log("split", split);
+      console.log("map", map);
+      console.log("join", join);
+
+      this.actions_records[action].push(join);
 
       // let tid = action + (this.actions_records[action].length - 1);
       // setTimeout(() => {
@@ -93,7 +120,7 @@ export default {
               title: "请求成功",
               message: h("i", { style: "color: teal" }, res.succ().output),
             });
-            this.add_action_record(action, res.succ().output);
+            this.add_action_record(service, action, res.succ().output);
           }
         })
         .finally(() => {
@@ -165,16 +192,19 @@ export default {
               v-for="(record, index) in actions_records[action.cmd]"
               :key="index"
             >
-              <div style="width: 500px; height: 200px; overflow: scroll">
-                <highlightjs language="bash" :code="record"></highlightjs>
+              <div style="width: 500px; overflow: scroll; max-height: 200px">
+                <div
+                  style="
+                    width: 2000px;
+                    display: flex;
+                    flex-wrap: wrap;
+                    flex-direction: column;
+                    font-size: 10px;
+                  "
+                  v-html="record"
+                ></div>
+                <!-- <highlightjs language="bash" :code="record"></highlightjs> -->
               </div>
-              <!-- <el-input
-                style="padding: 10px 10px 0 0px"
-                :value="record"
-                :rows="2"
-                type="textarea"
-                placeholder="Please input"
-              /> -->
             </el-row>
           </div>
         </el-form-item>

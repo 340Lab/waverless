@@ -39,7 +39,7 @@ def run_batch_2_file(batch,output_file):
             # print(f"Run batch one!")
 
         except subprocess.CalledProcessError as e:
-            print(f"Error Run Batch")
+            print(f"Error Run Batch {cmd}")
             exit(1)
 
     print(f"Run batch all done!")
