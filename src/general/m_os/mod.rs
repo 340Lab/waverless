@@ -113,8 +113,9 @@ impl OperatingSystem {
             };
 
             // 将内容写入文件
+            log::debug!("will run cmd: {}",  &msg.cmd);
             match file.write_all(
-                format!("resize -s 200 1000\ncd {}\n{}\n", &msg.workdir, &msg.cmd).as_bytes(),
+                format!("cd {}\n{}\n", &msg.workdir, &msg.cmd).as_bytes(),
             ) {
                 Ok(()) => (),
                 Err(e) => {
@@ -135,6 +136,7 @@ impl OperatingSystem {
             match output {
                 Ok(output) => {
                     let output = String::from_utf8_lossy(&output.stdout).to_string();
+                    tracing::debug!("remote_run_cmd_handler output: {}", output);
                     RunCmdResp {
                         dispatch: Some(proto::remote_sys::run_cmd_resp::Dispatch::Ok(
                             proto::remote_sys::run_cmd_resp::RunCmdRespOk { output },

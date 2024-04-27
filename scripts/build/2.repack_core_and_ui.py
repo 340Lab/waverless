@@ -32,6 +32,8 @@ if not os.path.exists("pack"):
     print("\n!!! should run pack before repack\n")
     exit(1)
 
+os_system_sure("cargo build --release")
+os_system_sure("cp ../../target/release/wasm_serverless pack/waverless_backend/wasm_serverless")
 os_system_sure("cp template/install_service.py pack/waverless_backend/install_service.py")
 os_system_sure("cp template/run_node.py pack/waverless_backend/run_node.py")
 os_system_sure("cp template/_gen_app_need_data.py pack/waverless_backend/_gen_app_need_data.py")
