@@ -1,0 +1,27 @@
+stock-mng:
+  query:         
+    http.post: {call: direct}
+  querySorted:         
+    http.post: {call: direct}
+  purchase:         
+    http.post: {call: direct}
+  createUser:         
+    http.post: {call: direct}
+  queryBalance:         
+    http.post: {call: direct}
+  StockMngFacade.query:
+    rpc:
+  StockMngFacade.queryProductPrice:
+    rpc:
+  StockMngFacade.createOrder:
+    rpc:
+  StockMngFacade.minusStockCount:
+    rpc:
+  
+# balance-mng:
+#   BalanceMngFacade.createUser:
+#     rpc:
+#   BalanceMngFacade.queryBalance:
+#     rpc:
+#   BalanceMngFacade.minusBalance:
+#     rpc:

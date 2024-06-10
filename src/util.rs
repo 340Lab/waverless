@@ -151,3 +151,9 @@ where
 
     rx.blocking_recv().unwrap()
 }
+
+pub unsafe fn non_null<T>(v: &T) -> NonNull<T> {
+    let ptr = v as *const T as *mut T;
+    let non_null = NonNull::new_unchecked(ptr);
+    non_null
+}

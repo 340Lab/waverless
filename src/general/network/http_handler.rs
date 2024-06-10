@@ -4,7 +4,6 @@ use crate::{
         self, AddServiceReq, AddServiceResp, ApiHandler, DeleteServiceReq, DeleteServiceResp,
         GetServiceListResp, RunServiceActionReq, RunServiceActionResp,
     },
-    general::m_appmeta_manager::AppMetaManager,
     logical_module_view_impl,
     sys::{LogicalModule, LogicalModulesRef},
 };
@@ -47,32 +46,35 @@ pub trait HttpHandler: LogicalModule {
 logical_module_view_impl!(HttpHandlerView);
 logical_module_view_impl!(HttpHandlerView, p2p, P2PModule);
 logical_module_view_impl!(HttpHandlerView, http_handler, Box<dyn HttpHandler>);
-logical_module_view_impl!(HttpHandlerView, appmeta_manager, AppMetaManager);
+// logical_module_view_impl!(HttpHandlerView, appmeta_manager, AppMetaManager);
 
 pub struct ApiHandlerImpl;
 
 #[async_trait]
 impl ApiHandler for ApiHandlerImpl {
-    async fn handle_add_service(&self, req: AddServiceReq) -> AddServiceResp {
-        let view = http_handler_view();
+    async fn handle_add_service(&self, _req: AddServiceReq) -> AddServiceResp {
+        let _view = http_handler_view();
         // request for selection info when name is empty
-        if req.service.name.len() == 0 {
-            let nodes = view
-                .p2p()
-                .nodes_config
-                .peers
-                .iter()
-                .map(|v| format!("{}", v.0))
-                .chain(vec![format!(
-                    "{}",
-                    http_handler_view().p2p().nodes_config.this_node()
-                )])
-                .collect::<Vec<_>>();
-            return AddServiceResp::Template { nodes };
-        }
+        // if req.service.name.len() == 0 {
+        //     let nodes = view
+        //         .p2p()
+        //         .nodes_config
+        //         .peers
+        //         .iter()
+        //         .map(|v| format!("{}", v.0))
+        //         .chain(vec![format!(
+        //             "{}",
+        //             http_handler_view().p2p().nodes_config.this_node()
+        //         )])
+        //         .collect::<Vec<_>>();
+        //     return AddServiceResp::Template { nodes };
+        // }
 
+        AddServiceResp::Fail {
+            msg: "not implemented".to_owned(),
+        }
         // if view.p2p().nodes_config
-        view.appmeta_manager().add_service(req).await
+        // view.appmeta_manager().add_service(req).await
     }
 
     async fn handle_delete_service(&self, _req: DeleteServiceReq) -> DeleteServiceResp {
@@ -82,17 +84,21 @@ impl ApiHandler for ApiHandlerImpl {
     }
 
     async fn handle_get_service_list(&self) -> GetServiceListResp {
-        let view = http_handler_view();
-        GetServiceListResp::Exist {
-            services: view.appmeta_manager().get_app_meta_basicinfo_list(),
-        }
+        // let view = http_handler_view();
+        // GetServiceListResp::Exist {
+        //     services: view.appmeta_manager().get_app_meta_basicinfo_list(),
+        // }
+        GetServiceListResp::Exist { services: vec![] }
     }
 
-    async fn handle_run_service_action(&self, req: RunServiceActionReq) -> RunServiceActionResp {
-        http_handler_view()
-            .appmeta_manager()
-            .run_service_action(req)
-            .await
+    async fn handle_run_service_action(&self, _req: RunServiceActionReq) -> RunServiceActionResp {
+        // http_handler_view()
+        //     .appmeta_manager()
+        //     .run_service_action(req)
+        //     .await
+        RunServiceActionResp::Fail {
+            msg: "not implemented".to_owned(),
+        }
     }
 }
 

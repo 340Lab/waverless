@@ -1,0 +1,11 @@
+fns:
+  chain_begin:
+    http.get: call: indirect
+    kvs:
+      chain_count: [set]
+
+  chain_loop:
+    condition:
+      kv_set: 0
+    kvs: 
+      chain_count: [set,get,delete]

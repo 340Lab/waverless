@@ -1,0 +1,11 @@
+word_count:
+  split_file:
+    http.get: call: indirect
+    kvs:
+      wordcount_slice_{}: [set]
+
+  handle_one_slice:
+    condition: kv_set: 0
+    kvs: 
+      wordcount_slice_{}: [delete]
+      wordcount_{}: [set]

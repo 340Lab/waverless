@@ -11,13 +11,13 @@ use crate::{
         m_http_handler::MasterHttpHandler, m_master::Master, m_master_kv::MasterKv,
         m_metric_observor::MetricObservor,
     },
-    util,
+    modules_global_bridge, util,
     worker::{
-        m_executor::Executor, m_http_handler::WorkerHttpHandler,
-        m_instance_manager::InstanceManager, m_kv_user_client::KvUserClient, m_worker::WorkerCore,
-        wasm_host_funcs::set_singleton_modules,
+        func::m_instance_manager::InstanceManager, func::wasm_host_funcs, m_executor::Executor,
+        m_http_handler::WorkerHttpHandler, m_kv_user_client::KvUserClient, m_worker::WorkerCore,
     },
 };
+
 use crate::{
     // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KvClient},
     // module_iter::LogicalModuleParent,
@@ -238,7 +238,7 @@ macro_rules! logical_module_view_impl {
     };
     ($module:ident) => {
         #[derive(Clone)]
-        struct $module {
+        pub struct $module {
             inner: LogicalModulesRef,
         }
         impl $module {
@@ -357,7 +357,8 @@ impl LogicalModules {
                 inner: Arc::downgrade(&arc),
             },
         };
-        set_singleton_modules(args.logical_modules_ref.clone());
+        wasm_host_funcs::set_singleton_modules(args.logical_modules_ref.clone());
+        modules_global_bridge::set_singleton_modules(args.logical_modules_ref.clone());
 
         let is_master = config.this.1.is_master();
         assert!(is_master || config.this.1.is_worker());

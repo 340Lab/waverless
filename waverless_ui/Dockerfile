@@ -4,13 +4,17 @@ FROM node:18
 # 安装 pnpm
 RUN npm install -g pnpm
 
+RUN npm install -g vite
+
 # 设置工作目录
 WORKDIR /usr/src/app
 
 # 将项目文件复制到容器中
-COPY . .
+# COPY . .
 
 # 安装项目依赖
+RUN ls
+
 RUN pnpm install
 
 # 暴露端口（如果需要）
