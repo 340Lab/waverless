@@ -1,0 +1,17 @@
+package process_rpc_proto;
+
+// Sample message.
+message FuncStarted {
+    required string  fnid = 1;
+    optional string  http_port = 2;
+}
+
+
+message FuncCallReq{
+    required string func=1;
+    required string arg_str=2;
+}
+
+message FuncCallResp{
+    required string ret_str=1;
+}

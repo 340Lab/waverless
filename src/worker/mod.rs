@@ -1,11 +1,10 @@
 // pub mod function_event;
+pub mod func;
 pub mod m_executor;
 pub mod m_http_handler;
-pub mod m_instance_manager;
 pub mod m_kv_user_client;
 pub mod m_worker;
-pub mod wasm;
-pub mod wasm_host_funcs;
+
 // use axum::{extract::Path, routing::get, Router};
 // // use lazy_static::lazy_static;
 // use lazy_static::lazy_static;

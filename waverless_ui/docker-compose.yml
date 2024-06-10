@@ -1,7 +1,7 @@
 version: '3'
 services:
   waverless_ui:
-    build: .
+    image: waverless_ui
     # 使用 host 网络模式
     network_mode: host
     # 挂载项目目录到容器中

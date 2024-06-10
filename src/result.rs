@@ -1,10 +1,15 @@
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
-use prost::DecodeError;
+use prost::{DecodeError, Message};
 use qp2p::{EndpointError, SendError};
 use thiserror::Error;
+use wasmedge_sdk::error::WasmEdgeError;
 
-use crate::{sys::NodeID, util::TryUtf8VecU8};
+use crate::{
+    general::{m_appmeta_manager::FnMeta, network::rpc_model::HashValue},
+    sys::NodeID,
+    util::TryUtf8VecU8,
+};
 
 pub type WSResult<T> = Result<T, WSError>;
 
@@ -27,6 +32,13 @@ pub enum WsNetworkConnErr {
     ConnectionNotEstablished(NodeID),
     RPCTimout(NodeID),
     ConnectionExpired(NodeID),
+}
+
+#[derive(Debug)]
+pub enum WsRpcErr {
+    ConnectionNotEstablished(HashValue),
+    RPCTimout(HashValue),
+    InvalidMsgData { msg: Box<dyn Message> },
 }
 
 #[derive(Debug)]
@@ -66,6 +78,31 @@ pub enum WsPermissionErr {
     },
 }
 
+#[derive(Debug)]
+pub enum WsFuncError {
+    WasmError(wasmedge_sdk::error::WasmEdgeError),
+    AppNotFound {
+        app: String,
+    },
+    FuncNotFound {
+        app: String,
+        func: String,
+    },
+    InvalidHttpUrl(String),
+    FuncHttpNotSupported {
+        fname: String,
+        fmeta: FnMeta,
+    },
+    FuncBackendHttpNotSupported {
+        fname: String,
+    },
+    FuncHttpFail {
+        app: String,
+        func: String,
+        http_err: reqwest::Error,
+    },
+}
+
 #[derive(Error, Debug)]
 pub enum WSError {
     #[error("Io error: {0:?}")]
@@ -88,6 +125,12 @@ pub enum WSError {
 
     #[error("Format error: {0:?}")]
     WsFormatErr(WsFormatErr),
+
+    #[error("Func error: {0:?}")]
+    WsFuncError(WsFuncError),
+
+    #[error("Rpc error: {0:?}")]
+    WsRpcErr(WsRpcErr),
 
     #[error("Not Implemented")]
     NotImplemented,
@@ -126,6 +169,24 @@ impl From<WsIoErr> for WSError {
 impl From<WsPermissionErr> for WSError {
     fn from(e: WsPermissionErr) -> Self {
         WSError::WsPermissionErr(e)
+    }
+}
+
+impl From<WsFuncError> for WSError {
+    fn from(e: WsFuncError) -> Self {
+        WSError::WsFuncError(e)
+    }
+}
+
+impl From<WasmEdgeError> for WSError {
+    fn from(e: WasmEdgeError) -> Self {
+        WSError::WsFuncError(WsFuncError::WasmError(e))
+    }
+}
+
+impl From<WsRpcErr> for WSError {
+    fn from(e: WsRpcErr) -> Self {
+        WSError::WsRpcErr(e)
     }
 }
 

@@ -48,7 +48,7 @@ logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
 impl HttpHandler for WorkerHttpHandler {
     async fn handle_request(&self, route: &str, http_text: String) -> Response {
         tracing::debug!("handle_request {}", route);
-        if let Some(res) = self
+        if let Ok(res) = self
             .view
             .executor()
             .handle_http_task(route, self.local_req_id_allocator.alloc(), http_text)
@@ -59,9 +59,12 @@ impl HttpHandler for WorkerHttpHandler {
             // ))
             .await
         {
-            (StatusCode::OK, res).into_response()
+            res.map_or_else(
+                || StatusCode::OK.into_response(),
+                |res| (StatusCode::OK, res).into_response(),
+            )
         } else {
-            StatusCode::OK.into_response()
+            StatusCode::BAD_REQUEST.into_response()
         }
     }
     // async fn select_node(

@@ -28,12 +28,10 @@ def cp_except(src, dest, exclude_list):
 
 ### workflow
 # build backend
-os_system_sure("apt install -y rsync")
-os_system_sure("rm -rf pack")
-os_system_sure("ansible-playbook -vv 1.ans_pack_core_and_ui.yml -i ../local_ansible_conf.ini")
-os_system_sure("mkdir -p waverless_backend")
-os_system("mv pack/* waverless_backend/")
-os_system_sure("mv waverless_backend pack/")
+# os_system_sure("ansible-playbook -vv 1.ans_pack_core_and_ui.yml -i ../local_ansible_conf.ini")
+os_system_sure("python3 1.1build_core.py")
+os_system_sure("python3 1.2build_apps.py")
+os_system_sure("python3 1.3pack_backend.py")
+os_system_sure("python3 1.4pack_with_ui.py")
 
-os_system_sure("python3 2.repack_core_and_ui.py")
 

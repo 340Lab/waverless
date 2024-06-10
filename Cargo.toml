@@ -5,14 +5,6 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[workspace]
-members = [
-    ".",
-    "./apps/fn2",
-    "./apps/longchain",
-    "./apps/word_count",
-]
-
 [dependencies]
 qp2p = "0.36.4"                                     #{ path = "qp2p" }
 tokio = { version = "1.32.0", features = ["full"] }
@@ -53,6 +45,8 @@ prometheus-client = "0.22.1"
 tower-http = {version="0.4.0", features=["cors"]}
 tower= "0.4.0"
 sled = "0.34.7"
+enum-as-inner = "0.6.0"
+reqwest = "0.12.4"
 
 [dependencies.uuid]
 version = "1.8.0"

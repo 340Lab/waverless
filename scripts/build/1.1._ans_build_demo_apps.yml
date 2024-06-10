@@ -1,6 +1,0 @@
-- name: Copy wasm
-  include_tasks: "../build/1.1.1_ans_build_demo_apps_each.yml"
-  loop:
-    - fn2
-    - word_count
-    - longchain

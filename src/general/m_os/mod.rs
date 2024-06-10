@@ -1,8 +1,11 @@
-use super::network::{
-    m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
-    proto::remote_sys::{
-        get_dir_content_resp::{self, GetDirContentRespFail},
-        GetDirContentReq, GetDirContentResp, RunCmdReq, RunCmdResp,
+use super::{
+    m_appmeta_manager::AppMetaManager,
+    network::{
+        m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
+        proto::remote_sys::{
+            get_dir_content_resp::{self, GetDirContentRespFail},
+            GetDirContentReq, GetDirContentResp, RunCmdReq, RunCmdResp,
+        },
     },
 };
 use crate::{
@@ -20,6 +23,7 @@ use std::{
     io::{Read, Seek, Write},
     os::fd::AsRawFd,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::Arc,
 };
 use ws_derive::LogicalModule;
@@ -27,6 +31,7 @@ use ws_derive::LogicalModule;
 logical_module_view_impl!(OperatingSystemView);
 logical_module_view_impl!(OperatingSystemView, p2p, P2PModule);
 logical_module_view_impl!(OperatingSystemView, os, OperatingSystem);
+logical_module_view_impl!(OperatingSystemView, appmeta_manager, AppMetaManager);
 
 #[derive(LogicalModule)]
 pub struct OperatingSystem {
@@ -93,7 +98,52 @@ impl LogicalModule for OperatingSystem {
     }
 }
 
+pub enum OsProcessType {
+    JavaApp(String),
+}
+
 impl OperatingSystem {
+    pub fn start_process(&self, p: OsProcessType) {
+        let (mut binding, log_file) = match p {
+            OsProcessType::JavaApp(app) => {
+                let appdir = self.view.appmeta_manager().fs_layer.concat_app_dir(&app);
+                // 打开或创建日志文件
+                let log_file_path = appdir.join("app.log");
+                // 打开或创建日志文件
+                let log_file = File::create(log_file_path).expect("Failed to create log file");
+
+                let mut binding = Command::new("java");
+                let _ = binding
+                    .arg("-Djava.net.preferIPv4Stack=true")
+                    .arg("-jar")
+                    .arg(
+                        self.view
+                            .appmeta_manager()
+                            .fs_layer
+                            .concat_app_dir(&app)
+                            .join("app.jar"),
+                    )
+                    .arg("--agentSock=agent.sock");
+                (binding, log_file)
+            }
+        };
+        let _ = binding
+            .stdout(Stdio::from(
+                log_file.try_clone().expect("Failed to clone log file"),
+            )) // 重定向stdout到日志文件
+            .stderr(Stdio::from(log_file)) // 重定向stderr到日志文件
+            // binding.stdout(
+            //     // out put to terminal
+            //     // std::process::Stdio::inherit()
+            //     // hide output
+            //     std::process::Stdio::piped(),
+            // )
+            .spawn()
+            .expect("Failed to start child process");
+    }
+
+    // pub async fn run_cmd_local(&self, cmd: OsCmd) {}
+
     async fn remote_run_cmd_handler(&self, responser: RPCResponsor<RunCmdReq>, msg: RunCmdReq) {
         let res = tokio::task::spawn_blocking(move || {
             // temp run use random name
@@ -113,10 +163,8 @@ impl OperatingSystem {
             };
 
             // 将内容写入文件
-            log::debug!("will run cmd: {}",  &msg.cmd);
-            match file.write_all(
-                format!("cd {}\n{}\n", &msg.workdir, &msg.cmd).as_bytes(),
-            ) {
+            tracing::debug!("will run cmd: {}", &msg.cmd);
+            match file.write_all(format!("cd {}\n{}\n", &msg.workdir, &msg.cmd).as_bytes()) {
                 Ok(()) => (),
                 Err(e) => {
                     return RunCmdResp {

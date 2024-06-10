@@ -10,15 +10,16 @@ import threading
 # GATEWAY='http://192.168.31.162:'
 
 # deploy single node
-GATEWAY='http://127.0.0.1:2501'
+GATEWAY='http://127.0.0.1:2601'
 
-# APP='fn2'
+# FUNC='fn2/fn2'
+FUNC='stock-mng/createUser'
 # APP='longchain'
-APP='word_count'
+# APP='word_count'
 
 def run_one():
     ms = time.time()*1000.0
-    res = requests.post(f'{GATEWAY}/{APP}')
+    res = requests.post(f'{GATEWAY}/{FUNC}')
 
     ms_ret = time.time()*1000.0
     print(res, ms_ret-ms,res.text)

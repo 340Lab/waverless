@@ -1,41 +1,34 @@
+mod appmeta_fs;
+pub mod fn_event;
+
+use self::appmeta_fs::AppMetaFs;
 use super::{
-    m_kv_store_engine::{KeyTypeServiceList, KeyTypeServiceMeta, KvStoreEngine},
+    m_kv_store_engine::{KeyTypeServiceList, KvStoreEngine},
     m_os::OperatingSystem,
-    network::{
-        m_p2p::P2PModule,
-        proto::remote_sys::{GetDirContentReq, RunCmdReq},
-    },
 };
 use crate::{
-    apis::{
-        Action, AddServiceReq, AddServiceResp, RunServiceActionReq, RunServiceActionResp,
-        ServiceBasic,
-    },
     general::kv_interface::KvOps,
     logical_module_view_impl,
     result::{ErrCvt, WSResult},
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
-    util::JoinHandleWrapper,
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    util::{self, JoinHandleWrapper},
 };
 use async_trait::async_trait;
-use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use enum_as_inner::EnumAsInner;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fs,
     path::Path,
-    time::Duration,
 };
 use tokio::sync::RwLock;
 use ws_derive::LogicalModule;
 
-pub mod fn_event;
-
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, os, OperatingSystem);
-logical_module_view_impl!(View, p2p, P2PModule);
 logical_module_view_impl!(View, kv_store_engine, KvStoreEngine);
+// logical_module_view_impl!(View, p2p, P2PModule);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -62,41 +55,119 @@ impl From<FnEventYaml> for FnEvent {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FnArgYaml {
-    KvKey { kv_key: usize },
-    HttpText { http_text: () },
+// #[derive(Debug, Serialize, Deserialize)]
+// #[serde(untagged)]
+// pub enum FnArgYaml {
+//     KvKey { kv_key: usize },
+//     HttpText { http_text: () },
+// }
+
+// #[derive(Debug)]
+// pub enum FnArg {
+//     KvKey(usize),
+//     HttpText,
+// }
+
+// impl From<FnArgYaml> for FnArg {
+//     fn from(yaml: FnArgYaml) -> Self {
+//         match yaml {
+//             FnArgYaml::KvKey { kv_key } => Self::KvKey(kv_key),
+//             FnArgYaml::HttpText { http_text: _ } => Self::HttpText,
+//         }
+//     }
+// }
+
+#[derive(Debug, Clone)]
+pub enum HttpMethod {
+    Get,
+    Post,
+}
+
+#[derive(Debug, Clone)]
+pub enum HttpCall {
+    Direct,
+    Indirect,
+}
+
+#[derive(Debug, EnumAsInner, Clone)]
+pub enum FnCallMeta {
+    Http { method: HttpMethod, call: HttpCall },
+    Rpc,
 }
 
 #[derive(Debug)]
-pub enum FnArg {
-    KvKey(usize),
-    HttpText,
-}
-
-impl From<FnArgYaml> for FnArg {
-    fn from(yaml: FnArgYaml) -> Self {
-        match yaml {
-            FnArgYaml::KvKey { kv_key } => Self::KvKey(kv_key),
-            FnArgYaml::HttpText { http_text: _ } => Self::HttpText,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct FnMetaYaml {
-    pub event: Vec<FnEventYaml>,
-    // pub input: Option<Vec<FnInputYaml>>,
-    pub args: Vec<FnArgYaml>,
     /// key to operations
+    pub calls: Vec<FnCallMeta>,
     pub kvs: Option<BTreeMap<String, Vec<String>>>,
+}
+
+impl<'de> Deserialize<'de> for FnMetaYaml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut map = serde_yaml::Value::deserialize(deserializer)?;
+        let map = map
+            .as_mapping_mut()
+            .ok_or_else(|| serde::de::Error::custom("not a map"))?;
+        // let calls = map.remove("calls").ok_or_else(|| serde::de::Error::missing_field("calls"))?;
+        let mut calls = vec![];
+        fn parse_http_call<'de, D: Deserializer<'de>>(
+            map: &serde_yaml::Value,
+        ) -> Result<HttpCall, D::Error> {
+            let map = map
+                .as_mapping()
+                .ok_or_else(|| serde::de::Error::custom("not a map"))?;
+            let call = map
+                .get("call")
+                .ok_or_else(|| serde::de::Error::missing_field("call"))?;
+            let call = call
+                .as_str()
+                .ok_or_else(|| serde::de::Error::custom("not a string"))?;
+            let call = if call == "direct" {
+                HttpCall::Direct
+            } else if call == "indirect" {
+                HttpCall::Indirect
+            } else {
+                return Err(serde::de::Error::custom("invalid call type"));
+            };
+            Ok(call)
+        }
+        if let Some(v) = map.get("http.get") {
+            let call = parse_http_call::<D>(v)?;
+            calls.push(FnCallMeta::Http {
+                method: HttpMethod::Get,
+                call,
+            });
+        }
+        if let Some(v) = map.get("http.post") {
+            let call = parse_http_call::<D>(v)?;
+            calls.push(FnCallMeta::Http {
+                method: HttpMethod::Post,
+                call,
+            });
+        }
+        if let Some(_v) = map.get("rpc") {
+            calls.push(FnCallMeta::Rpc);
+        }
+
+        let kvs = map.remove("kvs");
+        let kvs = if let Some(kvs) = kvs {
+            serde_yaml::from_value(kvs).map_err(serde::de::Error::custom)?
+        } else {
+            None
+        };
+
+        tracing::debug!("FnMetaYaml constructed, calls:{:?}", calls);
+        Ok(Self { calls, kvs })
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct KeyPattern(pub String);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KvMeta {
     set: bool,
     get: bool,
@@ -104,38 +175,68 @@ pub struct KvMeta {
     pub pattern: KeyPattern,
 }
 
+#[derive(Debug, Clone)]
 pub struct FnMeta {
-    pub event: Vec<FnEvent>,
-    pub args: Vec<FnArg>,
+    pub calls: Vec<FnCallMeta>,
+    // pub event: Vec<FnEvent>,
+    // pub args: Vec<FnArg>,
     pub kvs: Option<Vec<KvMeta>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct AppMetaYaml {
     pub fns: HashMap<String, FnMetaYaml>,
 }
 
-pub struct AppMetaFunction {
-    fns: HashMap<String, FnMeta>,
+#[derive(Clone)]
+pub enum AppType {
+    Jar,
+    Wasm,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AppMetaService {
-    actions: Vec<Action>,
-    node: NodeID,
-    app_dir: String,
+#[allow(dead_code)]
+pub struct AppMeta {
+    pub app_type: AppType,
+    fns: HashMap<String, FnMeta>,
+    cache_contains_http_fn: Option<bool>,
 }
+
+impl AppMeta {
+    pub fn contains_http_fn(&self) -> bool {
+        if let Some(v) = self.cache_contains_http_fn {
+            return v;
+        }
+        let res = self
+            .fns
+            .iter()
+            .any(|(_, fnmeta)| fnmeta.allow_http_call().is_some());
+        unsafe {
+            let _ = util::non_null(&self.cache_contains_http_fn)
+                .as_mut()
+                .replace(res);
+        }
+        res
+    }
+}
+
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct AppMetaService {
+//     actions: Vec<Action>,
+//     node: NodeID,
+//     app_dir: String,
+// }
 
 pub struct AppMetas {
-    app_metas: HashMap<String, AppMetaFunction>,
+    app_metas: HashMap<String, AppMeta>,
     pattern_2_app_fn: HashMap<String, Vec<(String, String)>>,
 }
 
 #[derive(LogicalModule)]
 pub struct AppMetaManager {
     pub meta: RwLock<AppMetas>,
+    pub fs_layer: AppMetaFs,
     view: View,
-    app_meta_list_lock: Mutex<()>,
+    // app_meta_list_lock: Mutex<()>,
 }
 
 // impl FnEvent {
@@ -151,7 +252,12 @@ impl AppMetaYaml {
     pub fn read(apps_dir: impl AsRef<Path>, appname: &str) -> AppMetaYaml {
         let file_path = apps_dir.as_ref().join(format!("{}/app.yaml", appname));
         let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
-            panic!("open config file failed, err: {:?}", err);
+            tracing::debug!("open config file failed, err: {:?}", err);
+
+            let file_path = apps_dir.as_ref().join(format!("{}/app.yml", appname));
+            std::fs::File::open(file_path).unwrap_or_else(|err| {
+                panic!("open config file failed, err: {:?}", err);
+            })
         });
         serde_yaml::from_reader(file).unwrap_or_else(|e| {
             panic!("parse yaml config file failed, err: {:?}", e);
@@ -171,6 +277,19 @@ impl AppMetaYaml {
 }
 
 impl FnMeta {
+    pub fn allow_rpc_call(&self) -> bool {
+        self.calls.iter().any(|v| match v {
+            FnCallMeta::Rpc => true,
+            _ => false,
+        })
+    }
+    pub fn allow_http_call(&self) -> Option<HttpMethod> {
+        self.calls.iter().find_map(|v| match v {
+            FnCallMeta::Http { method, call: _ } => Some(method.clone()),
+            _ => None,
+        })
+    }
+
     pub fn match_key(&self, key: &[u8], ope: KvOps) -> Option<KeyPattern> {
         let key = if let Ok(key) = std::str::from_utf8(key) {
             key
@@ -213,10 +332,10 @@ impl FnMeta {
         None
     }
 
-    /// index should be valid
-    fn get_kv_meta_by_index_unwrap(&self, index: usize) -> &KvMeta {
-        self.try_get_kv_meta_by_index(index).unwrap()
-    }
+    // / index should be valid
+    // fn get_kv_meta_by_index_unwrap(&self, index: usize) -> &KvMeta {
+    //     self.try_get_kv_meta_by_index(index).unwrap()
+    // }
     // /// get event related kvmeta matches operation
     // pub fn get_event_kv(&self, ope: KvOps, event: &FnEvent) -> Option<&KvMeta> {
     //     match event {
@@ -230,24 +349,25 @@ impl FnMeta {
     //     None
     // }
 
-    /// find kv event trigger with match the `pattern` and `ope`
-    pub fn find_will_trigger_kv_event(&self, pattern: &KeyPattern, ope: KvOps) -> Option<&KvMeta> {
-        self.event.iter().find_map(|event| {
-            match event {
-                FnEvent::HttpApp => {}
-                FnEvent::KvSet(key_index) => {
-                    if ope == KvOps::Set {
-                        let res = self.get_kv_meta_by_index_unwrap(*key_index);
-                        if res.pattern == *pattern {
-                            return Some(res);
-                        }
-                    }
-                }
-                FnEvent::HttpFn => {}
-            }
-            None
-        })
-    }
+    // / find kv event trigger with match the `pattern` and `ope`
+    // pub fn find_will_trigger_kv_event(&self, _pattern: &KeyPattern, _ope: KvOps) -> Option<&KvMeta> {
+    //     unimplemented!()
+    //     // self.event.iter().find_map(|event| {
+    //     //     match event {
+    //     //         FnEvent::HttpApp => {}
+    //     //         FnEvent::KvSet(key_index) => {
+    //     //             if ope == KvOps::Set {
+    //     //                 let res = self.get_kv_meta_by_index_unwrap(*key_index);
+    //     //                 if res.pattern == *pattern {
+    //     //                     return Some(res);
+    //     //                 }
+    //     //             }
+    //     //         }
+    //     //         FnEvent::HttpFn => {}
+    //     //     }
+    //     //     None
+    //     // })
+    // }
 }
 
 impl KeyPattern {
@@ -326,8 +446,7 @@ impl From<FnMetaYaml> for FnMeta {
             None
         };
         let res = Self {
-            event: yaml.event.into_iter().map(|e| e.into()).collect(),
-            args: yaml.args.into_iter().map(|a| a.into()).collect(),
+            calls: yaml.calls,
             kvs,
         };
         // assert!(res.check_kv_valid());
@@ -335,33 +454,49 @@ impl From<FnMetaYaml> for FnMeta {
     }
 }
 
-impl From<AppMetaYaml> for AppMetaFunction {
-    fn from(yaml: AppMetaYaml) -> Self {
-        let fns = yaml
+// impl From<AppMetaYaml> for AppMeta {
+//     fn from(yaml: AppMetaYaml) -> Self {
+//         let fns = yaml
+//             .fns
+//             .into_iter()
+//             .map(|(fnname, fnmeta)| (fnname, fnmeta.into()))
+//             .collect();
+//         Self { fns }
+//     }
+// }
+
+impl AppMeta {
+    pub async fn new(metayaml: AppMetaYaml, app_name: &str, meta_fs: &AppMetaFs) -> Self {
+        let fns = metayaml
             .fns
             .into_iter()
-            .map(|(fnname, fnmeta)| (fnname, fnmeta.into()))
+            .map(|(fnname, fnmeta)| {
+                let fnmeta = fnmeta.into();
+                (fnname, fnmeta)
+            })
             .collect();
-        Self { fns }
+        let app_type = meta_fs.get_app_type(app_name).await.unwrap();
+        Self {
+            app_type,
+            fns,
+            cache_contains_http_fn: None,
+        }
     }
-}
-
-impl AppMetaFunction {
     pub fn fns(&self) -> Vec<String> {
         self.fns.iter().map(|(fnname, _)| fnname.clone()).collect()
     }
     pub fn get_fn_meta(&self, fnname: &str) -> Option<&FnMeta> {
         self.fns.get(fnname)
     }
-    pub fn http_trigger_fn(&self) -> Option<&str> {
-        self.fns.iter().find_map(|(fnname, fnmeta)| {
-            if fnmeta.event.iter().any(|e| e == &FnEvent::HttpApp) {
-                Some(fnname.as_str())
-            } else {
-                None
-            }
-        })
-    }
+    // pub fn http_trigger_fn(&self) -> Option<&str> {
+    //     self.fns.iter().find_map(|(fnname, fnmeta)| {
+    //         if fnmeta.event.iter().any(|e| e == &FnEvent::HttpApp) {
+    //             Some(fnname.as_str())
+    //         } else {
+    //             None
+    //         }
+    //     })
+    // }
 }
 
 #[async_trait]
@@ -370,20 +505,23 @@ impl LogicalModule for AppMetaManager {
     where
         Self: Sized,
     {
+        let view = View::new(args.logical_modules_ref.clone());
+        let fs_layer = AppMetaFs::new(view.clone());
         Self {
             meta: RwLock::new(AppMetas {
                 app_metas: HashMap::new(),
                 pattern_2_app_fn: HashMap::new(),
             }),
-            view: View::new(args.logical_modules_ref.clone()),
-            app_meta_list_lock: Mutex::new(()),
+            view,
+            fs_layer,
+            // app_meta_list_lock: Mutex::new(()),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         self.meta
             .write()
             .await
-            .load_all_app_meta(&self.view.os().file_path)
+            .load_all_app_meta(&self.view.os().file_path, &self.fs_layer)
             .await?;
         Ok(vec![])
     }
@@ -396,7 +534,7 @@ impl AppMetas {
     //         pattern_2_app_fn: HashMap::new(),
     //     }
     // }
-    pub fn get_app_meta(&self, app: &str) -> Option<&AppMetaFunction> {
+    pub fn get_app_meta(&self, app: &str) -> Option<&AppMeta> {
         self.app_metas.get(app)
     }
     pub fn get_pattern_triggers(
@@ -405,7 +543,11 @@ impl AppMetas {
     ) -> Option<&Vec<(String, String)>> {
         self.pattern_2_app_fn.get(pattern.borrow())
     }
-    async fn load_all_app_meta(&mut self, file_dir: impl AsRef<Path>) -> WSResult<()> {
+    async fn load_all_app_meta(
+        &mut self,
+        file_dir: impl AsRef<Path>,
+        meta_fs: &AppMetaFs,
+    ) -> WSResult<()> {
         let entries =
             fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
 
@@ -420,7 +562,7 @@ impl AppMetas {
             assert!(entry.file_type().unwrap().is_dir());
 
             // read app config yaml
-            let res = {
+            let meta_yaml = {
                 let apps_dir = file_dir.as_ref().join("apps");
                 let file_name_str = app_name.clone();
                 tokio::task::spawn_blocking(move || AppMetaYaml::read(apps_dir, &*file_name_str))
@@ -429,26 +571,27 @@ impl AppMetas {
             };
 
             // transform
-            let meta: AppMetaFunction = res.into();
+            let meta = AppMeta::new(meta_yaml, &app_name, meta_fs).await;
 
-            // build and checks
+            //TODO: build and checks
             // - build up key pattern to app fn
-            for (fnname, fnmeta) in &meta.fns {
-                for event in &fnmeta.event {
-                    match event {
-                        // not kv event, no key pattern
-                        FnEvent::HttpFn => {}
-                        FnEvent::HttpApp => {}
-                        FnEvent::KvSet(key_index) => {
-                            let kvmeta = fnmeta.try_get_kv_meta_by_index(*key_index).unwrap();
-                            self.pattern_2_app_fn
-                                .entry(kvmeta.pattern.0.clone())
-                                .or_insert_with(Vec::new)
-                                .push((app_name.clone(), fnname.clone()));
-                        }
-                    }
-                }
-            }
+
+            // for (fnname, fnmeta) in &meta.fns {
+            //     for event in &fnmeta.event {
+            //         match event {
+            //             // not kv event, no key pattern
+            //             FnEvent::HttpFn => {}
+            //             FnEvent::HttpApp => {}
+            //             FnEvent::KvSet(key_index) => {
+            //                 let kvmeta = fnmeta.try_get_kv_meta_by_index(*key_index).unwrap();
+            //                 self.pattern_2_app_fn
+            //                     .entry(kvmeta.pattern.0.clone())
+            //                     .or_insert_with(Vec::new)
+            //                     .push((app_name.clone(), fnname.clone()));
+            //             }
+            //         }
+            //     }
+            // }
             let _ = self.app_metas.insert(app_name, meta);
         }
         Ok(())
@@ -476,180 +619,180 @@ impl AppMetaManager {
         })
     }
 
-    pub fn get_app_meta_basicinfo_list(&self) -> Vec<ServiceBasic> {
-        let apps = self.get_app_meta_list();
-        apps.into_iter()
-            .map(|app| {
-                let service = self.get_app_meta_service(&app).unwrap();
-                ServiceBasic {
-                    name: app,
-                    node: format!("{}", service.node),
-                    dir: service.app_dir,
-                    actions: service.actions,
-                }
-            })
-            .collect()
-    }
+    // pub fn get_app_meta_basicinfo_list(&self) -> Vec<ServiceBasic> {
+    //     let apps = self.get_app_meta_list();
+    //     apps.into_iter()
+    //         .map(|app| {
+    //             let service = self.get_app_meta_service(&app).unwrap();
+    //             ServiceBasic {
+    //                 name: app,
+    //                 node: format!("{}", service.node),
+    //                 dir: service.app_dir,
+    //                 actions: service.actions,
+    //             }
+    //         })
+    //         .collect()
+    // }
 
-    pub fn get_app_meta_service(&self, app_name: &str) -> Option<AppMetaService> {
-        let Some(res) = self
-            .view
-            .kv_store_engine()
-            .get(KeyTypeServiceMeta(app_name.as_bytes()))
-        else {
-            return None;
-        };
-        serde_json::from_slice(&res).map_or_else(
-            |e| {
-                tracing::warn!("parse service meta failed, err: {:?}", e);
-                None
-            },
-            |v| Some(v),
-        )
-    }
+    // pub fn get_app_meta_service(&self, app_name: &str) -> Option<AppMetaService> {
+    //     let Some(res) = self
+    //         .view
+    //         .kv_store_engine()
+    //         .get(KeyTypeServiceMeta(app_name.as_bytes()))
+    //     else {
+    //         return None;
+    //     };
+    //     serde_json::from_slice(&res).map_or_else(
+    //         |e| {
+    //             tracing::warn!("parse service meta failed, err: {:?}", e);
+    //             None
+    //         },
+    //         |v| Some(v),
+    //     )
+    // }
 
-    pub fn set_app_meta_service(&self, app_name: &str, service: AppMetaService) {
-        self.view.kv_store_engine().set(
-            KeyTypeServiceMeta(app_name.as_bytes()),
-            &serde_json::to_string(&service).unwrap().into(),
-        );
-    }
+    // pub fn set_app_meta_service(&self, app_name: &str, service: AppMetaService) {
+    //     self.view.kv_store_engine().set(
+    //         KeyTypeServiceMeta(app_name.as_bytes()),
+    //         &serde_json::to_string(&service).unwrap().into(),
+    //     );
+    // }
 
-    // node id is valid before call this function
-    pub async fn add_service(&self, req: AddServiceReq) -> AddServiceResp {
-        // // check conflict service
-        // if self.get_app_meta_service(&req.service.name).is_some() {
-        //     return AddServiceResp::Fail {
-        //         msg: format!("service {} already exist", req.service.name),
-        //     };
-        // }
+    // // node id is valid before call this function
+    // pub async fn add_service(&self, req: AddServiceReq) -> AddServiceResp {
+    //     // // check conflict service
+    //     // if self.get_app_meta_service(&req.service.name).is_some() {
+    //     //     return AddServiceResp::Fail {
+    //     //         msg: format!("service {} already exist", req.service.name),
+    //     //     };
+    //     // }
 
-        // get the target node
-        let Ok(nodeid) = req.service.node.parse::<NodeID>() else {
-            return AddServiceResp::Fail {
-                msg: "node id should be number".to_owned(),
-            };
-        };
-        if !self.view.p2p().nodes_config.node_exist(nodeid) {
-            return AddServiceResp::Fail {
-                msg: format!("node {nodeid} not exist"),
-            };
-        }
+    //     // get the target node
+    //     let Ok(nodeid) = req.service.node.parse::<NodeID>() else {
+    //         return AddServiceResp::Fail {
+    //             msg: "node id should be number".to_owned(),
+    //         };
+    //     };
+    //     if !self.view.p2p().nodes_config.node_exist(nodeid) {
+    //         return AddServiceResp::Fail {
+    //             msg: format!("node {nodeid} not exist"),
+    //         };
+    //     }
 
-        // call and return if rpc failed
-        let res = match self
-            .view
-            .os()
-            .remote_get_dir_content_caller
-            .call(
-                self.view.p2p(),
-                nodeid,
-                GetDirContentReq {
-                    path: req.service.dir.clone(),
-                },
-                None,
-            )
-            .await
-        {
-            Ok(res) => res,
-            Err(e) => {
-                return AddServiceResp::Fail {
-                    msg: format!("call remote_get_dir_content_caller failed, err: {:?}", e),
-                };
-            }
-        };
+    //     // call and return if rpc failed
+    //     let res = match self
+    //         .view
+    //         .os()
+    //         .remote_get_dir_content_caller
+    //         .call(
+    //             self.view.p2p(),
+    //             nodeid,
+    //             GetDirContentReq {
+    //                 path: req.service.dir.clone(),
+    //             },
+    //             None,
+    //         )
+    //         .await
+    //     {
+    //         Ok(res) => res,
+    //         Err(e) => {
+    //             return AddServiceResp::Fail {
+    //                 msg: format!("call remote_get_dir_content_caller failed, err: {:?}", e),
+    //             };
+    //         }
+    //     };
 
-        // return if remote failed
-        let _res = match res.dispatch.unwrap() {
-            super::network::proto::remote_sys::get_dir_content_resp::Dispatch::Fail(fail) => {
-                return AddServiceResp::Fail { msg: fail.error };
-            }
-            super::network::proto::remote_sys::get_dir_content_resp::Dispatch::Ok(res) => res,
-        };
+    //     // return if remote failed
+    //     let _res = match res.dispatch.unwrap() {
+    //         super::network::proto::remote_sys::get_dir_content_resp::Dispatch::Fail(fail) => {
+    //             return AddServiceResp::Fail { msg: fail.error };
+    //         }
+    //         super::network::proto::remote_sys::get_dir_content_resp::Dispatch::Ok(res) => res,
+    //     };
 
-        // add to appmeta list
-        {
-            let _mu = self.app_meta_list_lock.lock();
-            let mut appmeta_list = self.get_app_meta_list();
-            appmeta_list.push(req.service.name.clone());
-            let mut dup = HashSet::new();
-            let appmeta_list = appmeta_list
-                .into_iter()
-                .filter(|v| dup.insert(v.clone()))
-                .collect();
-            self.set_app_meta_list(appmeta_list);
-            self.set_app_meta_service(
-                &req.service.name,
-                AppMetaService {
-                    actions: req.service.actions,
-                    node: nodeid,
-                    app_dir: req.service.dir,
-                },
-            );
-        }
-        AddServiceResp::Succ {}
-    }
-    pub async fn run_service_action(&self, req: RunServiceActionReq) -> RunServiceActionResp {
-        if !req.sync {
-            return RunServiceActionResp::Fail {
-                msg: "unsuppot async mode".to_owned(),
-            };
-        }
+    //     // add to appmeta list
+    //     {
+    //         let _mu = self.app_meta_list_lock.lock();
+    //         let mut appmeta_list = self.get_app_meta_list();
+    //         appmeta_list.push(req.service.name.clone());
+    //         let mut dup = HashSet::new();
+    //         let appmeta_list = appmeta_list
+    //             .into_iter()
+    //             .filter(|v| dup.insert(v.clone()))
+    //             .collect();
+    //         self.set_app_meta_list(appmeta_list);
+    //         self.set_app_meta_service(
+    //             &req.service.name,
+    //             AppMetaService {
+    //                 actions: req.service.actions,
+    //                 node: nodeid,
+    //                 app_dir: req.service.dir,
+    //             },
+    //         );
+    //     }
+    //     AddServiceResp::Succ {}
+    // }
+    // pub async fn run_service_action(&self, req: RunServiceActionReq) -> RunServiceActionResp {
+    //     if !req.sync {
+    //         return RunServiceActionResp::Fail {
+    //             msg: "unsuppot async mode".to_owned(),
+    //         };
+    //     }
 
-        // sync logic
-        // check service and action
-        let service = match self.get_app_meta_service(&req.service) {
-            Some(service) => service,
-            None => {
-                return RunServiceActionResp::Fail {
-                    msg: format!("service {} not exist", req.service),
-                };
-            }
-        };
+    //     // sync logic
+    //     // check service and action
+    //     let service = match self.get_app_meta_service(&req.service) {
+    //         Some(service) => service,
+    //         None => {
+    //             return RunServiceActionResp::Fail {
+    //                 msg: format!("service {} not exist", req.service),
+    //             };
+    //         }
+    //     };
 
-        // check action valid
-        let Some(action) = service.actions.iter().find(|v| v.cmd == req.action_cmd) else {
-            return RunServiceActionResp::Fail {
-                msg: format!("action {} not exist", req.action_cmd),
-            };
-        };
+    //     // check action valid
+    //     let Some(action) = service.actions.iter().find(|v| v.cmd == req.action_cmd) else {
+    //         return RunServiceActionResp::Fail {
+    //             msg: format!("action {} not exist", req.action_cmd),
+    //         };
+    //     };
 
-        // handle rpc fail
-        let res = match self
-            .view
-            .os()
-            .remote_run_cmd_caller
-            .call(
-                self.view.p2p(),
-                service.node,
-                RunCmdReq {
-                    cmd: action.cmd.clone(),
-                    workdir: service.app_dir,
-                },
-                Some(Duration::from_secs(10)),
-            )
-            .await
-        {
-            Ok(res) => res,
-            Err(err) => {
-                return RunServiceActionResp::Fail {
-                    msg: format!("call remote_run_cmd_caller failed, err: {:?}", err),
-                };
-            }
-        };
+    //     // handle rpc fail
+    //     let res = match self
+    //         .view
+    //         .os()
+    //         .remote_run_cmd_caller
+    //         .call(
+    //             self.view.p2p(),
+    //             service.node,
+    //             RunCmdReq {
+    //                 cmd: action.cmd.clone(),
+    //                 workdir: service.app_dir,
+    //             },
+    //             Some(Duration::from_secs(10)),
+    //         )
+    //         .await
+    //     {
+    //         Ok(res) => res,
+    //         Err(err) => {
+    //             return RunServiceActionResp::Fail {
+    //                 msg: format!("call remote_run_cmd_caller failed, err: {:?}", err),
+    //             };
+    //         }
+    //     };
 
-        // handle cmd fail
-        let res = match res.dispatch.unwrap() {
-            super::network::proto::remote_sys::run_cmd_resp::Dispatch::Ok(res) => res,
-            super::network::proto::remote_sys::run_cmd_resp::Dispatch::Err(err) => {
-                return RunServiceActionResp::Fail {
-                    msg: format!("remote run cmd failed: {}", err.error),
-                }
-            }
-        };
+    //     // handle cmd fail
+    //     let res = match res.dispatch.unwrap() {
+    //         super::network::proto::remote_sys::run_cmd_resp::Dispatch::Ok(res) => res,
+    //         super::network::proto::remote_sys::run_cmd_resp::Dispatch::Err(err) => {
+    //             return RunServiceActionResp::Fail {
+    //                 msg: format!("remote run cmd failed: {}", err.error),
+    //             }
+    //         }
+    //     };
 
-        RunServiceActionResp::Succ { output: res.output }
-    }
+    //     RunServiceActionResp::Succ { output: res.output }
+    // }
 }
 
 #[cfg(test)]

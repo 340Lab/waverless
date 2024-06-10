@@ -25,6 +25,7 @@ pub mod worker;
 pub mod apis;
 pub mod cmd_arg;
 pub mod config;
+pub mod modules_global_bridge;
 pub mod result;
 pub mod sys;
 pub mod util;
