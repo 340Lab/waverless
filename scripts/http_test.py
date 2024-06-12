@@ -13,13 +13,16 @@ import threading
 GATEWAY='http://127.0.0.1:2601'
 
 # FUNC='fn2/fn2'
-FUNC='stock-mng/createUser'
+
 # APP='longchain'
 # APP='word_count'
 
 def run_one():
     ms = time.time()*1000.0
-    res = requests.post(f'{GATEWAY}/{FUNC}')
+    
+    # res = requests.post(f'{GATEWAY}/fn2/fn2')
+    res = requests.post(f'{GATEWAY}/stock-mng/createUser', json={
+        "userName": "test"})
 
     ms_ret = time.time()*1000.0
     print(res, ms_ret-ms,res.text)

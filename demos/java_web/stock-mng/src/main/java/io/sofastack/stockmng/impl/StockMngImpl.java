@@ -3,6 +3,8 @@ package io.sofastack.stockmng.impl;
 import io.sofastack.stockmng.facade.StockMngFacade;
 import io.sofastack.stockmng.mapper.StockMngMapper;
 import io.sofastack.stockmng.model.ProductInfo;
+import io.sofastack.stockmng.model.Success;
+
 import javax.annotation.Resource;
 import java.math.BigDecimal;
 import java.util.List;
@@ -52,6 +54,13 @@ public class StockMngImpl implements StockMngFacade {
     @PostConstruct
     public void init() {
         rpcHandleOwner.register((StockMngFacade) this);
+    }
+
+    @Override
+    public Success createUser(String userName) {
+        Success success = new Success();
+        success.setSuccess("true");
+        return success;
     }
 
     @Override

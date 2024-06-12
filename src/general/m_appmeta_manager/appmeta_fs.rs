@@ -13,6 +13,12 @@ impl AppMetaFs {
         Self { view }
     }
 
+    pub fn crac_file_path(&self) -> String {
+        let sys_dir = &self.view.os().file_path;
+        let app_dir = Path::new(sys_dir).join("apps").join("crac_config");
+        (*app_dir.as_os_str().to_string_lossy()).to_owned()
+    }
+
     pub fn concat_app_dir(&self, app: &str) -> PathBuf {
         let sys_dir = &self.view.os().file_path;
         let app_dir = Path::new(sys_dir).join("apps").join(app);

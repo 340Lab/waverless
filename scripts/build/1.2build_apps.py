@@ -140,6 +140,15 @@ print_title(f"pack demos {DEMOS}")
 
 os_system_sure("rm -rf pack/apps")
 os_system_sure("mkdir -p pack/apps")
+
+# crac_config
+with open(f"pack/apps/crac_config", "w") as f:
+    f.write("""type: FILE
+action: ignore
+---
+type: SOCKET
+action: close""")
+
 for app in DEMOS:
     os.chdir(CUR_FDIR)
     pack_demo(app)

@@ -1,6 +1,8 @@
 package io.sofastack.stockmng.facade;
 
 import io.sofastack.stockmng.model.ProductInfo;
+import io.sofastack.stockmng.model.Success;
+
 import org.apache.ibatis.annotations.Param;
 
 import java.math.BigDecimal;
@@ -11,6 +13,8 @@ import java.util.List;
  * @since 2019/6/10
  */
 public interface StockMngFacade {
+    Success createUser(String userName);
+
     /**
      * 查询商品信息
      *

@@ -72,7 +72,7 @@ public class RpcHandle<T> {
 
     // protected abstract Object rpcDispatch(String func, Object requestObj);
 
-    public ByteBuf handleRpc(String func, ByteBuf req) {
+    public String handleRpc(String func, String argStr) {
         // Get meta
         RpcFuncMeta rpcFunc = handleMeta.get(func);
         if (rpcFunc == null) {
@@ -82,10 +82,7 @@ public class RpcHandle<T> {
         // Deserialize request
         Object[] params;
         try {
-            byte[] reqBytes = new byte[req.readableBytes()];
-            req.readBytes(reqBytes);
-            String reqJson = new String(reqBytes);
-            JsonObject jsonObject = gson.fromJson(reqJson, JsonObject.class);
+            JsonObject jsonObject = gson.fromJson(argStr, JsonObject.class);
 
             // Extract parameters from JSON and convert to appropriate types
             Map<String, Class<?>> paramMeta = rpcFunc.getParameters();
@@ -109,16 +106,16 @@ public class RpcHandle<T> {
             throw new RuntimeException("Failed to invoke method", e);
         }
 
-        // Serialize response
-        ByteBuf responseBuf;
-        try {
-            String respJson = gson.toJson(responseObj);
-            byte[] respBytes = respJson.getBytes();
-            responseBuf = Unpooled.wrappedBuffer(respBytes);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize response", e);
-        }
+        // // Serialize response
+        // ByteBuf responseBuf;
+        // try {
+        // String respJson = gson.toJson(responseObj);
+        // byte[] respBytes = respJson.getBytes();
+        // responseBuf = Unpooled.wrappedBuffer(respBytes);
+        // } catch (Exception e) {
+        // throw new RuntimeException("Failed to serialize response", e);
+        // }
 
-        return responseBuf;
+        return gson.toJson(responseObj);
     }
 }
