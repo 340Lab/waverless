@@ -61,6 +61,11 @@
                 <artifactId>protobuf-java</artifactId>
                 <version>3.21.0</version>
             </dependency>
+            <dependency>
+                <groupId>org.crac</groupId>
+                <artifactId>crac</artifactId>
+                <version>1.4.0</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

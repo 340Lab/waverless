@@ -7,6 +7,7 @@ stock-mng:
     http.post: {call: direct}
   createUser:         
     http.post: {call: direct}
+    rpc:
   queryBalance:         
     http.post: {call: direct}
   StockMngFacade.query:

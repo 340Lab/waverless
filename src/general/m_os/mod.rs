@@ -23,9 +23,11 @@ use std::{
     io::{Read, Seek, Write},
     os::fd::AsRawFd,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
+    time::SystemTime,
 };
+use tokio::process::{self, Command};
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(OperatingSystemView);
@@ -100,34 +102,60 @@ impl LogicalModule for OperatingSystem {
 
 pub enum OsProcessType {
     JavaApp(String),
+    JavaCheckpoints(String),
 }
 
 impl OperatingSystem {
-    pub fn start_process(&self, p: OsProcessType) {
+    pub fn start_process(&self, p: OsProcessType) -> process::Child {
         let (mut binding, log_file) = match p {
             OsProcessType::JavaApp(app) => {
+                // let crac_config_path = self.view.appmeta_manager().fs_layer.crac_file_path();
                 let appdir = self.view.appmeta_manager().fs_layer.concat_app_dir(&app);
                 // 打开或创建日志文件
-                let log_file_path = appdir.join("app.log");
+                let log_file_path = appdir.join(format!("app{:?}.log", SystemTime::now()));
                 // 打开或创建日志文件
                 let log_file = File::create(log_file_path).expect("Failed to create log file");
 
-                let mut binding = Command::new("java");
+                // check dir contains checkpoint-dir
+                if std::fs::read_dir(appdir.join("checkpoint-dir")).is_ok() {
+                    tracing::debug!("start process with checkpoint");
+                    let mut binding = Command::new("java");
+                    let _ = binding
+                        // .arg("-Djava.net.preferIPv4Stack=true")
+                        .arg("-XX:CRaCRestoreFrom=checkpoint-dir")
+                        .current_dir(appdir);
+                    (binding, log_file)
+                } else {
+                    tracing::debug!("start process without checkpoint");
+
+                    let mut binding = Command::new("java");
+                    let _ = binding
+                        // .arg("-Djava.net.preferIPv4Stack=true")
+                        .arg(format!("-Djdk.crac.resource-policies=../crac_config"))
+                        .arg("-XX:CRaCCheckpointTo=checkpoint-dir")
+                        .arg("-jar")
+                        .arg("app.jar")
+                        .arg("--agentSock=../../agent.sock")
+                        .current_dir(appdir);
+                    (binding, log_file)
+                }
+            }
+            OsProcessType::JavaCheckpoints(app) => {
+                let appdir = self.view.appmeta_manager().fs_layer.concat_app_dir(&app);
+                // 打开或创建日志文件
+                let log_file_path = appdir.join("checkpoint.log");
+                // 打开或创建日志文件
+                let log_file = File::create(log_file_path).expect("Failed to create log file");
+
+                let mut binding = Command::new("jcmd");
                 let _ = binding
-                    .arg("-Djava.net.preferIPv4Stack=true")
-                    .arg("-jar")
-                    .arg(
-                        self.view
-                            .appmeta_manager()
-                            .fs_layer
-                            .concat_app_dir(&app)
-                            .join("app.jar"),
-                    )
-                    .arg("--agentSock=agent.sock");
+                    .arg("app.jar")
+                    .arg("JDK.checkpoint")
+                    .current_dir(appdir);
                 (binding, log_file)
             }
         };
-        let _ = binding
+        binding
             .stdout(Stdio::from(
                 log_file.try_clone().expect("Failed to clone log file"),
             )) // 重定向stdout到日志文件
@@ -139,7 +167,7 @@ impl OperatingSystem {
             //     std::process::Stdio::piped(),
             // )
             .spawn()
-            .expect("Failed to start child process");
+            .expect("Failed to start child process")
     }
 
     // pub async fn run_cmd_local(&self, cmd: OsCmd) {}

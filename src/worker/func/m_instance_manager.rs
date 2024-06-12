@@ -1,10 +1,9 @@
 use super::shared::process_rpc::ProcessRpc;
 use super::{owned::wasm, shared::SharedInstance, FnExeCtx, Instance, OwnedInstance};
 use crate::general::m_os::OperatingSystem;
-use crate::general::network::rpc_model::RpcCustom;
+use crate::general::network::rpc_model;
 use crate::logical_module_view_impl;
 use crate::sys::LogicalModulesRef;
-use crate::worker::func::shared::process::InstanceManagerProcessTrait;
 use crate::{
     general::m_appmeta_manager::AppType, // worker::host_funcs,
     result::WSResult,
@@ -207,7 +206,14 @@ impl LogicalModule for InstanceManager {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        Ok(vec![ProcessRpc::spawn().into()])
+        Ok(vec![rpc_model::spawn::<ProcessRpc>(
+            self.file_dir
+                .join("agent.sock")
+                .to_str()
+                .unwrap()
+                .to_string(),
+        )
+        .into()])
     }
 }
 

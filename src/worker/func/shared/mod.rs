@@ -4,6 +4,7 @@ use super::InstanceTrait;
 
 pub mod java;
 pub mod process;
+pub mod process_instance_man_related;
 pub mod process_rpc;
 
 pub struct SharedInstance(pub process::ProcessInstance);

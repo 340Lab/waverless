@@ -9,7 +9,7 @@ use crate::{
     },
     result::WSResult,
     sys::LogicalModulesRef,
-    worker::func::shared::process_rpc::proc_proto::FuncStarted,
+    worker::func::shared::process_rpc::proc_proto::AppStarted,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -21,7 +21,7 @@ use self::proc_proto::{FuncCallReq, FuncCallResp};
 
 use super::SharedInstance;
 
-const AGENT_SOCK_PATH: &str = "agent.sock";
+// const AGENT_SOCK_PATH: &str = "agent.sock";
 
 fn clean_sock_file(path: impl AsRef<Path>) {
     let _ = std::fs::remove_file(path);
@@ -30,15 +30,16 @@ fn clean_sock_file(path: impl AsRef<Path>) {
 pub struct ProcessRpc;
 
 lazy_static::lazy_static! {
-    static ref WATING_VERIFY: Mutex<HashMap<String, Vec<oneshot::Sender<FuncStarted>>>>=Mutex::new(HashMap::new());
+    static ref WATING_VERIFY: Mutex<HashMap<String, Vec<oneshot::Sender<AppStarted>>>>=Mutex::new(HashMap::new());
     static ref MODULES: Option<LogicalModulesRef>=None;
 }
 
 #[async_trait]
 impl RpcCustom for ProcessRpc {
-    fn bind() -> tokio::net::UnixListener {
-        clean_sock_file(AGENT_SOCK_PATH);
-        tokio::net::UnixListener::bind(AGENT_SOCK_PATH).unwrap()
+    type SpawnArgs = String;
+    fn bind(a: String) -> tokio::net::UnixListener {
+        clean_sock_file(&a);
+        tokio::net::UnixListener::bind(&a).unwrap()
     }
     // fn deserialize(id: u16, buf: &[u8]) {
     //     let res = match id {
@@ -53,8 +54,8 @@ impl RpcCustom for ProcessRpc {
     // }
 
     async fn verify(buf: &[u8]) -> Option<HashValue> {
-        let res = proc_proto::FuncStarted::decode(buf);
-        let res: proc_proto::FuncStarted = match res {
+        let res = proc_proto::AppStarted::decode(buf);
+        let res: proc_proto::AppStarted = match res {
             Ok(res) => res,
             Err(_) => {
                 return None;
@@ -65,7 +66,7 @@ impl RpcCustom for ProcessRpc {
             let appman = ProcessRpc::global_m_app_meta_manager();
             let ishttp = {
                 let appmanmetas = appman.meta.read().await;
-                let Some(app) = appmanmetas.get_app_meta(&res.fnid) else {
+                let Some(app) = appmanmetas.get_app_meta(&res.appid) else {
                     tracing::warn!("app not found, invalid verify !");
                     return None;
                 };
@@ -81,11 +82,11 @@ impl RpcCustom for ProcessRpc {
 
             // update to the instance
             let insman = ProcessRpc::global_m_instance_manager().unwrap();
-            let fins = insman
+            let instance = insman
                 .app_instances
-                .get(&res.fnid)
+                .get(&res.appid)
                 .expect("instance should be inited before get the verify");
-            let Some(s): Option<&SharedInstance> = fins.value().as_shared() else {
+            let Some(s): Option<&SharedInstance> = instance.value().as_shared() else {
                 tracing::warn!("only receive the verify from the instance that is shared");
                 return None;
             };
@@ -94,11 +95,40 @@ impl RpcCustom for ProcessRpc {
             }
         }
 
-        Some(HashValue::Str(res.fnid))
+        Some(HashValue::Str(res.appid))
+    }
+
+    fn handle_remote_call(conn: &HashValue, id: u8, buf: &[u8]) -> bool {
+        tracing::debug!("handle_remote_call: id: {}", id);
+        let _ = match id {
+            4 => (),
+            id => {
+                tracing::warn!("handle_remote_call: unsupported id: {}", id);
+                return false;
+            }
+        };
+        let err = match id {
+            4 => match proc_proto::UpdateCheckpoint::decode(buf) {
+                Ok(_req) => {
+                    let conn = conn.clone();
+                    let _ = tokio::spawn(async move {
+                        unsafe {
+                            let ins_man = ProcessRpc::global_m_instance_manager().unwrap();
+                            ins_man.update_checkpoint(conn.as_str().unwrap()).await;
+                        }
+                    });
+                    return true;
+                }
+                Err(e) => e,
+            },
+            _ => unreachable!(),
+        };
+        tracing::warn!("handle_remote_call error: {:?}", err);
+        true
     }
 }
 
-impl MsgIdBind for proc_proto::FuncStarted {
+impl MsgIdBind for proc_proto::AppStarted {
     fn id() -> u16 {
         1
     }

@@ -14,23 +14,23 @@ public final class ProcessRpcProto {
     registerAllExtensions(
         (com.google.protobuf.ExtensionRegistryLite) registry);
   }
-  public interface FuncStartedOrBuilder extends
-      // @@protoc_insertion_point(interface_extends:process_rpc_proto.FuncStarted)
+  public interface AppStartedOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:process_rpc_proto.AppStarted)
       com.google.protobuf.MessageOrBuilder {
 
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
-    boolean hasFnid();
+    boolean hasAppid();
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
-    java.lang.String getFnid();
+    java.lang.String getAppid();
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
     com.google.protobuf.ByteString
-        getFnidBytes();
+        getAppidBytes();
 
     /**
      * <code>optional string http_port = 2;</code>
@@ -51,18 +51,18 @@ public final class ProcessRpcProto {
    * Sample message.
    * </pre>
    *
-   * Protobuf type {@code process_rpc_proto.FuncStarted}
+   * Protobuf type {@code process_rpc_proto.AppStarted}
    */
-  public  static final class FuncStarted extends
+  public  static final class AppStarted extends
       com.google.protobuf.GeneratedMessageV3 implements
-      // @@protoc_insertion_point(message_implements:process_rpc_proto.FuncStarted)
-      FuncStartedOrBuilder {
-    // Use FuncStarted.newBuilder() to construct.
-    private FuncStarted(com.google.protobuf.GeneratedMessageV3.Builder<?> builder) {
+      // @@protoc_insertion_point(message_implements:process_rpc_proto.AppStarted)
+      AppStartedOrBuilder {
+    // Use AppStarted.newBuilder() to construct.
+    private AppStarted(com.google.protobuf.GeneratedMessageV3.Builder<?> builder) {
       super(builder);
     }
-    private FuncStarted() {
-      fnid_ = "";
+    private AppStarted() {
+      appid_ = "";
       httpPort_ = "";
     }
 
@@ -71,7 +71,7 @@ public final class ProcessRpcProto {
     getUnknownFields() {
       return this.unknownFields;
     }
-    private FuncStarted(
+    private AppStarted(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
@@ -97,7 +97,7 @@ public final class ProcessRpcProto {
             case 10: {
               com.google.protobuf.ByteString bs = input.readBytes();
               bitField0_ |= 0x00000001;
-              fnid_ = bs;
+              appid_ = bs;
               break;
             }
             case 18: {
@@ -120,30 +120,30 @@ public final class ProcessRpcProto {
     }
     public static final com.google.protobuf.Descriptors.Descriptor
         getDescriptor() {
-      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_FuncStarted_descriptor;
+      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_AppStarted_descriptor;
     }
 
     protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
         internalGetFieldAccessorTable() {
-      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_FuncStarted_fieldAccessorTable
+      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_AppStarted_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
-              process_rpc_proto.ProcessRpcProto.FuncStarted.class, process_rpc_proto.ProcessRpcProto.FuncStarted.Builder.class);
+              process_rpc_proto.ProcessRpcProto.AppStarted.class, process_rpc_proto.ProcessRpcProto.AppStarted.Builder.class);
     }
 
     private int bitField0_;
-    public static final int FNID_FIELD_NUMBER = 1;
-    private volatile java.lang.Object fnid_;
+    public static final int APPID_FIELD_NUMBER = 1;
+    private volatile java.lang.Object appid_;
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
-    public boolean hasFnid() {
+    public boolean hasAppid() {
       return ((bitField0_ & 0x00000001) == 0x00000001);
     }
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
-    public java.lang.String getFnid() {
-      java.lang.Object ref = fnid_;
+    public java.lang.String getAppid() {
+      java.lang.Object ref = appid_;
       if (ref instanceof java.lang.String) {
         return (java.lang.String) ref;
       } else {
@@ -151,22 +151,22 @@ public final class ProcessRpcProto {
             (com.google.protobuf.ByteString) ref;
         java.lang.String s = bs.toStringUtf8();
         if (bs.isValidUtf8()) {
-          fnid_ = s;
+          appid_ = s;
         }
         return s;
       }
     }
     /**
-     * <code>required string fnid = 1;</code>
+     * <code>required string appid = 1;</code>
      */
     public com.google.protobuf.ByteString
-        getFnidBytes() {
-      java.lang.Object ref = fnid_;
+        getAppidBytes() {
+      java.lang.Object ref = appid_;
       if (ref instanceof java.lang.String) {
         com.google.protobuf.ByteString b = 
             com.google.protobuf.ByteString.copyFromUtf8(
                 (java.lang.String) ref);
-        fnid_ = b;
+        appid_ = b;
         return b;
       } else {
         return (com.google.protobuf.ByteString) ref;
@@ -221,7 +221,7 @@ public final class ProcessRpcProto {
       if (isInitialized == 1) return true;
       if (isInitialized == 0) return false;
 
-      if (!hasFnid()) {
+      if (!hasAppid()) {
         memoizedIsInitialized = 0;
         return false;
       }
@@ -232,7 +232,7 @@ public final class ProcessRpcProto {
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
       if (((bitField0_ & 0x00000001) == 0x00000001)) {
-        com.google.protobuf.GeneratedMessageV3.writeString(output, 1, fnid_);
+        com.google.protobuf.GeneratedMessageV3.writeString(output, 1, appid_);
       }
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         com.google.protobuf.GeneratedMessageV3.writeString(output, 2, httpPort_);
@@ -246,7 +246,7 @@ public final class ProcessRpcProto {
 
       size = 0;
       if (((bitField0_ & 0x00000001) == 0x00000001)) {
-        size += com.google.protobuf.GeneratedMessageV3.computeStringSize(1, fnid_);
+        size += com.google.protobuf.GeneratedMessageV3.computeStringSize(1, appid_);
       }
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         size += com.google.protobuf.GeneratedMessageV3.computeStringSize(2, httpPort_);
@@ -262,16 +262,16 @@ public final class ProcessRpcProto {
       if (obj == this) {
        return true;
       }
-      if (!(obj instanceof process_rpc_proto.ProcessRpcProto.FuncStarted)) {
+      if (!(obj instanceof process_rpc_proto.ProcessRpcProto.AppStarted)) {
         return super.equals(obj);
       }
-      process_rpc_proto.ProcessRpcProto.FuncStarted other = (process_rpc_proto.ProcessRpcProto.FuncStarted) obj;
+      process_rpc_proto.ProcessRpcProto.AppStarted other = (process_rpc_proto.ProcessRpcProto.AppStarted) obj;
 
       boolean result = true;
-      result = result && (hasFnid() == other.hasFnid());
-      if (hasFnid()) {
-        result = result && getFnid()
-            .equals(other.getFnid());
+      result = result && (hasAppid() == other.hasAppid());
+      if (hasAppid()) {
+        result = result && getAppid()
+            .equals(other.getAppid());
       }
       result = result && (hasHttpPort() == other.hasHttpPort());
       if (hasHttpPort()) {
@@ -289,9 +289,9 @@ public final class ProcessRpcProto {
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptorForType().hashCode();
-      if (hasFnid()) {
-        hash = (37 * hash) + FNID_FIELD_NUMBER;
-        hash = (53 * hash) + getFnid().hashCode();
+      if (hasAppid()) {
+        hash = (37 * hash) + APPID_FIELD_NUMBER;
+        hash = (53 * hash) + getAppid().hashCode();
       }
       if (hasHttpPort()) {
         hash = (37 * hash) + HTTP_PORT_FIELD_NUMBER;
@@ -302,58 +302,58 @@ public final class ProcessRpcProto {
       return hash;
     }
 
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(byte[] data)
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
       return PARSER.parseFrom(data, extensionRegistry);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(java.io.InputStream input)
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessageV3
           .parseWithIOException(PARSER, input);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessageV3
           .parseWithIOException(PARSER, input, extensionRegistry);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseDelimitedFrom(java.io.InputStream input)
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessageV3
           .parseDelimitedWithIOException(PARSER, input);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseDelimitedFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessageV3
           .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
       return com.google.protobuf.GeneratedMessageV3
           .parseWithIOException(PARSER, input);
     }
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted parseFrom(
+    public static process_rpc_proto.ProcessRpcProto.AppStarted parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
@@ -365,7 +365,7 @@ public final class ProcessRpcProto {
     public static Builder newBuilder() {
       return DEFAULT_INSTANCE.toBuilder();
     }
-    public static Builder newBuilder(process_rpc_proto.ProcessRpcProto.FuncStarted prototype) {
+    public static Builder newBuilder(process_rpc_proto.ProcessRpcProto.AppStarted prototype) {
       return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
     }
     public Builder toBuilder() {
@@ -384,25 +384,25 @@ public final class ProcessRpcProto {
      * Sample message.
      * </pre>
      *
-     * Protobuf type {@code process_rpc_proto.FuncStarted}
+     * Protobuf type {@code process_rpc_proto.AppStarted}
      */
     public static final class Builder extends
         com.google.protobuf.GeneratedMessageV3.Builder<Builder> implements
-        // @@protoc_insertion_point(builder_implements:process_rpc_proto.FuncStarted)
-        process_rpc_proto.ProcessRpcProto.FuncStartedOrBuilder {
+        // @@protoc_insertion_point(builder_implements:process_rpc_proto.AppStarted)
+        process_rpc_proto.ProcessRpcProto.AppStartedOrBuilder {
       public static final com.google.protobuf.Descriptors.Descriptor
           getDescriptor() {
-        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_FuncStarted_descriptor;
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_AppStarted_descriptor;
       }
 
       protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
           internalGetFieldAccessorTable() {
-        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_FuncStarted_fieldAccessorTable
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_AppStarted_fieldAccessorTable
             .ensureFieldAccessorsInitialized(
-                process_rpc_proto.ProcessRpcProto.FuncStarted.class, process_rpc_proto.ProcessRpcProto.FuncStarted.Builder.class);
+                process_rpc_proto.ProcessRpcProto.AppStarted.class, process_rpc_proto.ProcessRpcProto.AppStarted.Builder.class);
       }
 
-      // Construct using process_rpc_proto.ProcessRpcProto.FuncStarted.newBuilder()
+      // Construct using process_rpc_proto.ProcessRpcProto.AppStarted.newBuilder()
       private Builder() {
         maybeForceBuilderInitialization();
       }
@@ -419,7 +419,7 @@ public final class ProcessRpcProto {
       }
       public Builder clear() {
         super.clear();
-        fnid_ = "";
+        appid_ = "";
         bitField0_ = (bitField0_ & ~0x00000001);
         httpPort_ = "";
         bitField0_ = (bitField0_ & ~0x00000002);
@@ -428,29 +428,29 @@ public final class ProcessRpcProto {
 
       public com.google.protobuf.Descriptors.Descriptor
           getDescriptorForType() {
-        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_FuncStarted_descriptor;
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_AppStarted_descriptor;
       }
 
-      public process_rpc_proto.ProcessRpcProto.FuncStarted getDefaultInstanceForType() {
-        return process_rpc_proto.ProcessRpcProto.FuncStarted.getDefaultInstance();
+      public process_rpc_proto.ProcessRpcProto.AppStarted getDefaultInstanceForType() {
+        return process_rpc_proto.ProcessRpcProto.AppStarted.getDefaultInstance();
       }
 
-      public process_rpc_proto.ProcessRpcProto.FuncStarted build() {
-        process_rpc_proto.ProcessRpcProto.FuncStarted result = buildPartial();
+      public process_rpc_proto.ProcessRpcProto.AppStarted build() {
+        process_rpc_proto.ProcessRpcProto.AppStarted result = buildPartial();
         if (!result.isInitialized()) {
           throw newUninitializedMessageException(result);
         }
         return result;
       }
 
-      public process_rpc_proto.ProcessRpcProto.FuncStarted buildPartial() {
-        process_rpc_proto.ProcessRpcProto.FuncStarted result = new process_rpc_proto.ProcessRpcProto.FuncStarted(this);
+      public process_rpc_proto.ProcessRpcProto.AppStarted buildPartial() {
+        process_rpc_proto.ProcessRpcProto.AppStarted result = new process_rpc_proto.ProcessRpcProto.AppStarted(this);
         int from_bitField0_ = bitField0_;
         int to_bitField0_ = 0;
         if (((from_bitField0_ & 0x00000001) == 0x00000001)) {
           to_bitField0_ |= 0x00000001;
         }
-        result.fnid_ = fnid_;
+        result.appid_ = appid_;
         if (((from_bitField0_ & 0x00000002) == 0x00000002)) {
           to_bitField0_ |= 0x00000002;
         }
@@ -487,19 +487,19 @@ public final class ProcessRpcProto {
         return (Builder) super.addRepeatedField(field, value);
       }
       public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof process_rpc_proto.ProcessRpcProto.FuncStarted) {
-          return mergeFrom((process_rpc_proto.ProcessRpcProto.FuncStarted)other);
+        if (other instanceof process_rpc_proto.ProcessRpcProto.AppStarted) {
+          return mergeFrom((process_rpc_proto.ProcessRpcProto.AppStarted)other);
         } else {
           super.mergeFrom(other);
           return this;
         }
       }
 
-      public Builder mergeFrom(process_rpc_proto.ProcessRpcProto.FuncStarted other) {
-        if (other == process_rpc_proto.ProcessRpcProto.FuncStarted.getDefaultInstance()) return this;
-        if (other.hasFnid()) {
+      public Builder mergeFrom(process_rpc_proto.ProcessRpcProto.AppStarted other) {
+        if (other == process_rpc_proto.ProcessRpcProto.AppStarted.getDefaultInstance()) return this;
+        if (other.hasAppid()) {
           bitField0_ |= 0x00000001;
-          fnid_ = other.fnid_;
+          appid_ = other.appid_;
           onChanged();
         }
         if (other.hasHttpPort()) {
@@ -513,7 +513,7 @@ public final class ProcessRpcProto {
       }
 
       public final boolean isInitialized() {
-        if (!hasFnid()) {
+        if (!hasAppid()) {
           return false;
         }
         return true;
@@ -523,11 +523,11 @@ public final class ProcessRpcProto {
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws java.io.IOException {
-        process_rpc_proto.ProcessRpcProto.FuncStarted parsedMessage = null;
+        process_rpc_proto.ProcessRpcProto.AppStarted parsedMessage = null;
         try {
           parsedMessage = PARSER.parsePartialFrom(input, extensionRegistry);
         } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          parsedMessage = (process_rpc_proto.ProcessRpcProto.FuncStarted) e.getUnfinishedMessage();
+          parsedMessage = (process_rpc_proto.ProcessRpcProto.AppStarted) e.getUnfinishedMessage();
           throw e.unwrapIOException();
         } finally {
           if (parsedMessage != null) {
@@ -538,24 +538,24 @@ public final class ProcessRpcProto {
       }
       private int bitField0_;
 
-      private java.lang.Object fnid_ = "";
+      private java.lang.Object appid_ = "";
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
-      public boolean hasFnid() {
+      public boolean hasAppid() {
         return ((bitField0_ & 0x00000001) == 0x00000001);
       }
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
-      public java.lang.String getFnid() {
-        java.lang.Object ref = fnid_;
+      public java.lang.String getAppid() {
+        java.lang.Object ref = appid_;
         if (!(ref instanceof java.lang.String)) {
           com.google.protobuf.ByteString bs =
               (com.google.protobuf.ByteString) ref;
           java.lang.String s = bs.toStringUtf8();
           if (bs.isValidUtf8()) {
-            fnid_ = s;
+            appid_ = s;
           }
           return s;
         } else {
@@ -563,53 +563,53 @@ public final class ProcessRpcProto {
         }
       }
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
       public com.google.protobuf.ByteString
-          getFnidBytes() {
-        java.lang.Object ref = fnid_;
+          getAppidBytes() {
+        java.lang.Object ref = appid_;
         if (ref instanceof String) {
           com.google.protobuf.ByteString b = 
               com.google.protobuf.ByteString.copyFromUtf8(
                   (java.lang.String) ref);
-          fnid_ = b;
+          appid_ = b;
           return b;
         } else {
           return (com.google.protobuf.ByteString) ref;
         }
       }
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
-      public Builder setFnid(
+      public Builder setAppid(
           java.lang.String value) {
         if (value == null) {
     throw new NullPointerException();
   }
   bitField0_ |= 0x00000001;
-        fnid_ = value;
+        appid_ = value;
         onChanged();
         return this;
       }
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
-      public Builder clearFnid() {
+      public Builder clearAppid() {
         bitField0_ = (bitField0_ & ~0x00000001);
-        fnid_ = getDefaultInstance().getFnid();
+        appid_ = getDefaultInstance().getAppid();
         onChanged();
         return this;
       }
       /**
-       * <code>required string fnid = 1;</code>
+       * <code>required string appid = 1;</code>
        */
-      public Builder setFnidBytes(
+      public Builder setAppidBytes(
           com.google.protobuf.ByteString value) {
         if (value == null) {
     throw new NullPointerException();
   }
   bitField0_ |= 0x00000001;
-        fnid_ = value;
+        appid_ = value;
         onChanged();
         return this;
       }
@@ -700,39 +700,39 @@ public final class ProcessRpcProto {
       }
 
 
-      // @@protoc_insertion_point(builder_scope:process_rpc_proto.FuncStarted)
+      // @@protoc_insertion_point(builder_scope:process_rpc_proto.AppStarted)
     }
 
-    // @@protoc_insertion_point(class_scope:process_rpc_proto.FuncStarted)
-    private static final process_rpc_proto.ProcessRpcProto.FuncStarted DEFAULT_INSTANCE;
+    // @@protoc_insertion_point(class_scope:process_rpc_proto.AppStarted)
+    private static final process_rpc_proto.ProcessRpcProto.AppStarted DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new process_rpc_proto.ProcessRpcProto.FuncStarted();
+      DEFAULT_INSTANCE = new process_rpc_proto.ProcessRpcProto.AppStarted();
     }
 
-    public static process_rpc_proto.ProcessRpcProto.FuncStarted getDefaultInstance() {
+    public static process_rpc_proto.ProcessRpcProto.AppStarted getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
-    @java.lang.Deprecated public static final com.google.protobuf.Parser<FuncStarted>
-        PARSER = new com.google.protobuf.AbstractParser<FuncStarted>() {
-      public FuncStarted parsePartialFrom(
+    @java.lang.Deprecated public static final com.google.protobuf.Parser<AppStarted>
+        PARSER = new com.google.protobuf.AbstractParser<AppStarted>() {
+      public AppStarted parsePartialFrom(
           com.google.protobuf.CodedInputStream input,
           com.google.protobuf.ExtensionRegistryLite extensionRegistry)
           throws com.google.protobuf.InvalidProtocolBufferException {
-          return new FuncStarted(input, extensionRegistry);
+          return new AppStarted(input, extensionRegistry);
       }
     };
 
-    public static com.google.protobuf.Parser<FuncStarted> parser() {
+    public static com.google.protobuf.Parser<AppStarted> parser() {
       return PARSER;
     }
 
     @java.lang.Override
-    public com.google.protobuf.Parser<FuncStarted> getParserForType() {
+    public com.google.protobuf.Parser<AppStarted> getParserForType() {
       return PARSER;
     }
 
-    public process_rpc_proto.ProcessRpcProto.FuncStarted getDefaultInstanceForType() {
+    public process_rpc_proto.ProcessRpcProto.AppStarted getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -2012,11 +2012,384 @@ public final class ProcessRpcProto {
 
   }
 
+  public interface UpdateCheckpointOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:process_rpc_proto.UpdateCheckpoint)
+      com.google.protobuf.MessageOrBuilder {
+  }
+  /**
+   * Protobuf type {@code process_rpc_proto.UpdateCheckpoint}
+   */
+  public  static final class UpdateCheckpoint extends
+      com.google.protobuf.GeneratedMessageV3 implements
+      // @@protoc_insertion_point(message_implements:process_rpc_proto.UpdateCheckpoint)
+      UpdateCheckpointOrBuilder {
+    // Use UpdateCheckpoint.newBuilder() to construct.
+    private UpdateCheckpoint(com.google.protobuf.GeneratedMessageV3.Builder<?> builder) {
+      super(builder);
+    }
+    private UpdateCheckpoint() {
+    }
+
+    @java.lang.Override
+    public final com.google.protobuf.UnknownFieldSet
+    getUnknownFields() {
+      return this.unknownFields;
+    }
+    private UpdateCheckpoint(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      this();
+      com.google.protobuf.UnknownFieldSet.Builder unknownFields =
+          com.google.protobuf.UnknownFieldSet.newBuilder();
+      try {
+        boolean done = false;
+        while (!done) {
+          int tag = input.readTag();
+          switch (tag) {
+            case 0:
+              done = true;
+              break;
+            default: {
+              if (!parseUnknownField(input, unknownFields,
+                                     extensionRegistry, tag)) {
+                done = true;
+              }
+              break;
+            }
+          }
+        }
+      } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+        throw e.setUnfinishedMessage(this);
+      } catch (java.io.IOException e) {
+        throw new com.google.protobuf.InvalidProtocolBufferException(
+            e).setUnfinishedMessage(this);
+      } finally {
+        this.unknownFields = unknownFields.build();
+        makeExtensionsImmutable();
+      }
+    }
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_UpdateCheckpoint_descriptor;
+    }
+
+    protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_UpdateCheckpoint_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.class, process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.Builder.class);
+    }
+
+    private byte memoizedIsInitialized = -1;
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      unknownFields.writeTo(output);
+    }
+
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      size += unknownFields.getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    private static final long serialVersionUID = 0L;
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof process_rpc_proto.ProcessRpcProto.UpdateCheckpoint)) {
+        return super.equals(obj);
+      }
+      process_rpc_proto.ProcessRpcProto.UpdateCheckpoint other = (process_rpc_proto.ProcessRpcProto.UpdateCheckpoint) obj;
+
+      boolean result = true;
+      result = result && unknownFields.equals(other.unknownFields);
+      return result;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptorForType().hashCode();
+      hash = (29 * hash) + unknownFields.hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseWithIOException(PARSER, input);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseWithIOException(PARSER, input);
+    }
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessageV3
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(process_rpc_proto.ProcessRpcProto.UpdateCheckpoint prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code process_rpc_proto.UpdateCheckpoint}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessageV3.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:process_rpc_proto.UpdateCheckpoint)
+        process_rpc_proto.ProcessRpcProto.UpdateCheckpointOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_UpdateCheckpoint_descriptor;
+      }
+
+      protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_UpdateCheckpoint_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.class, process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.Builder.class);
+      }
+
+      // Construct using process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.newBuilder()
+      private Builder() {
+        maybeForceBuilderInitialization();
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
+        super(parent);
+        maybeForceBuilderInitialization();
+      }
+      private void maybeForceBuilderInitialization() {
+        if (com.google.protobuf.GeneratedMessageV3
+                .alwaysUseFieldBuilders) {
+        }
+      }
+      public Builder clear() {
+        super.clear();
+        return this;
+      }
+
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return process_rpc_proto.ProcessRpcProto.internal_static_process_rpc_proto_UpdateCheckpoint_descriptor;
+      }
+
+      public process_rpc_proto.ProcessRpcProto.UpdateCheckpoint getDefaultInstanceForType() {
+        return process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.getDefaultInstance();
+      }
+
+      public process_rpc_proto.ProcessRpcProto.UpdateCheckpoint build() {
+        process_rpc_proto.ProcessRpcProto.UpdateCheckpoint result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      public process_rpc_proto.ProcessRpcProto.UpdateCheckpoint buildPartial() {
+        process_rpc_proto.ProcessRpcProto.UpdateCheckpoint result = new process_rpc_proto.ProcessRpcProto.UpdateCheckpoint(this);
+        onBuilt();
+        return result;
+      }
+
+      public Builder clone() {
+        return (Builder) super.clone();
+      }
+      public Builder setField(
+          com.google.protobuf.Descriptors.FieldDescriptor field,
+          Object value) {
+        return (Builder) super.setField(field, value);
+      }
+      public Builder clearField(
+          com.google.protobuf.Descriptors.FieldDescriptor field) {
+        return (Builder) super.clearField(field);
+      }
+      public Builder clearOneof(
+          com.google.protobuf.Descriptors.OneofDescriptor oneof) {
+        return (Builder) super.clearOneof(oneof);
+      }
+      public Builder setRepeatedField(
+          com.google.protobuf.Descriptors.FieldDescriptor field,
+          int index, Object value) {
+        return (Builder) super.setRepeatedField(field, index, value);
+      }
+      public Builder addRepeatedField(
+          com.google.protobuf.Descriptors.FieldDescriptor field,
+          Object value) {
+        return (Builder) super.addRepeatedField(field, value);
+      }
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof process_rpc_proto.ProcessRpcProto.UpdateCheckpoint) {
+          return mergeFrom((process_rpc_proto.ProcessRpcProto.UpdateCheckpoint)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(process_rpc_proto.ProcessRpcProto.UpdateCheckpoint other) {
+        if (other == process_rpc_proto.ProcessRpcProto.UpdateCheckpoint.getDefaultInstance()) return this;
+        this.mergeUnknownFields(other.unknownFields);
+        onChanged();
+        return this;
+      }
+
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        process_rpc_proto.ProcessRpcProto.UpdateCheckpoint parsedMessage = null;
+        try {
+          parsedMessage = PARSER.parsePartialFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          parsedMessage = (process_rpc_proto.ProcessRpcProto.UpdateCheckpoint) e.getUnfinishedMessage();
+          throw e.unwrapIOException();
+        } finally {
+          if (parsedMessage != null) {
+            mergeFrom(parsedMessage);
+          }
+        }
+        return this;
+      }
+      public final Builder setUnknownFields(
+          final com.google.protobuf.UnknownFieldSet unknownFields) {
+        return super.setUnknownFields(unknownFields);
+      }
+
+      public final Builder mergeUnknownFields(
+          final com.google.protobuf.UnknownFieldSet unknownFields) {
+        return super.mergeUnknownFields(unknownFields);
+      }
+
+
+      // @@protoc_insertion_point(builder_scope:process_rpc_proto.UpdateCheckpoint)
+    }
+
+    // @@protoc_insertion_point(class_scope:process_rpc_proto.UpdateCheckpoint)
+    private static final process_rpc_proto.ProcessRpcProto.UpdateCheckpoint DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new process_rpc_proto.ProcessRpcProto.UpdateCheckpoint();
+    }
+
+    public static process_rpc_proto.ProcessRpcProto.UpdateCheckpoint getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    @java.lang.Deprecated public static final com.google.protobuf.Parser<UpdateCheckpoint>
+        PARSER = new com.google.protobuf.AbstractParser<UpdateCheckpoint>() {
+      public UpdateCheckpoint parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+          return new UpdateCheckpoint(input, extensionRegistry);
+      }
+    };
+
+    public static com.google.protobuf.Parser<UpdateCheckpoint> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<UpdateCheckpoint> getParserForType() {
+      return PARSER;
+    }
+
+    public process_rpc_proto.ProcessRpcProto.UpdateCheckpoint getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
   private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_process_rpc_proto_FuncStarted_descriptor;
+    internal_static_process_rpc_proto_AppStarted_descriptor;
   private static final 
     com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-      internal_static_process_rpc_proto_FuncStarted_fieldAccessorTable;
+      internal_static_process_rpc_proto_AppStarted_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_process_rpc_proto_FuncCallReq_descriptor;
   private static final 
@@ -2027,6 +2400,11 @@ public final class ProcessRpcProto {
   private static final 
     com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
       internal_static_process_rpc_proto_FuncCallResp_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_process_rpc_proto_UpdateCheckpoint_descriptor;
+  private static final 
+    com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
+      internal_static_process_rpc_proto_UpdateCheckpoint_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -2037,10 +2415,11 @@ public final class ProcessRpcProto {
   static {
     java.lang.String[] descriptorData = {
       "\n*worker/func/shared/process_rpc_proto.p" +
-      "roto\022\021process_rpc_proto\".\n\013FuncStarted\022\014" +
-      "\n\004fnid\030\001 \002(\t\022\021\n\thttp_port\030\002 \001(\t\",\n\013FuncC" +
+      "roto\022\021process_rpc_proto\".\n\nAppStarted\022\r\n" +
+      "\005appid\030\001 \002(\t\022\021\n\thttp_port\030\002 \001(\t\",\n\013FuncC" +
       "allReq\022\014\n\004func\030\001 \002(\t\022\017\n\007arg_str\030\002 \002(\t\"\037\n" +
-      "\014FuncCallResp\022\017\n\007ret_str\030\001 \002(\t"
+      "\014FuncCallResp\022\017\n\007ret_str\030\001 \002(\t\"\022\n\020Update" +
+      "Checkpoint"
     };
     com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
         new com.google.protobuf.Descriptors.FileDescriptor.    InternalDescriptorAssigner() {
@@ -2054,12 +2433,12 @@ public final class ProcessRpcProto {
       .internalBuildGeneratedFileFrom(descriptorData,
         new com.google.protobuf.Descriptors.FileDescriptor[] {
         }, assigner);
-    internal_static_process_rpc_proto_FuncStarted_descriptor =
+    internal_static_process_rpc_proto_AppStarted_descriptor =
       getDescriptor().getMessageTypes().get(0);
-    internal_static_process_rpc_proto_FuncStarted_fieldAccessorTable = new
+    internal_static_process_rpc_proto_AppStarted_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
-        internal_static_process_rpc_proto_FuncStarted_descriptor,
-        new java.lang.String[] { "Fnid", "HttpPort", });
+        internal_static_process_rpc_proto_AppStarted_descriptor,
+        new java.lang.String[] { "Appid", "HttpPort", });
     internal_static_process_rpc_proto_FuncCallReq_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_process_rpc_proto_FuncCallReq_fieldAccessorTable = new
@@ -2072,6 +2451,12 @@ public final class ProcessRpcProto {
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_process_rpc_proto_FuncCallResp_descriptor,
         new java.lang.String[] { "RetStr", });
+    internal_static_process_rpc_proto_UpdateCheckpoint_descriptor =
+      getDescriptor().getMessageTypes().get(3);
+    internal_static_process_rpc_proto_UpdateCheckpoint_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
+        internal_static_process_rpc_proto_UpdateCheckpoint_descriptor,
+        new java.lang.String[] { });
   }
 
   // @@protoc_insertion_point(outer_class_scope)

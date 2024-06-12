@@ -559,6 +559,16 @@ impl AppMetas {
             let file_name = entry.file_name();
             // dir name is the app name
             let app_name = file_name.to_str().unwrap().to_owned();
+
+            // allow spec files
+            if entry.file_type().unwrap().is_file() {
+                let allowed_files = vec!["crac_config"];
+                assert!(allowed_files
+                    .contains(&&*(*entry.file_name().as_os_str().to_string_lossy()).to_owned()));
+                continue;
+            }
+
+            // allow only dir
             assert!(entry.file_type().unwrap().is_dir());
 
             // read app config yaml

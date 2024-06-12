@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use prost::Message;
+use prost::{
+    bytes::{BufMut, BytesMut},
+    Message,
+};
 use std::{
     collections::HashMap,
     hash::Hash,
@@ -16,28 +19,33 @@ use crate::result::{WSResult, WsRpcErr};
 // start from the begining
 #[async_trait]
 pub trait RpcCustom: Sized + 'static {
-    fn spawn() -> tokio::task::JoinHandle<()> {
-        tokio::spawn(accept_task::<Self>())
-    }
-    fn bind() -> UnixListener;
+    type SpawnArgs: Send + 'static;
+
+    fn bind(a: Self::SpawnArgs) -> UnixListener;
+    // return true if the id matches remote call pack
+    fn handle_remote_call(conn: &HashValue, id: u8, buf: &[u8]) -> bool;
     async fn verify(buf: &[u8]) -> Option<HashValue>;
     // fn deserialize(id: u16, buf: &[u8]);
 }
 
-async fn accept_task<R: RpcCustom>() {
+pub fn spawn<R: RpcCustom>(a: R::SpawnArgs) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(accept_task::<R>(a))
+}
+
+async fn accept_task<R: RpcCustom>(a: R::SpawnArgs) {
     // std::fs::remove_file(AGENT_SOCK_PATH).unwrap();
 
     // clean_sock_file(AGENT_SOCK_PATH);
     // let listener = tokio::net::UnixListener::bind(AGENT_SOCK_PATH).unwrap();
 
-    let listener = R::bind();
+    let listener = R::bind(a);
     loop {
         let (socket, _) = listener.accept().await.unwrap();
         let _ = tokio::spawn(listen_task::<R>(socket));
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum HashValue {
     Int(i64),
     Str(String),
@@ -51,28 +59,9 @@ pub trait ReqMsg: MsgIdBind {
     type Resp: MsgIdBind;
 }
 
-// server - client model rpc, server just wait for connection
-// return false is is starting
-pub fn start_remote_once(conn: HashValue) -> bool {
-    let mut conn_map = CONN_MAP.write();
-    if conn_map.contains_key(&conn) {
-        return false;
-    }
-    let _ = conn_map.insert(conn.clone(), ConnState::Connecting(Vec::new()));
-    let _ = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(8)).await;
-        let mut conn_map = CONN_MAP.write();
-        let cancel = if let Some(&ConnState::Connecting(_)) = conn_map.get(&conn) {
-            true
-        } else {
-            false
-        };
-        if cancel {
-            tracing::warn!("failed to conn to process rpc {:?}", conn);
-            let _ = conn_map.remove(&conn);
-        }
-    });
-    true
+pub fn close_conn(id: &HashValue) {
+    // this will make the old receive loop to be closed
+    let _ = CONN_MAP.write().remove(id);
 }
 
 pub async fn call<Req: ReqMsg>(
@@ -82,44 +71,17 @@ pub async fn call<Req: ReqMsg>(
 ) -> WSResult<Req::Resp> {
     // wait for connection if not connected
 
-    let mut req_rx_opt = None;
-    let mut sender_opt = None;
-    {
+    let tx = {
         let mut conn_map = CONN_MAP.write();
         match conn_map.get_mut(&conn) {
-            Some(ConnState::Connecting(waiters)) => {
-                let (req_tx, req_rx) = oneshot::channel();
-                waiters.push(req_tx);
-
-                req_rx_opt = Some(req_rx)
-            }
             None => {
                 return Err(WsRpcErr::ConnectionNotEstablished(conn).into());
-
-                // // Register a new connection in Connecting state
-                // let (req_tx, req_rx) = oneshot::channel();
-                // let _ = conn_map.insert(conn.clone(), ConnState::Connecting(vec![req_tx]));
-
-                // req_rx_opt = Some(req_rx)
             }
-            Some(ConnState::Connected(sender)) => {
+            Some(state) => {
                 // Directly return the existing sender in the connected state
-                sender_opt = Some(sender.clone());
+                state.tx.clone()
             }
         }
-    };
-
-    let tx = if let Some(req_rx) = req_rx_opt {
-        let tx_might = req_rx.await;
-        match tx_might {
-            Err(_err) => {
-                tracing::warn!("tx is removed because verification failed");
-                return Err(WsRpcErr::ConnectionNotEstablished(conn).into());
-            }
-            Ok(res) => res,
-        }
-    } else {
-        sender_opt.unwrap()
     };
 
     // register the call back
@@ -128,8 +90,13 @@ pub async fn call<Req: ReqMsg>(
     let _ = CALL_MAP.write().insert(next_task, wait_tx);
 
     // send the request
-    tracing::debug!("send request: {:?}", req);
-    tx.send(req.encode_to_vec()).await.unwrap();
+    let mut buf = BytesMut::with_capacity(req.encoded_len() + 8);
+    buf.put_i32(req.encoded_len() as i32);
+    buf.put_i32(next_task as i32);
+    req.encode(&mut buf).unwrap();
+
+    tracing::debug!("send request: {:?} with len: {}", req, buf.len() - 8);
+    tx.send(buf.into()).await.unwrap();
 
     // if timeout, take out the registered channel tx, return error
     let channel_resp = match tokio::time::timeout(timeout, wait_rx).await {
@@ -155,11 +122,10 @@ pub async fn call<Req: ReqMsg>(
 //     Disconnected,
 // }
 
-#[derive(EnumAsInner)]
-enum ConnState {
+struct ConnState {
     /// record the waiters
-    Connecting(Vec<oneshot::Sender<tokio::sync::mpsc::Sender<Vec<u8>>>>),
-    Connected(tokio::sync::mpsc::Sender<Vec<u8>>),
+    // Connecting(Vec<oneshot::Sender<tokio::sync::mpsc::Sender<Vec<u8>>>>),
+    tx: tokio::sync::mpsc::Sender<Vec<u8>>,
 }
 
 lazy_static! {
@@ -178,7 +144,8 @@ async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
     let mut buf = [0; 1024];
     let mut len = 0;
 
-    let Some(rx) = listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await
+    let Some((conn, rx)) =
+        listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await
     else {
         println!("verify failed");
         return;
@@ -186,7 +153,7 @@ async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
 
     listen_task_ext::spawn_send_loop(rx, socktx);
 
-    listen_task_ext::read_loop(&mut sockrx, &mut len, &mut buf).await;
+    listen_task_ext::read_loop::<R>(conn, &mut sockrx, &mut len, &mut buf).await;
 }
 
 pub(super) mod listen_task_ext {
@@ -201,25 +168,25 @@ pub(super) mod listen_task_ext {
 
     use crate::general::network::rpc_model::ConnState;
 
-    use super::{RpcCustom, CONN_MAP};
+    use super::{HashValue, RpcCustom, CALL_MAP, CONN_MAP};
 
     pub(super) async fn verify_remote<R: RpcCustom>(
         sockrx: &mut OwnedReadHalf,
         len: &mut usize,
         buf: &mut [u8],
-    ) -> Option<Receiver<Vec<u8>>> {
+    ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
         async fn verify_remote_inner<R: RpcCustom>(
             sockrx: &mut OwnedReadHalf,
             len: &mut usize,
             buf: &mut [u8],
-        ) -> Option<Receiver<Vec<u8>>> {
+        ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
             // println!("waiting for verify head len");
             if !wait_for_len(sockrx, len, 4, buf).await {
                 println!("failed to read verify head len");
                 return None;
             }
 
-            let verify_msg_len = consume_len(0, buf, len);
+            let verify_msg_len = consume_i32(0, buf, len);
 
             // println!("waiting for verify msg {}", verify_msg_len);
             if !wait_for_len(sockrx, len, verify_msg_len, buf).await {
@@ -233,32 +200,16 @@ pub(super) mod listen_task_ext {
                 return None;
             };
             let (tx, rx) = tokio::sync::mpsc::channel(10);
-            let mut tx = Some(tx);
-            let waiters = {
-                let mut write_conn_map = CONN_MAP.write();
-                let waiters = match write_conn_map.remove(&id).expect(
-                    "waiters must be inited before receive the verify msg
-                        because it's a faster way for function calling",
-                ) {
-                    ConnState::Connecting(waiters) => waiters,
-                    _ => unreachable!(),
-                };
-                if waiters.len() > 0 {
-                    let _ = write_conn_map
-                        .insert(id, ConnState::Connected(tx.as_ref().unwrap().clone()));
-                } else {
-                    let _ = write_conn_map.insert(id, ConnState::Connected(tx.take().unwrap()));
-                }
-                waiters
-            };
 
-            for waiter in waiters {
-                // it's ok to send failed
-                let _ = waiter.send(tx.as_ref().unwrap().clone());
+            let mut write_conn_map = CONN_MAP.write();
+            if write_conn_map.contains_key(&id) {
+                tracing::warn!("conflict conn id: {:?}", id);
+                return None;
             }
+            let _ = write_conn_map.insert(id.clone(), ConnState { tx });
 
             // println!("verify success");
-            Some(rx)
+            Some((id, rx))
         }
         let res = tokio::time::timeout(
             Duration::from_secs(5),
@@ -270,22 +221,76 @@ pub(super) mod listen_task_ext {
         res
     }
 
-    pub(super) async fn read_loop(socket: &mut OwnedReadHalf, len: &mut usize, buf: &mut [u8]) {
+    pub(super) async fn read_loop<R: RpcCustom>(
+        conn: super::HashValue,
+        socket: &mut OwnedReadHalf,
+        len: &mut usize,
+        buf: &mut [u8],
+    ) {
+        *len = 0;
+        let mut offset = 0;
         loop {
-            match socket.read(buf).await {
-                Ok(n) => {
-                    if n == 0 {
-                        println!("connection closed");
-                        return;
-                    }
-                    // println!("recv: {:?}", buf[..n]);
-                    *len += n;
-                }
-                Err(e) => {
-                    println!("failed to read from socket; err = {:?}", e);
+            let (msg_len, msg_id, taskid) = {
+                let buf = &mut buf[offset..];
+                if !wait_for_len(socket, len, 9, buf).await {
+                    tracing::warn!("failed to read head len, stop rd loop");
                     return;
                 }
+                offset += 9;
+                (
+                    consume_i32(0, buf, len),
+                    consume_u8(4, buf, len),
+                    consume_i32(5, buf, len) as u32,
+                )
+            };
+
+            {
+                if buf.len() < offset + msg_len {
+                    // move forward
+                    buf.copy_within(offset.., 0);
+                    offset = 0;
+                }
+                let buf = &mut buf[offset..];
+
+                if !wait_for_len(socket, len, msg_len, buf).await {
+                    tracing::warn!("failed to read head len, stop rd loop");
+                    return;
+                }
+
+                if !R::handle_remote_call(&conn, msg_id, &buf[..msg_len]) {
+                    // call back
+                    let Some(cb) = CALL_MAP.write().remove(&taskid) else {
+                        tracing::warn!(
+                            "rd stream is not in correct format, taskid:{} msgid:{}",
+                            taskid,
+                            msg_id
+                        );
+                        return;
+                    };
+
+                    let msg = buf[..msg_len].to_vec();
+                    cb.send(msg).unwrap();
+                }
+
+                // update the buf meta
+                offset += msg_len;
+                *len -= msg_len;
             }
+
+            // match socket.read(buf).await {
+            //     Ok(n) => {
+            //         if n == 0 {
+            //             tracing::warn!("connection closed");
+            //             return;
+            //         }
+            //         // println!("recv: {:?}", buf[..n]);
+            //         *len += n;
+            //     }
+            //     Err(e) => {
+            //         println!("failed to read from socket; err = {:?}", e);
+            //         return;
+            //     }
+            // }
         }
     }
 
@@ -299,7 +304,13 @@ pub(super) mod listen_task_ext {
                     Some(res) => {
                         socktx.write_all(&res).await.unwrap();
                     }
-                    None => todo!(),
+                    None => {
+                        tracing::debug!(
+                            "the old rd loop closed: {:?}",
+                            socktx.peer_addr().unwrap()
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -331,8 +342,14 @@ pub(super) mod listen_task_ext {
         true
     }
 
+    pub(super) fn consume_u8(off: usize, buf: &mut [u8], len: &mut usize) -> u8 {
+        // let ret = bincode::deserialize::<i32>(&buf[off..off + 4]).unwrap() as usize;
+        *len -= 1;
+        buf[off]
+    }
+
     // 4字节u32 长度
-    pub(super) fn consume_len(off: usize, buf: &mut [u8], len: &mut usize) -> usize {
+    pub(super) fn consume_i32(off: usize, buf: &mut [u8], len: &mut usize) -> usize {
         // let ret = bincode::deserialize::<i32>(&buf[off..off + 4]).unwrap() as usize;
         let ret = Bytes::copy_from_slice(&buf[off..off + 4]).get_i32();
         *len -= 4;

@@ -10,7 +10,6 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.core.env.Environment;
 
-@Component
 public class BootArgCheck implements CommandLineRunner
 // DisposableBean
 {

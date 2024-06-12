@@ -19,4 +19,9 @@ public class BeanConfig {
     public RpcHandleOwner rpcHandleOwner() {
         return new RpcHandleOwner();
     }
+
+    @Bean
+    public CracManager cracManager() {
+        return new CracManager();
+    }
 }
