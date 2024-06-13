@@ -2,7 +2,6 @@ use super::shared::process_rpc::ProcessRpc;
 use super::{owned::wasm, shared::SharedInstance, FnExeCtx, Instance, OwnedInstance};
 use crate::general::m_os::OperatingSystem;
 use crate::general::network::rpc_model;
-use crate::logical_module_view_impl;
 use crate::sys::LogicalModulesRef;
 use crate::{
     general::m_appmeta_manager::AppType, // worker::host_funcs,
@@ -10,6 +9,7 @@ use crate::{
     sys::{LogicalModule, LogicalModuleNewArgs},
     util::JoinHandleWrapper,
 };
+use crate::{logical_module_view_impl, util};
 use async_trait::async_trait;
 use crossbeam_skiplist::SkipMap;
 use enum_as_inner::EnumAsInner;
@@ -17,7 +17,10 @@ use std::{
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
     ptr::NonNull,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::sync::Notify;
@@ -96,16 +99,17 @@ pub struct KvEventDef {
 //     // }
 // }
 
-struct InstanceCell(Option<OwnedInstance>);
-impl Clone for InstanceCell {
-    fn clone(&self) -> Self {
-        Self(None)
-    }
-}
+#[derive(Clone)]
+struct InstanceCell(Arc<Option<OwnedInstance>>);
+// impl Clone for InstanceCell {
+//     fn clone(&self) -> Self {
+//         Self(None)
+//     }
+// }
 
 impl From<OwnedInstance> for InstanceCell {
     fn from(a: OwnedInstance) -> Self {
-        Self(Some(a))
+        Self(Arc::new(Some(a)))
     }
 }
 
@@ -140,7 +144,7 @@ impl OwnedEachAppCache {
 
         if let Some(a) = self.cache.iter().next() {
             if let Some(a) = self.cache.remove(&*a.0) {
-                return a.0.unwrap();
+                return unsafe { util::non_null(&*a.0).as_mut().take().unwrap() };
             }
         }
 
