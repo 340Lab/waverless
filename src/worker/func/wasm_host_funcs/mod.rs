@@ -6,6 +6,7 @@ mod result;
 
 use fs::FsFuncsRegister;
 use kv::KvFuncsRegister;
+use result::ResultFuncsRegister;
 
 use crate::sys::LogicalModulesRef;
 
@@ -167,7 +168,7 @@ pub fn new_import_obj() -> ImportObject {
     let builder = ImportObjectBuilder::new();
     let builder = KvFuncsRegister {}.register(builder);
     let builder = FsFuncsRegister {}.register(builder);
-    let builder = FsFuncsRegister.register(builder);
+    let builder = ResultFuncsRegister.register(builder);
 
     builder.build::<NeverType>("env", None).unwrap()
 }

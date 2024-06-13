@@ -10,7 +10,7 @@ use wasmedge_sdk::{
 
 // fname_ptr, fname_len, fd_ptr
 type WriteResultArgs = (i32, i32);
-#[cfg_attr(target_os = "linux", host_function)]
+#[host_function]
 fn write_result(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, HostFuncError> {
     let fname = utils::u8slice(&caller, args[0].to_i32(), args[1].to_i32());
     unsafe { utils::current_app_fn_ctx(&caller).0.as_mut() }.res =
