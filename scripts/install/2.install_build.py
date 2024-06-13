@@ -29,7 +29,7 @@ def run_cmd_return(cmd):
 #################################################################################################
 
 apps=[
-    "clang",
+    # "clang",
     "lldb",
     "lld",
     "build-essential",
@@ -42,6 +42,9 @@ apps=[
 os_system_sure(f"apt install -y {' '.join(apps)}")
 
 
+os_system_sure("python3 2.2install_clang.py")
+
+
 res=run_cmd_return("rustc --version")
 if res.returncode != 0:
     print("Rust not installed, installing now...")
@@ -49,6 +52,7 @@ if res.returncode != 0:
     # os_system_sure("source $HOME/.cargo/env")
     os_system_sure("rustup target add wasm32-wasi")
     # os_system_sure("export PATH=$HOME/.cargo/bin:$PATH")
+
 
 
 os_system_sure("python3 2.1install_wasmedge.py")
