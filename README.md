@@ -4,9 +4,9 @@ A serverless distributed system with WASM, DataEventDrivenGraph, Integrated Stor
 
 # Related Links
 
-Lark:[https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f](https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f)
-
 Github:[https://github.com/340lab/waverless](https://github.com/340lab/waverless)
+
+Lark:[https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f](https://fvd360f8oos.feishu.cn/docx/XSxcdONk2oVJD5xtZuicxftqn3f)
 
 # Develop standard
 
@@ -14,41 +14,18 @@ Github:[https://github.com/340lab/waverless](https://github.com/340lab/waverless
 
 # Get started
 
-Make sure you‘re using a linux system to run this project, it can be in vm or docker.
+Make sure you‘re using alinuxsystem to run this project, it can be in vm or docker. (Current scripts are using apt to install things, so you'd better be with debian).
 
-Git clone this project
+Git clone this project[https://github.com/340Lab/waverless](https://github.com/340Lab/waverless)
 
 Run commands
 
-   ``` bash
-   # Install python and ansible
-   # Issue: Error when installing ansible: https://zhuanlan.zhihu.com/p/361790784
-   bash scripts/install/1.install_basic.sh
-   # Install environment
-   bash scripts/install/2.ans_install_build.sh
-   # Compile project and it's test apps
-   bash scripts/deploy_single_node/1.ans_build.sh
-   # Start demo nodes
-   python3 scripts/deploy_single_node/pack/run_node.py 1
-   python3 scripts/deploy_single_node/pack/run_node.py 2
-   # Test the api
-   # Make sure the GATEWAY='http://127.0.0.1:2501' in scripts/test_http.py
-   python3 scripts/http_test.py
-   ```
-   
-  
 Check the results
 
-   block docx-image-block:
-   
-  
 # Environment Prelimit
 
 block docx-bullet-block:•
 Support linux only (Reason: WASI Runtime, support rust async scheduling)
-
-block docx-bullet-block:•
-Tested rust version: 1.76.0
 
 block docx-bullet-block:•
 WasmEdge:
@@ -57,26 +34,38 @@ https://wasmedge.org/docs/embed/rust/intro#usage
 # Features
 
 block docx-bullet-block:•
-Better low level performance: rust, tokio async scheduling, WASM lightweight function, QUIC & protobuf network
+Better low level performance: rust, tokio async scheduling, WASM & CRIU for function, QUIC & protobuf & UDS for communication
 
 block docx-bullet-block:•
-Detailed app characterization: with data and other dynamic infos
+(In progress) Function characterization & relation aware scaling & scheduling
 
 block docx-bullet-block:•
-Data and computing coordination
+(In progress) Embed KV Storage, Storage-Compute Collaborative Scheduling
 
 # Design
 
-block docx-bullet-block:•
-Comprehensive experiments
-
 ## Modules and RPC Design
 
-![canvas](figs/canvasD052dmYx1sSMCsbfAiPcfThznrS.png)
+![canvas](figs/canvasNcT8dLGv9o7NHrx9ng9cAGJtnTf.png)
 
-## Different App Types
+## Different Instance(app) Types
 
-![canvas](figs/canvasFG5vdFiJtonvp1xnV2ocbW4Vngb.png)
+block docx-table-block:SharedInstance
+OwnedInstance
+feature
+Fat instance run in process or container, such as java
+Light instance which binded on thread and one instance can only handle one request
+technology
+CRIU(CRaC), UDS
+WASM, Cache
+
+## Agent Trigger App by HTTP or UDS
+
+![canvas](figs/canvasQSsTdhRkDoi5k3x9NNCc8c51npd.png)
+
+## CRIU for Java (SharedInstance)
+
+![canvas](figs/canvasKhoPdzlHeozpSBxafXhcyypfnjf.png)
 
 ## KV Trigger Function
 
@@ -88,25 +77,26 @@ block docx-image-block:
 
 ## Cluster Config Format
 
-``` yaml
+```
 nodes:
-  1:
-    addr: 127.0.0.1:2500
-    domain: # optional
-    spec: [meta,master]
-  2:
-    addr: 127.0.0.1:2505
-    domain: # optional
-    spec: [meta,worker]
+1:
+addr: 127.0.0.1:2500
+domain: # optional
+spec: [meta,master]
+2:
+addr: 127.0.0.1:2505
+domain: # optional
+spec: [meta,worker]
+loki:
+addr: # optional, for cluster deployment
 ```
 
 ## Project Config Format
 
-
-v2: One project may contains multiple apps, which contains multiple functions.
+block docx-bullet-block:•
+v2
+One project may contains multiple apps, which contains multiple functions.
 The app is the cold start unit.
-
-``` yaml
 stock-mng:
   query:         
     http.post:
@@ -131,14 +121,13 @@ stock-mng:
     kvs: 
       wordcount_slice_{}: [delete]
       wordcount_{}: [set]
-```
-
-# Roadmap
 
 block docx-bullet-block:•
 v1
 
-![canvas](figs/canvasT2VjdMfFnotTVrxiZTScfWAsnbe.png)
+# Roadmap
+
+![canvas](figs/canvasRf0QdayAjovvJvxsRBBcKYSmnCg.png)
 
 block docx-bullet-block:•
 Basic stuffs
@@ -160,20 +149,10 @@ Request complete time (Histogram)
 Request count
 •
 Cold start time
-•
-Instance count
-•
-Resource usage
 
 block docx-bullet-block:•
 Basic scheduler single master - multiple worker
 Docking wasmedge, add cache for each function.
-飞书用户6188
-Schedule for request
-飞书用户6188
-App metadata waverless 应用元数据
-飞书用户6188
-Configurable domain (pr/32)
 飞书用户6188
 
 block docx-bullet-block:•
@@ -182,8 +161,6 @@ Wasm host function, Kv event
 飞书用户6188
 Batch operation and basic lock on master
 飞书用户6188
-KV router and persistence on master
-飞书用户6188
 
 block docx-bullet-block:•
 Complex Stuffs / Optimizations
@@ -191,6 +168,13 @@ Complex Stuffs / Optimizations
 KV event scheduling
 Recover the kv event feature （pr/33，kv设计见总设计文档的图KV RPC）
 飞书用户6188
+◦
+Scheduling algorithm
+random
+飞书用户6188
+hash
+飞书用户6188
+straw2 @自然选择
 
 block docx-bullet-block:•
 Cluster deployment with docker and ansible
@@ -207,9 +191,6 @@ Different load apps v1（pr/33，test设计）
 飞书用户6188
 Git action integrity testing (pr/35)
 飞书用户6188
-Update cluster deployment (pr/38)
-飞书用户6188
-匿名模式下无法访问
 
 block docx-bullet-block:•
 Document
@@ -260,52 +241,4 @@ Deploy cluster (scripts/deploy_cluster)
 
 block docx-bullet-block:•
 Test perf
-
-
-
-# Scripts
-
-block docx-quote_container-block:Scripts with single-digit indexes, such as 1.xxxx, are intended for public use, with the number representing to some extent the order of usage.
-
-block docx-bullet-block:•
-Install
-◦
-1.install_basic.sh (install python and ansible, to enable the following operations)
-◦
-2.ans_install_build.sh (install build needed)
-◦
-3.install_docker.sh (docker is not necessary)
-
-block docx-bullet-block:•
-build
-◦
-1._ans_build_sys_with_apps.yml
-
-block docx-bullet-block:•
-deploy_cluster
-◦
-1.ansible_setup.py (setup ansible and ssh inter-communication)
-◦
-2.ans_redeploy_cluster.sh (deploy to cluster following th e node_config.yaml)
-
-block docx-bullet-block:•
-deploy_monitor
-◦
-start.py (deploy monitor related (loki(log storage), prometheus(metric storage), grafana(visualization)))
-◦
-reload_prometheus.py (reload when change the prometheus.yml)
-
-block docx-bullet-block:•
-deploy_single_node
-◦
-1.ans_build.sh (call the install, build and copy node_config.yaml)
-
-block docx-bullet-block:•
-docker
-◦
-WasmEdge (the basic system and environment)
-◦
-Waverless (bind entrypoint)
-
-
 
