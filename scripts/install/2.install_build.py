@@ -45,12 +45,12 @@ os_system_sure(f"apt install -y {' '.join(apps)}")
 os_system_sure("python3 2.2install_clang.py")
 
 
-res=run_cmd_return("rustc --version")
+res=run_cmd_return("$HOME/.cargo/bin/rustc --version")
 if res.returncode != 0:
     print("Rust not installed, installing now...")
     os_system_sure("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
     # os_system_sure("source $HOME/.cargo/env")
-    os_system_sure("rustup target add wasm32-wasi")
+    os_system_sure("$HOME/.cargo/bin/rustup target add wasm32-wasi")
     # os_system_sure("export PATH=$HOME/.cargo/bin:$PATH")
 
 

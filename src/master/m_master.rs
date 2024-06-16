@@ -17,12 +17,14 @@ use crate::{
     util::JoinHandleWrapper,
 };
 
+#[allow(dead_code)]
 trait NodeWeighteFetcher: Send + Sync + 'static {
     // NOTE: get weight return node weight
     // larger is better
     fn get_node_weight(&self, id: NodeID) -> f64;
 }
 
+#[allow(dead_code)]
 struct StrawNodeSelector {
     weight_fetcher: Box<dyn NodeWeighteFetcher>,
 }
@@ -54,6 +56,7 @@ pub trait NodeSelector: Send + Sync + 'static {
     fn select_node(&self, all_node_cnt: usize, fn_name: &str) -> NodeID;
 }
 
+#[allow(dead_code)]
 struct HashNodeSelector;
 
 impl NodeSelector for HashNodeSelector {

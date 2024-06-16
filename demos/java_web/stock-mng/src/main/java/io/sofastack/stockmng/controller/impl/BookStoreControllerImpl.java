@@ -6,7 +6,7 @@ package io.sofastack.stockmng.controller.impl;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import io.sofastack.balance.manage.facade.BalanceMngFacade;
+// import io.sofastack.balance.manage.facade.BalanceMngFacade;
 import io.sofastack.stockmng.controller.BookStoreController;
 import io.sofastack.stockmng.facade.StockMngFacade;
 import io.sofastack.stockmng.model.BalanceResponse;

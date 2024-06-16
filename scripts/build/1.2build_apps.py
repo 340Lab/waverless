@@ -114,7 +114,7 @@ def pack_demo(app):
     os.chdir(prj_dir)
     # check Cargo.toml in the current directory
     if os.path.exists("Cargo.toml"):
-        os_system_sure("cargo build --target wasm32-wasi --release")
+        os_system_sure("$HOME/.cargo/bin/cargo build --target wasm32-wasi --release")
     elif os.path.exists("pom.xml"):
         os_system_sure("mvn clean package")
     else:
@@ -148,6 +148,10 @@ action: ignore
 ---
 type: SOCKET
 action: close""")
+
+# install java lib
+os.chdir("../../demos/_java_serverless_lib")
+os_system_sure("mvn clean install")
 
 for app in DEMOS:
     os.chdir(CUR_FDIR)

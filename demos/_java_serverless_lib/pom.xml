@@ -16,7 +16,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.4.CRAC</version>
+        <version>3.2.4</version>
     </parent>
 
     <modules>
@@ -26,11 +26,11 @@
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
+            <!-- <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-starter</artifactId>
-                <version>3.2.4.CRAC</version>
-            </dependency>
+                <version>3.2.4</version>
+            </dependency> -->
             <dependency>
                 <groupId>io.serverless_lib</groupId>
                 <artifactId>serverless-lib-core</artifactId>

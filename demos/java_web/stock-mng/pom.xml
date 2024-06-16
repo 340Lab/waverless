@@ -30,11 +30,11 @@
 			<artifactId>serverless-lib-core</artifactId>
 			<!-- <version>0.0.1-SNAPSHOT</version> -->
 		</dependency>
-		<dependency>
+		<!-- <dependency>
 			<groupId>io.sofastack</groupId>
 			<artifactId>balance-mng-facade</artifactId>
 			<version>${project.version}</version>
-		</dependency>
+		</dependency> -->
 		<dependency>
 			<groupId>mysql</groupId>
 			<artifactId>mysql-connector-java</artifactId>

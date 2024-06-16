@@ -37,6 +37,7 @@ print_title("preparing pkg")
 VERSION="0.13.3"
 TARGZ_FILE = f"WasmEdge-{VERSION}-manylinux2014_x86_64.tar.gz"
 if not os.path.exists(f"/tmp/install/{TARGZ_FILE}"):
+    os_system_sure("mkdir -p /tmp/install/")
     os_system_sure(f"wget https://github.com/WasmEdge/WasmEdge/releases/download/{VERSION}/{TARGZ_FILE}")
     os_system_sure(f"mv {TARGZ_FILE} /tmp/install/")
 
@@ -47,7 +48,7 @@ os_system_sure(f"python3 ../install/inner/wasm_edge.py -v {VERSION}")
 
 print_title("debug wasmedge")
 os_system_sure("ls /root/.wasmedge/bin/")
-os_system_sure("wasmedge --version")
+os_system_sure("/root/.wasmedge/bin/wasmedge --version")
 # - name: Install WasmEdge
 #   become: true
 #   shell: |
