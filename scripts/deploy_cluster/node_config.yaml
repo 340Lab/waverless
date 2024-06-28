@@ -1,19 +1,25 @@
-nodes: 
-  1: 
+nodes:
+  1:
     addr: 192.168.31.162:2500
-    spec: [meta,master]
-  2: 
+    spec: [meta, master]
+  2:
     addr: 192.168.31.87:2500
-    spec: [meta,worker]
-  3: 
-    addr: 192.168.31.96:2500
-    spec: [meta,worker]
-  4: 
-    addr: 192.168.31.109:2500
-    spec: [meta,worker]
-  5: 
-    addr: 192.168.31.56:2500
-    spec: [meta,worker]
-
-loki:
-  addr: 192.168.31.56:3100
+    spec: [meta, worker]
+  7:
+    addr: 192.168.31.89:2500
+    spec: [meta, worker]
+  8:
+    addr: 192.168.31.54:2500
+    spec: [meta, worker]
+  9:
+    addr: 192.168.31.9:2500
+    spec: [meta, worker]
+  10:
+    addr: 192.168.31.240:2500
+    spec: [meta, worker]
+  11:
+    addr: 192.168.31.138:2500
+    spec: [meta, worker]
+  12:
+    addr: 192.168.31.171:2500
+    spec: [meta, worker]

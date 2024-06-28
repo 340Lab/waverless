@@ -45,6 +45,15 @@ public final class ProcessRpcProto {
      */
     com.google.protobuf.ByteString
         getHttpPortBytes();
+
+    /**
+     * <code>required uint32 pid = 3;</code>
+     */
+    boolean hasPid();
+    /**
+     * <code>required uint32 pid = 3;</code>
+     */
+    int getPid();
   }
   /**
    * <pre>
@@ -65,6 +74,7 @@ public final class ProcessRpcProto {
     private AppStarted() {
       appid_ = "";
       httpPort_ = "";
+      pid_ = 0;
     }
 
     @java.lang.Override
@@ -101,6 +111,11 @@ public final class ProcessRpcProto {
               com.google.protobuf.ByteString bs = input.readBytes();
               bitField0_ |= 0x00000002;
               httpPort_ = bs;
+              break;
+            }
+            case 24: {
+              bitField0_ |= 0x00000004;
+              pid_ = input.readUInt32();
               break;
             }
             default: {
@@ -220,6 +235,21 @@ public final class ProcessRpcProto {
       }
     }
 
+    public static final int PID_FIELD_NUMBER = 3;
+    private int pid_;
+    /**
+     * <code>required uint32 pid = 3;</code>
+     */
+    public boolean hasPid() {
+      return ((bitField0_ & 0x00000004) == 0x00000004);
+    }
+    /**
+     * <code>required uint32 pid = 3;</code>
+     */
+    public int getPid() {
+      return pid_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -228,6 +258,10 @@ public final class ProcessRpcProto {
       if (isInitialized == 0) return false;
 
       if (!hasAppid()) {
+        memoizedIsInitialized = 0;
+        return false;
+      }
+      if (!hasPid()) {
         memoizedIsInitialized = 0;
         return false;
       }
@@ -244,6 +278,9 @@ public final class ProcessRpcProto {
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         com.google.protobuf.GeneratedMessageV3.writeString(output, 2, httpPort_);
       }
+      if (((bitField0_ & 0x00000004) == 0x00000004)) {
+        output.writeUInt32(3, pid_);
+      }
       unknownFields.writeTo(output);
     }
 
@@ -258,6 +295,10 @@ public final class ProcessRpcProto {
       }
       if (((bitField0_ & 0x00000002) == 0x00000002)) {
         size += com.google.protobuf.GeneratedMessageV3.computeStringSize(2, httpPort_);
+      }
+      if (((bitField0_ & 0x00000004) == 0x00000004)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeUInt32Size(3, pid_);
       }
       size += unknownFields.getSerializedSize();
       memoizedSize = size;
@@ -285,6 +326,11 @@ public final class ProcessRpcProto {
         result = result && getHttpPort()
             .equals(other.getHttpPort());
       }
+      result = result && (hasPid() == other.hasPid());
+      if (hasPid()) {
+        result = result && (getPid()
+            == other.getPid());
+      }
       result = result && unknownFields.equals(other.unknownFields);
       return result;
     }
@@ -303,6 +349,10 @@ public final class ProcessRpcProto {
       if (hasHttpPort()) {
         hash = (37 * hash) + HTTP_PORT_FIELD_NUMBER;
         hash = (53 * hash) + getHttpPort().hashCode();
+      }
+      if (hasPid()) {
+        hash = (37 * hash) + PID_FIELD_NUMBER;
+        hash = (53 * hash) + getPid();
       }
       hash = (29 * hash) + unknownFields.hashCode();
       memoizedHashCode = hash;
@@ -445,6 +495,8 @@ public final class ProcessRpcProto {
         bitField0_ = (bitField0_ & ~0x00000001);
         httpPort_ = "";
         bitField0_ = (bitField0_ & ~0x00000002);
+        pid_ = 0;
+        bitField0_ = (bitField0_ & ~0x00000004);
         return this;
       }
 
@@ -481,6 +533,10 @@ public final class ProcessRpcProto {
           to_bitField0_ |= 0x00000002;
         }
         result.httpPort_ = httpPort_;
+        if (((from_bitField0_ & 0x00000004) == 0x00000004)) {
+          to_bitField0_ |= 0x00000004;
+        }
+        result.pid_ = pid_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -540,6 +596,9 @@ public final class ProcessRpcProto {
           httpPort_ = other.httpPort_;
           onChanged();
         }
+        if (other.hasPid()) {
+          setPid(other.getPid());
+        }
         this.mergeUnknownFields(other.unknownFields);
         onChanged();
         return this;
@@ -548,6 +607,9 @@ public final class ProcessRpcProto {
       @java.lang.Override
       public final boolean isInitialized() {
         if (!hasAppid()) {
+          return false;
+        }
+        if (!hasPid()) {
           return false;
         }
         return true;
@@ -721,6 +783,38 @@ public final class ProcessRpcProto {
   }
   bitField0_ |= 0x00000002;
         httpPort_ = value;
+        onChanged();
+        return this;
+      }
+
+      private int pid_ ;
+      /**
+       * <code>required uint32 pid = 3;</code>
+       */
+      public boolean hasPid() {
+        return ((bitField0_ & 0x00000004) == 0x00000004);
+      }
+      /**
+       * <code>required uint32 pid = 3;</code>
+       */
+      public int getPid() {
+        return pid_;
+      }
+      /**
+       * <code>required uint32 pid = 3;</code>
+       */
+      public Builder setPid(int value) {
+        bitField0_ |= 0x00000004;
+        pid_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>required uint32 pid = 3;</code>
+       */
+      public Builder clearPid() {
+        bitField0_ = (bitField0_ & ~0x00000004);
+        pid_ = 0;
         onChanged();
         return this;
       }
@@ -2571,11 +2665,11 @@ public final class ProcessRpcProto {
   static {
     java.lang.String[] descriptorData = {
       "\n*worker/func/shared/process_rpc_proto.p" +
-      "roto\022\021process_rpc_proto\".\n\nAppStarted\022\r\n" +
-      "\005appid\030\001 \002(\t\022\021\n\thttp_port\030\002 \001(\t\",\n\013FuncC" +
-      "allReq\022\014\n\004func\030\001 \002(\t\022\017\n\007arg_str\030\002 \002(\t\"\037\n" +
-      "\014FuncCallResp\022\017\n\007ret_str\030\001 \002(\t\"\022\n\020Update" +
-      "Checkpoint"
+      "roto\022\021process_rpc_proto\";\n\nAppStarted\022\r\n" +
+      "\005appid\030\001 \002(\t\022\021\n\thttp_port\030\002 \001(\t\022\013\n\003pid\030\003" +
+      " \002(\r\",\n\013FuncCallReq\022\014\n\004func\030\001 \002(\t\022\017\n\007arg" +
+      "_str\030\002 \002(\t\"\037\n\014FuncCallResp\022\017\n\007ret_str\030\001 " +
+      "\002(\t\"\022\n\020UpdateCheckpoint"
     };
     com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
         new com.google.protobuf.Descriptors.FileDescriptor.    InternalDescriptorAssigner() {
@@ -2594,7 +2688,7 @@ public final class ProcessRpcProto {
     internal_static_process_rpc_proto_AppStarted_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_process_rpc_proto_AppStarted_descriptor,
-        new java.lang.String[] { "Appid", "HttpPort", });
+        new java.lang.String[] { "Appid", "HttpPort", "Pid", });
     internal_static_process_rpc_proto_FuncCallReq_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_process_rpc_proto_FuncCallReq_fieldAccessorTable = new

@@ -4,6 +4,7 @@ use prost::{DecodeError, Message};
 use qp2p::{EndpointError, SendError};
 use thiserror::Error;
 use wasmedge_sdk::error::WasmEdgeError;
+use zip_extract::ZipExtractError;
 
 use crate::{
     general::{m_appmeta_manager::FnMeta, network::rpc_model::HashValue},
@@ -44,6 +45,8 @@ pub enum WsRpcErr {
 #[derive(Debug)]
 pub enum WsIoErr {
     Io(std::io::Error),
+    Zip(ZipExtractError),
+    Zip2(zip::result::ZipError),
 }
 
 #[derive(Debug)]
@@ -101,6 +104,23 @@ pub enum WsFuncError {
         func: String,
         http_err: reqwest::Error,
     },
+    AppPackFailedZip(ZipExtractError),
+    AppPackNoExe,
+    AppPackExeName(String),
+    AppPackConfReadInvalid(std::io::Error),
+    AppPackConfDecodeErr(serde_yaml::Error),
+    AppPackRemoveFailed(std::io::Error),
+    AppPackTmp2NewFailed(std::io::Error),
+    FuncSnapshotFailed {
+        detail: String,
+    },
+    InstanceNotFound(String),
+    InstanceTypeNotMatch {
+        app: String,
+        want: String,
+    },
+    InstanceJavaPidNotFound(String),
+    InstanceProcessStartFailed(std::io::Error),
 }
 
 #[derive(Error, Debug)]

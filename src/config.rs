@@ -15,6 +15,15 @@ pub struct NodesConfig {
 }
 
 impl NodesConfig {
+    pub fn get_nodeconfig(&self, id: NodeID) -> &NodeConfig {
+        if self.this.0 == id {
+            &self.this.1
+        } else {
+            self.peers.get(&id).unwrap_or_else(|| {
+                panic!("peers {:?}", self.peers);
+            })
+        }
+    }
     pub fn node_cnt(&self) -> usize {
         self.peers.len() + 1
     }
@@ -41,8 +50,18 @@ impl NodesConfig {
             .map(|(id, _)| *id)
             .collect()
     }
+    pub fn get_worker_nodes(&self) -> HashSet<NodeID> {
+        self.peers
+            .iter()
+            .filter(|(_, config)| config.is_worker())
+            .map(|(id, _)| *id)
+            .collect()
+    }
     pub fn node_exist(&self, id: NodeID) -> bool {
         self.peers.contains_key(&id) || self.this.0 == id
+    }
+    pub fn all_nodes_iter<'a>(&'a self) -> impl Iterator<Item = (&'a NodeID, &'a NodeConfig)> {
+        self.peers.iter().chain(Some((&self.this.0, &self.this.1)))
     }
 }
 
@@ -66,7 +85,7 @@ impl NodeConfig {
     pub fn set_domain(&mut self, domain: Option<String>) {
         self.domain = domain;
     }
-    pub fn get_http_domain<'a>(&'a self) -> Option<&'a str> {
+    fn get_http_domain<'a>(&'a self) -> Option<&'a str> {
         // check domain valid
         self.domain
             .as_ref()
@@ -81,6 +100,12 @@ impl NodeConfig {
                 ok
             })
             .map(|d| &**d)
+    }
+
+    pub fn http_url(&self) -> String {
+        self.get_http_domain()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| format!("http://{}:{}", self.addr.ip(), self.addr.port() + 1))
     }
 }
 

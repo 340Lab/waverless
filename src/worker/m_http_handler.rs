@@ -3,13 +3,15 @@ use crate::{
     logical_module_view_impl,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
-    util::JoinHandleWrapper,
+    util::{JoinHandleWrapper, WithBind},
 };
 use async_trait::async_trait;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
+    Router,
 };
+use parking_lot::Mutex;
 use ws_derive::LogicalModule;
 
 use super::m_executor::Executor;
@@ -18,6 +20,7 @@ use super::m_executor::Executor;
 pub struct WorkerHttpHandler {
     view: WorkerHttpHandlerView,
     local_req_id_allocator: LocalReqIdAllocator,
+    building_router: Mutex<Option<Router>>, // valid when init
 }
 
 #[async_trait]
@@ -29,6 +32,7 @@ impl LogicalModule for WorkerHttpHandler {
         Self {
             view: WorkerHttpHandlerView::new(args.logical_modules_ref.clone()),
             local_req_id_allocator: LocalReqIdAllocator::new(),
+            building_router: Mutex::new(Some(Router::new())),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -46,6 +50,11 @@ logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
 
 #[async_trait]
 impl HttpHandler for WorkerHttpHandler {
+    fn building_router<'a>(&'a self) -> WithBind<'a, Router> {
+        let guard = self.building_router.lock();
+        WithBind::MutexGuardOpt(guard)
+    }
+
     async fn handle_request(&self, route: &str, http_text: String) -> Response {
         tracing::debug!("handle_request {}", route);
         if let Ok(res) = self

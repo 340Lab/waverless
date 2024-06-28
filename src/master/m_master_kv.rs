@@ -42,11 +42,12 @@ logical_module_view_impl!(MasterKvView, kv_store_engine, KvStoreEngine);
 #[derive(LogicalModule)]
 pub struct MasterKv {
     lock_notifiers: RwLock<HashMap<Vec<u8>, (NodeID, u32, Arc<Notify>)>>,
-    rpc_handler: RPCHandler<proto::kv::KvRequests>,
     view: MasterKvView,
     kv_ope_id_allocator: AtomicU32,
     // kv_ope_notify: tokio::sync::RwLock<HashMap<u32, Arc<Notify>>>,
     kv_ope_notify: RwLock<HashMap<u32, Arc<Notify>>>,
+
+    rpc_handler: RPCHandler<proto::kv::KvRequests>,
 }
 
 #[async_trait]

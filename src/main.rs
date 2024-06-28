@@ -1,13 +1,14 @@
 #![allow(clippy::all)]
 #![allow(invalid_reference_casting)] // allow unsafe cast
 #![deny(
-    unused_imports,
     unused_variables,
     unused_mut,
     unused_attributes,
     dead_code,
     clippy::unnecessary_mut_passed,
-    unused_results
+    unused_results,
+    clippy::let_underscore_future,
+    clippy::let_underscore_future
 )]
 
 use clap::Parser;

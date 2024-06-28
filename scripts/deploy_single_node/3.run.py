@@ -30,12 +30,11 @@ def print_title(title):
     print(f"\n\n{'#'*20} {title} {'#'*20}\n\n")
 #################################################################################################ß
 
+args=sys.argv
 
 print_title("update config")
-os_system_sure("cp node_config.yaml pack/waverless_backend/test_dir/files/node_config.yaml")
+os_system_sure(f"cp node_config.yaml pack/waverless_backend/test_dir{args[1]}/files/node_config.yaml")
 
 
 print_title("run")
-args=sys.argv
-args=" ".join(args[1:])
-os_system_sure(f"python3 pack/waverless_backend/run_node.py {args}")
+os_system_sure(f"python3 pack/waverless_backend/run_node{args[1]}.py")

@@ -1,0 +1,17 @@
+# data_master:
+#   role: master
+#   apis:
+#     store_data:
+#       type: rpc
+#       bind_type:
+#         D: Data
+#       arg:
+#       - data: D
+#       # ret: ()
+#     # broadcast_data:
+#     #   type: rpc
+#     # transfer_data:
+#     #   type: rpc
+appmeta_manager:
+  path: general/m_appmeta_manager
+  apis:

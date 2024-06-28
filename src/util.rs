@@ -1,11 +1,13 @@
 use std::{
     fmt::Debug,
     future::Future,
+    ops::{Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
     task::{Context, Poll},
 };
 
+use parking_lot::MutexGuard;
 #[cfg(test)]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
@@ -77,6 +79,40 @@ impl JoinHandleWrapper {
                     .await
                     .unwrap()
             }
+        }
+    }
+}
+
+pub enum WithBind<'a, T> {
+    MutexGuard(MutexGuard<'a, T>),
+    MutexGuardOpt(MutexGuard<'a, Option<T>>),
+}
+
+impl<T> WithBind<'_, T> {
+    pub fn option_mut(&mut self) -> &mut Option<T> {
+        match self {
+            Self::MutexGuard(_) => unreachable!(),
+            Self::MutexGuardOpt(g) => &mut *g,
+        }
+    }
+}
+
+impl<T> Deref for WithBind<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::MutexGuard(g) => g,
+            Self::MutexGuardOpt(g) => g.as_ref().unwrap(),
+        }
+    }
+}
+
+impl<T> DerefMut for WithBind<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::MutexGuard(g) => g,
+            Self::MutexGuardOpt(g) => g.as_mut().unwrap(),
         }
     }
 }

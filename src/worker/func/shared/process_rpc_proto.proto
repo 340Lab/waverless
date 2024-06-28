@@ -4,6 +4,7 @@ package process_rpc_proto;
 message AppStarted {
     required string  appid = 1;
     optional string  http_port = 2;
+    required uint32 pid=3;
 }
 
 

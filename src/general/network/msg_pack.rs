@@ -60,7 +60,11 @@ define_msg_ids!(
     proto::remote_sys::GetDirContentReq,
     proto::remote_sys::GetDirContentResp,
     proto::remote_sys::RunCmdReq,
-    proto::remote_sys::RunCmdResp
+    proto::remote_sys::RunCmdResp,
+    proto::DataVersionRequest,
+    proto::DataVersionResponse,
+    proto::WriteOneDataRequest,
+    proto::WriteOneDataResponse
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -89,6 +93,14 @@ impl RPCReq for proto::remote_sys::GetDirContentReq {
 
 impl RPCReq for proto::remote_sys::RunCmdReq {
     type Resp = proto::remote_sys::RunCmdResp;
+}
+
+impl RPCReq for proto::DataVersionRequest {
+    type Resp = proto::DataVersionResponse;
+}
+
+impl RPCReq for proto::WriteOneDataRequest {
+    type Resp = proto::WriteOneDataResponse;
 }
 
 pub trait KvResponseExt {

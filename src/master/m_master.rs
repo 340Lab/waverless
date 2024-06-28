@@ -1,9 +1,12 @@
 use std::{collections::hash_map::DefaultHasher, hash::Hasher, time::Duration};
 
 use async_trait::async_trait;
+use axum::response::Redirect;
+use rand::Rng;
 use ws_derive::LogicalModule;
 
 use crate::{
+    config::NodesConfig,
     general::network::{
         m_p2p::{P2PModule, RPCCaller},
         proto::{
@@ -99,7 +102,31 @@ impl LogicalModule for Master {
     }
 }
 
+pub enum ScheduleWorkload {
+    JavaAppConstruct,
+}
+
+pub struct TargetNode(pub NodeID);
+
+impl TargetNode {
+    pub fn http_redirect(&self, nodesconf: &NodesConfig) -> Redirect {
+        let conf = nodesconf.get_nodeconfig(self.0);
+        Redirect::temporary(&conf.http_url())
+    }
+}
+
 impl Master {
+    pub fn schedule(&self, wl: ScheduleWorkload) -> TargetNode {
+        match wl {
+            ScheduleWorkload::JavaAppConstruct => {
+                let workers = self.view.p2p().nodes_config.get_worker_nodes();
+                // random select one
+                let mut rng = rand::thread_rng();
+                let idx = rng.gen_range(0..workers.len());
+                TargetNode(*workers.iter().nth(idx).unwrap())
+            }
+        }
+    }
     pub async fn handle_http_schedule(&self, _app: &str) -> NodeID {
         self.select_node()
     }

@@ -30,7 +30,7 @@ if len(sys.argv)!=2:
     exit(1)
 
 # stop service
-os_system_sure("systemctl stop waverless")
+os_system("systemctl stop waverless")
 
 # Update /waverless_deploy/waverless_backend files
 INSTALL_DIR="/waverless_deploy/"
@@ -38,7 +38,7 @@ INSTALL_DIR="/waverless_deploy/"
 # back up /waverless_backend/test_dir/*
 os_system_sure(f"mkdir -p {INSTALL_DIR}/install_backup_test_dir")
 os_system_sure(f"ls {INSTALL_DIR}/install_backup_test_dir/")
-os_system_sure(f"ls {INSTALL_DIR}/waverless_backend/test_dir")
+os_system(f"ls {INSTALL_DIR}/waverless_backend/test_dir")
 os_system_sure(f"rm -rf {INSTALL_DIR}/waverless_backend/test_dir/apps")
 os_system_sure(f"rm -rf {INSTALL_DIR}/waverless_backend/test_dir/files")
 os_system(f"mv {INSTALL_DIR}/waverless_backend/test_dir/* {INSTALL_DIR}/install_backup_test_dir/")

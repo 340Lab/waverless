@@ -170,6 +170,17 @@ pub enum EachAppCache {
     Shared(SharedInstance),
 }
 
+impl EachAppCache {
+    pub async fn kill(&self) {
+        match self {
+            Self::Owned(_owned) => {}
+            Self::Shared(p) => {
+                let _ = p.0.kill().await;
+            }
+        }
+    }
+}
+
 impl From<OwnedEachAppCache> for EachAppCache {
     fn from(a: OwnedEachAppCache) -> Self {
         Self::Owned(a)
@@ -201,6 +212,8 @@ impl LogicalModule for InstanceManager {
     where
         Self: Sized,
     {
+        // std::env::set_var("JAVA_HOME", "/usr/crac_jdk");
+
         Self {
             app_instances: SkipMap::new(),
             file_dir: args.nodes_config.file_dir.clone(),
@@ -256,5 +269,20 @@ impl InstanceManager {
                 .await
                 .into(),
         }
+    }
+    pub async fn drap_app_instances(&self, app: &str) {
+        let _inss = self.app_instances.remove(app);
+        // if let Some(inss) = inss {
+        //     match inss.value() {
+        //         EachAppCache::Owned(owned) => {
+        //             // for (_, v) in owned.cache.iter() {
+        //             //     if let Some(v) = v.0.as_ref() {
+        //             //         v.drop();
+        //             //     }
+        //             // }
+        //         }
+        //         EachAppCache::Shared(_) => {}
+        //     }
+        // }
     }
 }

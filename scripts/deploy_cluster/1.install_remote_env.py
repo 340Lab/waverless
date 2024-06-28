@@ -31,6 +31,7 @@ def deploy_to_nodes():
     import yaml
     def deploy_to_node(ip, username, port,output_file):
         try:
+            print("Start deploy, check logs in deploy_cluster/log/")
             # SCP file transfer
             subprocess.run(f'ssh -p {port} {username}@{ip} "rm -rf /tmp/waverless_tmp/install"', shell=True, check=True, stdout=output_file, stderr=subprocess.STDOUT)
             subprocess.run(f'ssh -p {port} {username}@{ip} "mkdir -p /tmp/waverless_tmp/install"', shell=True, check=True, stdout=output_file, stderr=subprocess.STDOUT)
@@ -41,8 +42,9 @@ def deploy_to_nodes():
             cd /tmp/waverless_tmp/install
             tar -zxvf install.tar.gz
             bash 1.install_basic.sh
-            python3 2.ans_install_build.py
+            python3 2.install_build.py
             """
+            
             # export shell script to remote server and execute
             subprocess.run(f'ssh -p {port} {username}@{ip} "{remote_cmd}"', shell=True, check=True, stdout=output_file, stderr=subprocess.STDOUT)
             print(f"Deployment to {ip} successful!")

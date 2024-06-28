@@ -22,4 +22,5 @@ pub mod proto {
     pub mod remote_sys {
         include!(concat!(env!("OUT_DIR"), "/remote_sys.rs"));
     }
+    include!(concat!(env!("OUT_DIR"), "/data.rs"));
 }

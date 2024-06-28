@@ -67,7 +67,7 @@ impl RpcCustom for ProcessRpc {
             let ishttp = {
                 let appmanmetas = appman.meta.read().await;
                 let Some(app) = appmanmetas.get_app_meta(&res.appid) else {
-                    tracing::warn!("app not found, invalid verify !");
+                    tracing::warn!("app {} not found, invalid verify !", res.appid);
                     return None;
                 };
                 app.contains_http_fn()
@@ -82,10 +82,10 @@ impl RpcCustom for ProcessRpc {
 
             // update to the instance
             let insman = ProcessRpc::global_m_instance_manager().unwrap();
-            let instance = insman
-                .app_instances
-                .get(&res.appid)
-                .expect("instance should be inited before get the verify");
+            let instance = insman.app_instances.get(&res.appid).expect(&format!(
+                "instance should be inited before get the verify {}",
+                res.appid
+            ));
             let Some(s): Option<&SharedInstance> = instance.value().as_shared() else {
                 tracing::warn!("only receive the verify from the instance that is shared");
                 return None;
@@ -98,7 +98,7 @@ impl RpcCustom for ProcessRpc {
         Some(HashValue::Str(res.appid))
     }
 
-    fn handle_remote_call(conn: &HashValue, id: u8, buf: &[u8]) -> bool {
+    fn handle_remote_call(_conn: &HashValue, id: u8, buf: &[u8]) -> bool {
         tracing::debug!("handle_remote_call: id: {}", id);
         let _ = match id {
             4 => (),
@@ -110,13 +110,14 @@ impl RpcCustom for ProcessRpc {
         let err = match id {
             4 => match proc_proto::UpdateCheckpoint::decode(buf) {
                 Ok(_req) => {
-                    let conn = conn.clone();
-                    let _ = tokio::spawn(async move {
-                        unsafe {
-                            let ins_man = ProcessRpc::global_m_instance_manager().unwrap();
-                            ins_man.update_checkpoint(conn.as_str().unwrap()).await;
-                        }
-                    });
+                    tracing::debug!("function requested for checkpoint, but we ignore it");
+                    // let conn = conn.clone();
+                    // let _ = tokio::spawn(async move {
+                    //     unsafe {
+                    //         let ins_man = ProcessRpc::global_m_instance_manager().unwrap();
+                    //         ins_man.update_checkpoint(conn.as_str().unwrap()).await;
+                    //     }
+                    // });
                     return true;
                 }
                 Err(e) => e,

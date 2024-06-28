@@ -5,7 +5,10 @@ use crate::{
         GetServiceListResp, RunServiceActionReq, RunServiceActionResp,
     },
     logical_module_view_impl,
-    sys::{LogicalModule, LogicalModulesRef},
+    master::m_http_handler::MasterHttpHandler,
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    util::WithBind,
+    worker::m_http_handler::WorkerHttpHandler,
 };
 use async_trait::async_trait;
 use axum::{
@@ -14,8 +17,8 @@ use axum::{
     routing::post,
     Router,
 };
-use std::sync::atomic::AtomicUsize;
 use std::{net::SocketAddr, sync::OnceLock};
+use std::{ops::Deref, sync::atomic::AtomicUsize};
 use tower_http::cors::CorsLayer;
 pub type ReqId = usize;
 
@@ -35,6 +38,7 @@ impl LocalReqIdAllocator {
 
 #[async_trait]
 pub trait HttpHandler: LogicalModule {
+    fn building_router<'a>(&'a self) -> WithBind<'a, Router>;
     // fn alloc_local_req_id(&self) -> ReqId;
     async fn handle_request(&self, req_fn: &str, http_text: String) -> Response;
     // async fn select_node(
@@ -120,7 +124,12 @@ pub async fn start_http_handler(modsref: LogicalModulesRef) {
         view.p2p().nodes_config.this.1.addr.port() + 1,
     );
     tracing::info!("http start on {}", addr);
-    let app = Router::new();
+    let app = view
+        .http_handler()
+        .building_router()
+        .option_mut()
+        .take()
+        .unwrap();
     // prometheus metrics
     // .route("metrics")
     //
@@ -155,4 +164,24 @@ async fn handler(route: Path<String>, body: String) -> impl IntoResponse {
         .http_handler()
         .handle_request(route.as_str(), body)
         .await
+}
+
+pub struct HttpHandlerDispatch(Box<dyn HttpHandler>);
+
+impl Deref for HttpHandlerDispatch {
+    type Target = Box<dyn HttpHandler>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl HttpHandlerDispatch {
+    pub fn new(arg: LogicalModuleNewArgs) -> Self {
+        if arg.nodes_config.this.1.is_master() {
+            Self(Box::new(MasterHttpHandler::new(arg)))
+        } else {
+            Self(Box::new(WorkerHttpHandler::new(arg)))
+        }
+    }
 }

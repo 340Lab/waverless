@@ -105,6 +105,6 @@ def entry():
         #     )
         
         # run ansible
-        run_cmd("ansible -i gen_ansible.ini -m ping all")
+        # run_cmd("ansible -i gen_ansible.ini -m ping all")
         
 entry()

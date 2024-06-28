@@ -1,34 +1,55 @@
-mod appmeta_fs;
 pub mod fn_event;
+mod http;
+mod v_os;
 
-use self::appmeta_fs::AppMetaFs;
+use self::v_os::AppMetaVisitOs;
 use super::{
+    m_data_general::DataGeneral,
     m_kv_store_engine::{KeyTypeServiceList, KvStoreEngine},
     m_os::OperatingSystem,
+    network::{
+        http_handler::HttpHandler,
+        m_p2p::P2PModule,
+        proto::{
+            write_one_data_request::{data_item, DataItem, FileData},
+            DataMeta, DataModeCache, DataModeDistribute,
+        },
+    },
 };
+use crate::result::{WSError, WsIoErr};
 use crate::{
     general::kv_interface::KvOps,
     logical_module_view_impl,
-    result::{ErrCvt, WSResult},
+    master::m_master::Master,
+    result::{ErrCvt, WSResult, WsFuncError},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::{self, JoinHandleWrapper},
+    worker::func::m_instance_manager::InstanceManager,
 };
 use async_trait::async_trait;
+use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     fs,
+    io::Cursor,
     path::Path,
 };
 use tokio::sync::RwLock;
+use uuid::Uuid;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, os, OperatingSystem);
 logical_module_view_impl!(View, kv_store_engine, KvStoreEngine);
-// logical_module_view_impl!(View, p2p, P2PModule);
+logical_module_view_impl!(View, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(View, appmeta_manager, AppMetaManager);
+logical_module_view_impl!(View, p2p, P2PModule);
+logical_module_view_impl!(View, master, Option<Master>);
+logical_module_view_impl!(View, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(View, data_general, DataGeneral);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -77,19 +98,19 @@ impl From<FnEventYaml> for FnEvent {
 //     }
 // }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HttpMethod {
     Get,
     Post,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HttpCall {
     Direct,
     Indirect,
 }
 
-#[derive(Debug, EnumAsInner, Clone)]
+#[derive(Debug, EnumAsInner, Clone, Serialize, Deserialize)]
 pub enum FnCallMeta {
     Http { method: HttpMethod, call: HttpCall },
     Rpc,
@@ -164,10 +185,10 @@ impl<'de> Deserialize<'de> for FnMetaYaml {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KeyPattern(pub String);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KvMeta {
     set: bool,
     get: bool,
@@ -175,7 +196,7 @@ pub struct KvMeta {
     pub pattern: KeyPattern,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnMeta {
     pub calls: Vec<FnCallMeta>,
     // pub event: Vec<FnEvent>,
@@ -188,13 +209,13 @@ pub struct AppMetaYaml {
     pub fns: HashMap<String, FnMetaYaml>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AppType {
     Jar,
     Wasm,
 }
 
-#[allow(dead_code)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppMeta {
     pub app_type: AppType,
     fns: HashMap<String, FnMeta>,
@@ -229,14 +250,6 @@ impl AppMeta {
 pub struct AppMetas {
     app_metas: HashMap<String, AppMeta>,
     pattern_2_app_fn: HashMap<String, Vec<(String, String)>>,
-}
-
-#[derive(LogicalModule)]
-pub struct AppMetaManager {
-    pub meta: RwLock<AppMetas>,
-    pub fs_layer: AppMetaFs,
-    view: View,
-    // app_meta_list_lock: Mutex<()>,
 }
 
 // impl FnEvent {
@@ -466,7 +479,11 @@ impl From<FnMetaYaml> for FnMeta {
 // }
 
 impl AppMeta {
-    pub async fn new(metayaml: AppMetaYaml, app_name: &str, meta_fs: &AppMetaFs) -> Self {
+    pub async fn new(
+        metayaml: AppMetaYaml,
+        app_name: &str,
+        meta_fs: &AppMetaVisitOs,
+    ) -> WSResult<Self> {
         let fns = metayaml
             .fns
             .into_iter()
@@ -475,12 +492,12 @@ impl AppMeta {
                 (fnname, fnmeta)
             })
             .collect();
-        let app_type = meta_fs.get_app_type(app_name).await.unwrap();
-        Self {
+        let app_type = meta_fs.get_app_type(app_name).await?;
+        Ok(Self {
             app_type,
             fns,
             cache_contains_http_fn: None,
-        }
+        })
     }
     pub fn fns(&self) -> Vec<String> {
         self.fns.iter().map(|(fnname, _)| fnname.clone()).collect()
@@ -499,6 +516,14 @@ impl AppMeta {
     // }
 }
 
+#[derive(LogicalModule)]
+pub struct AppMetaManager {
+    pub meta: RwLock<AppMetas>,
+    pub fs_layer: AppMetaVisitOs,
+    view: View,
+    // app_meta_list_lock: Mutex<()>,
+}
+
 #[async_trait]
 impl LogicalModule for AppMetaManager {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
@@ -506,7 +531,7 @@ impl LogicalModule for AppMetaManager {
         Self: Sized,
     {
         let view = View::new(args.logical_modules_ref.clone());
-        let fs_layer = AppMetaFs::new(view.clone());
+        let fs_layer = AppMetaVisitOs::new(view.clone());
         Self {
             meta: RwLock::new(AppMetas {
                 app_metas: HashMap::new(),
@@ -516,6 +541,16 @@ impl LogicalModule for AppMetaManager {
             fs_layer,
             // app_meta_list_lock: Mutex::new(()),
         }
+    }
+    async fn init(&self) -> WSResult<()> {
+        let mut router = self.view.http_handler().building_router();
+
+        let take = router.option_mut().take().unwrap();
+        let take = http::binds(take, self.view.clone());
+        let _ = router.option_mut().replace(take);
+        // .route("/appman/upload", post(handler2))
+
+        Ok(())
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         self.meta
@@ -546,7 +581,7 @@ impl AppMetas {
     async fn load_all_app_meta(
         &mut self,
         file_dir: impl AsRef<Path>,
-        meta_fs: &AppMetaFs,
+        meta_fs: &AppMetaVisitOs,
     ) -> WSResult<()> {
         let entries =
             fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
@@ -581,7 +616,7 @@ impl AppMetas {
             };
 
             // transform
-            let meta = AppMeta::new(meta_yaml, &app_name, meta_fs).await;
+            let meta = AppMeta::new(meta_yaml, &app_name, meta_fs).await.unwrap();
 
             //TODO: build and checks
             // - build up key pattern to app fn
@@ -609,6 +644,151 @@ impl AppMetas {
 }
 
 impl AppMetaManager {
+    async fn construct_tmp_app(&self, tmpapp: &str) -> WSResult<AppMeta> {
+        // 1.meta
+        // let appdir = self.fs_layer.concat_app_dir(app);
+        let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
+
+        // TODO: 2.check project dir
+        // 3. if java, take snapshot
+        if let AppType::Jar = appmeta.app_type {
+            let _ = self
+                .meta
+                .write()
+                .await
+                .app_metas
+                .insert(tmpapp.to_owned(), appmeta.clone());
+            tracing::debug!("record app meta to make checkpoint {}", tmpapp);
+            self.view
+                .instance_manager()
+                .make_checkpoint_for_app(tmpapp)
+                .await?;
+            self.view
+                .instance_manager()
+                .drap_app_instances(tmpapp)
+                .await;
+            // remove app_meta
+            tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
+            let _ = self
+                .meta
+                .write()
+                .await
+                .app_metas
+                .remove(tmpapp)
+                .unwrap_or_else(|| {
+                    panic!("remove app meta failed, app: {}", tmpapp);
+                });
+        }
+
+        Ok(appmeta)
+    }
+    pub async fn app_uploaded(&self, appname: String, data: Bytes) -> WSResult<()> {
+        // 1. tmpapp name & dir
+        // TODO: fobidden tmpapp public access
+        // let tmpapp = format!("tmp{}", Uuid::new_v4()); //appname.clone();
+        let tmpapp = format!("{}", appname);
+        let tmpappdir = self.fs_layer.concat_app_dir(&tmpapp);
+        let tmpapp = tmpapp.clone();
+
+        // 2. unzip app pack
+        let tmpappdir2 = tmpappdir.clone();
+        // remove old dir&app
+        if let Some(_) = self.meta.write().await.app_metas.remove(&tmpapp) {
+            let ins = self.view.instance_manager().app_instances.remove(&tmpapp);
+            if let Some(ins) = ins {
+                ins.value().kill().await;
+            }
+        }
+        if tmpappdir2.exists() {
+            // remove old app
+            fs::remove_dir_all(&tmpappdir2).unwrap();
+        }
+        let res = tokio::task::spawn_blocking(move || {
+            let data = data.to_vec();
+            zip_extract::extract(Cursor::new(data), &tmpappdir2, false)
+        })
+        .await
+        .unwrap();
+
+        match res {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::warn!("unzip failed, err: {:?}", err);
+                let _ = fs::remove_dir_all(&tmpappdir);
+                return Err(WsFuncError::AppPackFailedZip(err).into());
+            }
+        };
+
+        // 3. check meta
+        let res = self.construct_tmp_app(&tmpapp).await;
+        let appmeta = match res {
+            Err(e) => {
+                let _ = fs::remove_dir_all(&tmpappdir);
+                tracing::warn!("construct app failed, err {:?}", e);
+                return Err(e);
+            }
+            Ok(appmeta) => appmeta,
+        };
+
+        // 4. zip tmp dir to memory
+        let zipfiledata = {
+            tracing::debug!("zip tmp dir to memory");
+            // if let Ok(direntries) = fs::read_dir(tmpappdir.join("checkpoint-dir")) {
+            //     for f in direntries {
+            //         tracing::debug!(
+            //             "file in checkpoint-dir: {:?}",
+            //             f.map(|v| v.file_name().to_str().unwrap().to_owned())
+            //         );
+            //     }
+            // }
+            let view = self.view.clone();
+            tokio::task::spawn_blocking(move || {
+                view.os()
+                    .zip_dir_2_data(&tmpappdir, zip::CompressionMethod::Deflated)
+            })
+            .await
+            .unwrap()
+        }?;
+
+        // remove temp dir
+        // let _ = fs::remove_dir_all(&tmpappdir).map_err(|e| WSError::from(WsIoErr::Io(e)))?;
+
+        // 3. broadcast meta and appfile
+        tracing::debug!("broadcast meta and appfile");
+        self.view
+            .data_general()
+            .write_data(
+                format!("app{}", appname),
+                vec![
+                    DataMeta {
+                        cache: DataModeCache::AlwaysInMem as i32,
+                        distribute: DataModeDistribute::BroadcastRough as i32,
+                    },
+                    DataMeta {
+                        cache: DataModeCache::AlwaysInFs as i32,
+                        distribute: DataModeDistribute::BroadcastRough as i32,
+                    },
+                ],
+                vec![
+                    DataItem {
+                        data: Some(data_item::Data::RawBytes(
+                            bincode::serialize(&appmeta).unwrap(),
+                        )),
+                    },
+                    DataItem {
+                        data: Some(data_item::Data::File(FileData {
+                            file_name: format!("apps/{}", appname),
+                            is_dir: true,
+                            file_content: zipfiledata,
+                        })),
+                    },
+                ],
+            )
+            .await;
+        tracing::debug!("app uploaded");
+        Ok(())
+    }
+
     pub fn set_app_meta_list(&self, list: Vec<String>) {
         self.view.kv_store_engine().set(
             KeyTypeServiceList,

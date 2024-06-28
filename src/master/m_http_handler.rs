@@ -2,13 +2,14 @@ use async_trait::async_trait;
 use axum::{
     http::{HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
+    Router,
 };
+use parking_lot::Mutex;
 use prometheus_client::encoding::text::encode;
 use ws_derive::LogicalModule;
 // use
 
 use crate::{
-    config::NodeConfig,
     general::network::{
         http_handler::{self, HttpHandler},
         m_p2p::P2PModule,
@@ -16,7 +17,7 @@ use crate::{
     logical_module_view_impl,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
-    util::JoinHandleWrapper,
+    util::{JoinHandleWrapper, WithBind},
 };
 
 use super::{m_master::Master, m_metric_observor::MetricObservor};
@@ -35,6 +36,7 @@ pub struct MasterHttpHandler {
     // local_req_id_allocator: LocalReqIdAllocator,
     // view: ScheMasterView,
     view: MasterHttpHandlerView,
+    building_router: Mutex<Option<Router>>, // valid when init
 }
 
 #[async_trait]
@@ -45,6 +47,7 @@ impl LogicalModule for MasterHttpHandler {
     {
         Self {
             view: MasterHttpHandlerView::new(args.logical_modules_ref.clone()),
+            building_router: Mutex::new(Some(Router::new())),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -73,18 +76,22 @@ impl MasterHttpHandler {
     }
 }
 
-fn construct_target_path(node_config: &NodeConfig, sub_api: &str) -> String {
-    if let Some(d) = node_config.get_http_domain() {
-        format!("{}/{}", d, sub_api)
-    } else {
-        let mut addr = node_config.addr;
-        addr.set_port(addr.port() + 1);
-        format!("http://{}/{}", addr, sub_api)
-    }
-}
+// fn construct_target_path(node_config: &NodeConfig, sub_api: &str) -> String {
+//     if let Some(d) = node_config.get_http_domain() {
+//         format!("{}/{}", d, sub_api)
+//     } else {
+//         let mut addr = node_config.addr;
+//         addr.set_port(addr.port() + 1);
+//         format!("http://{}/{}", addr, sub_api)
+//     }
+// }
 
 #[async_trait]
 impl HttpHandler for MasterHttpHandler {
+    fn building_router<'a>(&'a self) -> WithBind<'a, Router> {
+        let guard = self.building_router.lock();
+        WithBind::MutexGuardOpt(guard)
+    }
     // fn alloc_local_req_id(&self) -> ReqId {
     //     self.local_req_id_allocator.alloc()
     // }
@@ -122,7 +129,15 @@ impl HttpHandler for MasterHttpHandler {
             .get(&(node as u32))
             .unwrap();
 
-        let target_path = construct_target_path(target_node, app);
+        let url = target_node.http_url();
+        let url = if url.ends_with('/') {
+            // 如果是，去除末尾的斜杠
+            &url[..url.len() - 1]
+        } else {
+            // 否则，返回原URL
+            &url
+        };
+        let target_path = format!("{}/{}", url, app);
 
         // target_node.set_port(target_node.port() + 1);
         tracing::debug!("redirect to {}", target_path);

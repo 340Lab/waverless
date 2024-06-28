@@ -1,11 +1,14 @@
 // process function just run in unique process
 
-use std::sync::Arc;
+use std::{
+    process::{self, Stdio},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use parking_lot::RwLock;
-use tokio::sync::oneshot;
+use tokio::{process::Command, sync::oneshot};
 
 use crate::{
     general::{
@@ -13,15 +16,27 @@ use crate::{
         network::rpc_model::{self, HashValue},
     },
     result::WsFuncError,
-    worker::func::InstanceTrait,
+    worker::func::{shared::java, InstanceTrait},
 };
 
 use super::process_rpc::{self, proc_proto};
 
 #[derive(EnumAsInner)]
-pub enum ProcessInstanceStateInner {
+pub enum ProcessInstanceConnState {
     Connecting(Vec<oneshot::Sender<proc_proto::AppStarted>>),
     Connected(proc_proto::AppStarted),
+}
+
+pub type PID = u32;
+pub struct ProcessInstanceStateInner(
+    ProcessInstanceConnState,
+    Option<(tokio::process::Child, Option<PID>)>,
+);
+
+impl Drop for ProcessInstanceStateInner {
+    fn drop(&mut self) {
+        assert!(self.1.is_none());
+    }
 }
 
 #[derive(Clone)]
@@ -36,19 +51,93 @@ pub struct ProcessInstance {
     state: ProcessInstanceState,
 }
 
+// impl Drop for ProcessInstance {
+//     fn drop(&mut self) {
+//         // must be killed before drop
+//         assert!(self.state.0.read().1.is_none());
+//     }
+// }
+
 impl ProcessInstance {
+    // pub fn raw_pid(&self) -> Option<PID> {
+    //     self.state.0.read().1.as_ref().map(|v| v.0.id().unwrap())
+    // }
+    // pub fn checked_pid(&self) -> Option<PID> {
+    //     self.state.0.read().1.as_ref().map(|v| v.1)
+    // }
+    pub async fn kill(&self) {
+        let takeprocess = self.state.0.write().1.take();
+        if let Some((mut p, id)) = takeprocess {
+            let pid = p.id().unwrap();
+            tracing::debug!("killing app {} on pid raw:{} check:{:?}", self.app, pid, id);
+            // let pid = p.id().unwrap();
+            p.kill().await;
+            // cmd kill id
+            if let Some(id) = id {
+                let _ = Command::new("kill")
+                    .arg("-9")
+                    .arg(id.to_string())
+                    .status()
+                    .await;
+            } else {
+                // use jcmd to find and kill
+                if self.app_type == AppType::Jar {
+                    if let Ok(pid) = java::find_pid(&self.app).await {
+                        let _ = Command::new("kill")
+                            .arg("-9")
+                            .arg(pid.to_string())
+                            .status()
+                            .await;
+                    }
+                }
+            }
+
+            // clean the conn_map in rpc_model
+            tracing::debug!("close conn for p: {}", self.app);
+            rpc_model::close_conn(&HashValue::Str(self.app.clone()));
+
+            // let _ = Command::new("kill")
+            //     .arg("-9") // Use signal 9 (SIGKILL) for forceful termination
+            //     .arg(pid.to_string())
+            //     .stdout(Stdio::piped())
+            //     .stderr(Stdio::piped())
+            //     .output()
+            //     .await
+            //     .expect("Failed to execute kill command");
+            // tracing::debug!(
+            //     "check port {:?}",
+            //     Command::new("lsof")
+            //         .arg("-:i8080") // Use signal 9 (SIGKILL) for forceful termination
+            //         .stdout(Stdio::piped())
+            //         .stderr(Stdio::piped())
+            //         .output()
+            //         .await
+            //         .expect("Failed to execute kill command")
+            // );
+        }
+    }
     pub fn new(app: String, app_type: AppType) -> Self {
         Self {
             app_type,
             app,
-            state: ProcessInstanceState(Arc::new(RwLock::new(
-                ProcessInstanceStateInner::Connecting(Vec::new()),
-            ))),
+            state: ProcessInstanceState(Arc::new(RwLock::new(ProcessInstanceStateInner(
+                ProcessInstanceConnState::Connecting(Vec::new()),
+                None,
+            )))),
         }
     }
-
+    pub fn bind_process(&self, child: tokio::process::Child) {
+        let mut state_w = self.state.0.write();
+        state_w.1 = Some((child, None));
+    }
+    pub fn bind_checked_pid(&self, pid: PID) {
+        let mut state_w = self.state.0.write();
+        let _ = state_w.1.as_mut().map(|v| v.1 = Some(pid));
+    }
     pub fn set_verifyed(&self, verify_msg: proc_proto::AppStarted) -> bool {
         let mut state_w = self.state.0.write();
+        state_w.1.as_mut().unwrap().1 = Some(verify_msg.pid);
+        let state_w = &mut state_w.0;
         let Some(waiters) = state_w.as_connecting_mut() else {
             tracing::warn!("verify received when already verified");
             return false;
@@ -56,29 +145,30 @@ impl ProcessInstance {
         while let Some(w) = waiters.pop() {
             let _ = w.send(verify_msg.clone()).unwrap();
         }
-        *state_w = ProcessInstanceStateInner::Connected(verify_msg);
+        *state_w = ProcessInstanceConnState::Connected(verify_msg);
         true
     }
 
     pub async fn wait_for_verify(&self) -> proc_proto::AppStarted {
-        if let Some(v) = self.state.0.read().as_connected() {
+        if let Some(v) = self.state.0.read().0.as_connected() {
             return v.clone();
         }
 
         let waiter = {
             let mut state_wr = self.state.0.write();
-            match &mut *state_wr {
-                ProcessInstanceStateInner::Connected(verify_msg) => {
+            match &mut state_wr.0 {
+                ProcessInstanceConnState::Connected(verify_msg) => {
+                    tracing::debug!("connected, don't need wait");
                     return verify_msg.clone();
                 }
-                ProcessInstanceStateInner::Connecting(waiters) => {
+                ProcessInstanceConnState::Connecting(waiters) => {
                     let (tx, rx) = oneshot::channel();
                     waiters.push(tx);
                     rx
                 }
             }
         };
-
+        tracing::debug!("connecting, wait for verify");
         waiter.await.expect(
             "tx lives in ProcessInstanceStateInner::Connecting and 
             destroyed when { notify all the waiters then transfer to Connected }
@@ -95,22 +185,18 @@ impl ProcessInstance {
         // state to starting
 
         let mut state = self.state.0.write();
-        match &*state {
-            ProcessInstanceStateInner::Connected(_) => {
+        match &state.0 {
+            ProcessInstanceConnState::Connected(_) => {
                 //just trans to connecting
             }
-            ProcessInstanceStateInner::Connecting(_) => {
+            ProcessInstanceConnState::Connecting(_) => {
                 // verify not received yet
                 // imposible, verify msg is the first analyzed,
                 // this function can only be called when function require for update check
                 unreachable!("update_checkpoint before verify")
             }
         }
-        *state = ProcessInstanceStateInner::Connecting(Vec::new());
-
-        // clean the conn_map in rpc_model
-        tracing::debug!("close conn for checkpoint app: {}", self.app);
-        rpc_model::close_conn(&HashValue::Str(self.app.clone()));
+        state.0 = ProcessInstanceConnState::Connecting(Vec::new());
     }
 }
 

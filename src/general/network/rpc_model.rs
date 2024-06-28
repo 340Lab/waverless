@@ -138,7 +138,7 @@ lazy_static! {
 }
 
 async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
-    println!("new connection: {:?}", socket.peer_addr().unwrap());
+    tracing::debug!("new connection: {:?}", socket.peer_addr().unwrap());
     let (mut sockrx, socktx) = socket.into_split();
 
     let mut buf = [0; 1024];
@@ -147,7 +147,7 @@ async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
     let Some((conn, rx)) =
         listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await
     else {
-        println!("verify failed");
+        tracing::debug!("verify failed");
         return;
     };
 
@@ -182,7 +182,7 @@ pub(super) mod listen_task_ext {
         ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
             // println!("waiting for verify head len");
             if !wait_for_len(sockrx, len, 4, buf).await {
-                println!("failed to read verify head len");
+                tracing::warn!("failed to read verify head len");
                 return None;
             }
 
@@ -190,13 +190,13 @@ pub(super) mod listen_task_ext {
 
             // println!("waiting for verify msg {}", verify_msg_len);
             if !wait_for_len(sockrx, len, verify_msg_len, buf).await {
-                println!("failed to read verify msg");
+                tracing::warn!("failed to read verify msg");
                 return None;
             }
             // println!("wait done");
 
             let Some(id) = R::verify(&buf[4..4 + verify_msg_len]).await else {
-                println!("verify failed");
+                tracing::warn!("verify failed");
                 return None;
             };
             let (tx, rx) = tokio::sync::mpsc::channel(10);
@@ -323,18 +323,18 @@ pub(super) mod listen_task_ext {
         buf: &mut [u8],
     ) -> bool {
         while *len < tarlen {
-            println!("current len: {}, target len: {}", *len, tarlen);
+            tracing::debug!("current len: {}, target len: {}", *len, tarlen);
             match socket.read(buf).await {
                 Ok(n) => {
                     if n == 0 {
-                        println!("connection closed");
+                        tracing::warn!("connection closed");
                         return false;
                     }
                     // println!("recv: {:?}", buf[..n]);
                     *len += n;
                 }
                 Err(e) => {
-                    println!("failed to read from socket; err = {:?}", e);
+                    tracing::warn!("failed to read from socket; err = {:?}", e);
                     return false;
                 }
             }

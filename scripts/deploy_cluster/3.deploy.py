@@ -47,7 +47,7 @@ def run_batch_2_file(batch,output_file):
 
 
 run_batch([
-            ["python3 3.1.repack_local.py"],
+            # ["python3 3.1.repack_local.py"],
             ["mkdir -p log"],
             ["rm -rf log/*"]
         ])

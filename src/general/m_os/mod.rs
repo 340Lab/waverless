@@ -1,3 +1,5 @@
+pub mod zip;
+
 use super::{
     m_appmeta_manager::AppMetaManager,
     network::{
@@ -11,7 +13,7 @@ use super::{
 use crate::{
     general::network::proto,
     logical_module_view_impl,
-    result::{ErrCvt, WSResult},
+    result::{ErrCvt, WSError, WSResult, WsIoErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
@@ -106,6 +108,9 @@ pub enum OsProcessType {
 }
 
 impl OperatingSystem {
+    pub fn app_path(&self, app: &str) -> PathBuf {
+        self.view.appmeta_manager().fs_layer.concat_app_dir(app)
+    }
     pub fn start_process(&self, p: OsProcessType) -> process::Child {
         let (mut binding, log_file) = match p {
             OsProcessType::JavaApp(app) => {
@@ -126,7 +131,7 @@ impl OperatingSystem {
                         .current_dir(appdir);
                     (binding, log_file)
                 } else {
-                    tracing::debug!("start process without checkpoint");
+                    tracing::debug!("start process app without checkpoint {}", app);
 
                     let mut binding = Command::new("java");
                     let _ = binding
@@ -136,6 +141,7 @@ impl OperatingSystem {
                         .arg("-jar")
                         .arg("app.jar")
                         .arg("--agentSock=../../agent.sock")
+                        .arg(format!("--appName={}", app))
                         .current_dir(appdir);
                     (binding, log_file)
                 }
@@ -327,5 +333,17 @@ impl OperatingSystem {
 
             Ok(0)
         }
+    }
+
+    pub fn cover_data_2_path(&self, p: impl AsRef<Path>, data: Vec<u8>) -> WSResult<()> {
+        let mut f = match File::create(p) {
+            Err(e) => {
+                return Err(ErrCvt(e).to_ws_io_err());
+            }
+            Ok(f) => f,
+        };
+        f.write_all(&data)
+            .map_err(|e| WSError::from(WsIoErr::Io(e)))?;
+        Ok(())
     }
 }

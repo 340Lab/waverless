@@ -40,6 +40,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.DefaultApplicationArguments;
 import java.util.ArrayList;
 import java.util.concurrent.locks.ReentrantLock;
+import java.lang.ProcessHandle;
 
 public class UdsBackend
 // DisposableBean
@@ -56,6 +57,8 @@ public class UdsBackend
 
     String httpPort="";
 
+    String appName="";
+
     private final ReentrantLock sendlock = new ReentrantLock();
     List<UdsPack> waitingPacks=new ArrayList<>();
 
@@ -63,6 +66,7 @@ public class UdsBackend
     public void bootArgCheckOk(BootArgCheckOkEvent e) {
         this.agentSock = e.agentSock;
         this.httpPort = e.httpPort;
+        this.appName = e.appName;
         start();
     }
 
@@ -185,6 +189,7 @@ class UnixChannelHandle {
     static void start(Path sock_path, String httpPort, RpcHandleOwner rpcHandleOwner, UdsBackend udsHandle) {
         io.netty.bootstrap.Bootstrap bootstrap = new io.netty.bootstrap.Bootstrap();
         final EpollEventLoopGroup epollEventLoopGroup = new EpollEventLoopGroup();
+        String appName=udsHandle.appName;
         try {
             bootstrap.group(epollEventLoopGroup)
                     .channel(EpollDomainSocketChannel.class)
@@ -259,8 +264,8 @@ class UnixChannelHandle {
                                             System.out.println("Channel is active");
 
                                             // Create AuthHeader message
-                                            AppStarted commu = AppStarted.newBuilder().setAppid("stock-mng")
-                                                    .setHttpPort(httpPort).build();
+                                            AppStarted commu = AppStarted.newBuilder().setAppid(appName)
+                                                    .setHttpPort(httpPort).setPid((int)ProcessHandle.current().pid()).build();
 
                                             // Serialize the message
                                             byte[] data = commu.toByteArray();

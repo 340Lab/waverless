@@ -3,7 +3,7 @@
 //     pub view: KvStorageView,
 // }
 
-use super::{m_os::OperatingSystem, network::m_p2p::P2PModule};
+use super::{m_data_general::DataSetMeta, m_os::OperatingSystem, network::m_p2p::P2PModule};
 use crate::{
     logical_module_view_impl,
     result::WSResult,
@@ -13,8 +13,8 @@ use crate::{
 use axum::async_trait;
 use bincode::serialize;
 use bincode::serialize_into;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::{de::DeserializeOwned, ser::SerializeTuple};
 use std::sync::OnceLock;
 use ws_derive::LogicalModule;
 
@@ -116,6 +116,13 @@ pub struct KeyTypeServiceMeta<'a>(pub &'a [u8]);
 
 pub struct KeyTypeServiceList;
 
+pub struct KeyTypeDataSetMeta<'a>(pub &'a [u8]);
+
+pub struct KeyTypeDataSetItem<'a> {
+    pub uid: &'a [u8],
+    pub idx: u8,
+}
+
 impl KeyType for KeyTypeKvPosition<'_> {
     type Value = NodeID;
     fn id(&self) -> u8 {
@@ -141,6 +148,20 @@ impl KeyType for KeyTypeServiceList {
     }
 }
 
+impl KeyType for KeyTypeDataSetMeta<'_> {
+    type Value = DataSetMeta;
+    fn id(&self) -> u8 {
+        4
+    }
+}
+
+impl KeyType for KeyTypeDataSetItem<'_> {
+    type Value = Vec<u8>;
+    fn id(&self) -> u8 {
+        5
+    }
+}
+
 impl Serialize for KeyTypeKvPosition<'_> {
     fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
@@ -162,5 +183,20 @@ impl Serialize for KeyTypeServiceMeta<'_> {
 impl Serialize for KeyTypeServiceList {
     fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_unit()
+    }
+}
+
+impl Serialize for KeyTypeDataSetMeta<'_> {
+    fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl Serialize for KeyTypeDataSetItem<'_> {
+    fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut tup = serializer.serialize_tuple(2)?;
+        tup.serialize_element(self.uid)?;
+        tup.serialize_element(&self.idx)?;
+        tup.end()
     }
 }

@@ -1,7 +1,11 @@
 use std::time::Duration;
 
+use tokio::process::Command;
+
 use crate::{
     general::m_appmeta_manager::AppType,
+    result::{WSResult, WsFuncError},
+    util,
     worker::func::{
         m_instance_manager::{EachAppCache, InstanceManager},
         shared::java,
@@ -11,14 +15,30 @@ use crate::{
 use super::{process::ProcessInstance, SharedInstance};
 
 impl InstanceManager {
-    pub async fn update_checkpoint(&self, app_name: &str) {
+    pub async fn update_checkpoint(&self, app_name: &str, restart: bool) -> WSResult<()> {
+        async fn debug_port_left() {
+            tracing::debug!("debug port left");
+            // only for test
+
+            let _ = Command::new("lsof")
+                .arg("-i:8080")
+                .spawn()
+                .expect("lsof failed")
+                .wait()
+                .await
+                .unwrap();
+        }
         let Some(instance) = self.app_instances.get(app_name) else {
-            tracing::warn!("app not found when update checkpoint, {}", app_name);
-            return;
+            tracing::warn!("InstanceNotFound when update checkpoint, {}", app_name);
+            return Err(WsFuncError::InstanceNotFound(app_name.to_owned()).into());
         };
         let Some(SharedInstance(ref proc_ins)) = instance.value().as_shared() else {
-            tracing::warn!("app not found when update checkpoint, {}", app_name);
-            return;
+            tracing::warn!("InstanceTypeNotMatch when update checkpoint, {}", app_name);
+            return Err(WsFuncError::InstanceTypeNotMatch {
+                app: app_name.to_owned(),
+                want: "shared".to_owned(),
+            }
+            .into());
         };
         // state 2 connecting, make others wait
         {
@@ -34,11 +54,41 @@ impl InstanceManager {
             }
         }
         // recover by criu
-        {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            tracing::debug!("restart app after snapshot: {}", app_name);
-            java::cold_start(app_name, self.view.os());
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        tracing::debug!("restart app after snapshot: {}", app_name);
+        let res = java::cold_start(app_name, self.view.os());
+        let p = match res {
+            Err(e) => {
+                tracing::warn!("cold start failed: {:?}", e);
+                return Err(e);
+            }
+            Ok(ok) => ok,
+        };
+        // just update the process in old instance; because the old is dead;
+        // let pid = java::wait_for_pid(app_name).await?;
+        proc_ins.bind_process(p);
+        let _ = proc_ins.wait_for_verify().await;
+        if !restart {
+            tracing::debug!("don't restart after checkpoint, kill it");
+
+            let _ = proc_ins.kill().await;
+            debug_port_left().await;
+            // remove instance
+            let _ = self.app_instances.remove(app_name);
         }
+
+        Ok(())
+    }
+
+    pub async fn make_checkpoint_for_app(&self, app: &str) -> WSResult<()> {
+        tracing::debug!("make checkpoint for app: {}", app);
+        let p = self.get_process_instance(&AppType::Jar, app);
+        let _ = p.wait_for_verify().await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        self.update_checkpoint(app, false).await?;
+        Ok(())
     }
 
     /// # Panics
@@ -57,7 +107,14 @@ impl InstanceManager {
                     );
                     // Q2: what if when the verify comes before the insert?
                     // we should insert the instance before cold start
-                    java::cold_start(app, self.view.os());
+                    {
+                        // let view = self.view.clone();
+                        // let app = app.to_owned();
+                        // let instance = instance.clone();
+
+                        let p = java::cold_start(&app, self.view.os()).unwrap();
+                        instance.bind_process(p);
+                    }
 
                     // TODO Q1: instance lives forever?
                     // maybe start ttl when verified
