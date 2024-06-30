@@ -18,7 +18,10 @@ use crate::{
 };
 use async_trait::async_trait;
 
-use std::{ptr::NonNull, sync::atomic::AtomicU32};
+use std::{
+    ptr::NonNull,
+    sync::atomic::{AtomicU32, AtomicUsize},
+};
 use tokio::sync::oneshot;
 #[cfg(target_os = "linux")]
 use ws_derive::LogicalModule;
@@ -41,6 +44,7 @@ logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
 pub struct Executor {
     sub_task_id: AtomicU32,
     rpc_handler_distribute_task: RPCHandler<proto::sche::DistributeTaskReq>,
+    next_req_id: AtomicUsize,
     view: ExecutorView,
 }
 
@@ -77,6 +81,7 @@ impl LogicalModule for Executor {
             rpc_handler_distribute_task: RPCHandler::default(),
             view: ExecutorView::new(args.logical_modules_ref.clone()),
             sub_task_id: AtomicU32::new(0),
+            next_req_id: AtomicUsize::new(0),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
@@ -123,7 +128,7 @@ impl Executor {
         let func = req.func.to_owned();
         let (apptype, fnmeta) = {
             let appmetaman_r = self.view.appmeta_manager().meta.read().await;
-            let Some(appmeta) = appmetaman_r.get_app_meta(&app) else {
+            let Some(appmeta) = appmetaman_r.get_app_meta(&app).await else {
                 // TODO: return err
                 unreachable!();
             };
@@ -155,12 +160,11 @@ impl Executor {
         let _ = self.execute(ctx).await;
     }
 
-    pub async fn handle_http_task(
-        &self,
-        route: &str,
-        req_id: ReqId,
-        text: String,
-    ) -> WSResult<Option<String>> {
+    pub async fn handle_http_task(&self, route: &str, text: String) -> WSResult<Option<String>> {
+        let req_id: ReqId = self
+            .next_req_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
         ////////////////////////////////////////////////////
         // route format ////////////////////////////////////
         // format route, remove last /
@@ -186,7 +190,7 @@ impl Executor {
         let funcname = split[1];
         let app_meta_man = self.view.appmeta_manager().meta.read().await;
         // check app exist
-        let Some(app) = app_meta_man.get_app_meta(appname) else {
+        let Some(app) = app_meta_man.get_app_meta(appname).await else {
             tracing::warn!("app {} not found", appname);
             return Err(WsFuncError::AppNotFound {
                 app: appname.to_owned(),

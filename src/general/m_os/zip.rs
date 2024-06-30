@@ -3,6 +3,7 @@ use crate::result::{ErrCvt, WSError, WSResult, WsIoErr};
 use std::{
     fs::{self, File},
     io::{self, Cursor, Read, Seek, Write},
+    os::unix::fs::PermissionsExt,
     path::Path,
 };
 use walkdir::WalkDir;
@@ -53,9 +54,9 @@ impl OperatingSystem {
         T: Write + Seek,
     {
         let mut zip = zip::ZipWriter::new(writer);
-        let options = FileOptions::default()
-            .compression_method(method)
-            .unix_permissions(0o755);
+        // let options = FileOptions::default()
+        //     .compression_method(method)
+        //     .unix_permissions(0o755);
 
         let prefix = Path::new(prefix);
         let mut buffer = Vec::new();
@@ -63,6 +64,16 @@ impl OperatingSystem {
             let path = entry.path();
             let name = path.strip_prefix(prefix).unwrap();
             let path_as_string = name.to_str().unwrap().to_owned();
+
+            let options = FileOptions::default()
+                .compression_method(method)
+                .unix_permissions(
+                    entry
+                        .metadata()
+                        .map_err(|e| WSError::from(e))?
+                        .permissions()
+                        .mode(),
+                );
 
             // Write file or directory explicitly
             // Some unzip tools unzip files with directory paths correctly, some do not!
@@ -81,7 +92,7 @@ impl OperatingSystem {
             } else if !name.as_os_str().is_empty() {
                 // Only if not root! Avoids path spec / warning
                 // and mapname conversion failed error on unzip
-                tracing::debug ß!("adding dir {path_as_string:?} as {name:?} ...");
+                tracing::debug!("adding dir {path_as_string:?} as {name:?} ...");
                 zip.add_directory(path_as_string, options)
                     .map_err(|e| WSError::from(WsIoErr::Zip2(e)))?;
             }

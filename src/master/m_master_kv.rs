@@ -84,13 +84,14 @@ impl MasterKv {
     // for each operation, find it's sub-trigger func
     async fn collect_event_infos(
         &self,
-        reqs: &proto::kv::KvRequests,
+        _reqs: &proto::kv::KvRequests,
     ) -> Vec<Option<EventTriggerInfo>> {
-        let metas = self.view.appmeta_manager().meta.read().await;
-        reqs.requests
-            .iter()
-            .map(|req| fn_event::try_match_kv_event(&metas, req, &reqs.app, &reqs.func))
-            .collect()
+        // let metas = self.view.appmeta_manager().meta.read().await;
+        // reqs.requests
+        //     .iter()
+        //     .map(|req| fn_event::try_match_kv_event(&metas, req, &reqs.app, &reqs.func))
+        //     .collect()
+        vec![]
     }
 
     async fn handle_kv_requests(

@@ -19,7 +19,7 @@ use super::m_executor::Executor;
 #[derive(LogicalModule)]
 pub struct WorkerHttpHandler {
     view: WorkerHttpHandlerView,
-    local_req_id_allocator: LocalReqIdAllocator,
+    // local_req_id_allocator: LocalReqIdAllocator,
     building_router: Mutex<Option<Router>>, // valid when init
 }
 
@@ -31,7 +31,7 @@ impl LogicalModule for WorkerHttpHandler {
     {
         Self {
             view: WorkerHttpHandlerView::new(args.logical_modules_ref.clone()),
-            local_req_id_allocator: LocalReqIdAllocator::new(),
+            // local_req_id_allocator: LocalReqIdAllocator::new(),
             building_router: Mutex::new(Some(Router::new())),
         }
     }
@@ -55,26 +55,9 @@ impl HttpHandler for WorkerHttpHandler {
         WithBind::MutexGuardOpt(guard)
     }
 
-    async fn handle_request(&self, route: &str, http_text: String) -> Response {
-        tracing::debug!("handle_request {}", route);
-        if let Ok(res) = self
-            .view
-            .executor()
-            .handle_http_task(route, self.local_req_id_allocator.alloc(), http_text)
-            // .execute_http_app(FunctionCtxBuilder::new(
-            //     app.to_owned(),
-            //     self.local_req_id_allocator.alloc(),
-            //     self.request_handler_view.p2p().nodes_config.this.0,
-            // ))
-            .await
-        {
-            res.map_or_else(
-                || StatusCode::OK.into_response(),
-                |res| (StatusCode::OK, res).into_response(),
-            )
-        } else {
-            StatusCode::BAD_REQUEST.into_response()
-        }
+    async fn handle_request(&self, _route: &str, _http_text: String) -> Response {
+        // tracing::debug!("handle_request {}", route);
+        unreachable!("handle_request deprecated");
     }
     // async fn select_node(
     //     &self,

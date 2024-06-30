@@ -45,8 +45,33 @@ pub enum WsRpcErr {
 #[derive(Debug)]
 pub enum WsIoErr {
     Io(std::io::Error),
+    Io2(walkdir::Error),
     Zip(ZipExtractError),
     Zip2(zip::result::ZipError),
+}
+
+impl From<std::io::Error> for WSError {
+    fn from(e: std::io::Error) -> Self {
+        WSError::WsIoErr(WsIoErr::Io(e))
+    }
+}
+
+impl From<walkdir::Error> for WSError {
+    fn from(e: walkdir::Error) -> Self {
+        WSError::WsIoErr(WsIoErr::Io2(e))
+    }
+}
+
+impl From<zip::result::ZipError> for WSError {
+    fn from(e: zip::result::ZipError) -> Self {
+        WSError::WsIoErr(WsIoErr::Zip2(e))
+    }
+}
+
+impl From<ZipExtractError> for WSError {
+    fn from(e: ZipExtractError) -> Self {
+        WSError::WsIoErr(WsIoErr::Zip(e))
+    }
 }
 
 #[derive(Debug)]
@@ -123,6 +148,15 @@ pub enum WsFuncError {
     InstanceProcessStartFailed(std::io::Error),
 }
 
+#[derive(Debug)]
+pub enum WsDataError {
+    SetExpiredDataVersion {
+        target_version: u64,
+        cur_version: u64,
+        data_id: String,
+    },
+}
+
 #[derive(Error, Debug)]
 pub enum WSError {
     #[error("Io error: {0:?}")]
@@ -151,6 +185,9 @@ pub enum WSError {
 
     #[error("Rpc error: {0:?}")]
     WsRpcErr(WsRpcErr),
+
+    #[error("Data error: {0:?}")]
+    WsDataError(WsDataError),
 
     #[error("Not Implemented")]
     NotImplemented,
@@ -207,6 +244,12 @@ impl From<WasmEdgeError> for WSError {
 impl From<WsRpcErr> for WSError {
     fn from(e: WsRpcErr) -> Self {
         WSError::WsRpcErr(e)
+    }
+}
+
+impl From<WsDataError> for WSError {
+    fn from(value: WsDataError) -> Self {
+        WSError::WsDataError(value)
     }
 }
 

@@ -140,7 +140,7 @@ pub async fn start_http_handler(modsref: LogicalModulesRef) {
     };
 
     let app = app
-        .route("/:app/:fn", post(handler2))
+        // .route("/:app/:fn", post(handler2))
         .route("/:route", post(handler))
         .layer(CorsLayer::permissive());
 
@@ -152,12 +152,12 @@ pub async fn start_http_handler(modsref: LogicalModulesRef) {
     tracing::info!("http end on {}", addr);
 }
 
-async fn handler2(Path((app, func)): Path<(String, String)>, body: String) -> impl IntoResponse {
-    http_handler_view()
-        .http_handler()
-        .handle_request(&format!("{app}/{func}"), body)
-        .await
-}
+// async fn handler2(Path((app, func)): Path<(String, String)>, body: String) -> impl IntoResponse {
+//     http_handler_view()
+//         .http_handler()
+//         .handle_request(&format!("{app}/{func}"), body)
+//         .await
+// }
 
 async fn handler(route: Path<String>, body: String) -> impl IntoResponse {
     http_handler_view()

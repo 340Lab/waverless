@@ -4,18 +4,22 @@ use super::{
     network::{
         m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
         proto::{
-            write_one_data_request::DataItem, DataMeta, DataModeDistribute, DataVersionRequest,
-            WriteOneDataRequest, WriteOneDataResponse,
+            write_one_data_request::{data_item::Data, DataItem},
+            DataMeta, DataModeDistribute, DataVersionRequest, WriteOneDataRequest,
+            WriteOneDataResponse,
         },
     },
 };
-use crate::sys::LogicalModulesRef;
 use crate::{
     general::network::proto::write_one_data_request,
     logical_module_view_impl,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
+};
+use crate::{
+    result::{WSError, WsDataError},
+    sys::LogicalModulesRef,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -29,6 +33,8 @@ logical_module_view_impl!(DataGeneralView, p2p, P2PModule);
 logical_module_view_impl!(DataGeneralView, data_general, DataGeneral);
 logical_module_view_impl!(DataGeneralView, kv_store_engine, KvStoreEngine);
 logical_module_view_impl!(DataGeneralView, os, OperatingSystem);
+
+pub type DataVersion = u64;
 
 #[derive(LogicalModule)]
 pub struct DataGeneral {
@@ -190,6 +196,53 @@ impl DataGeneral {
             .await;
         // ## response
     }
+    pub async fn get_data_item(&self, unique_id: String, idx: u8) -> Option<DataItem> {
+        let Some(itembytes) = self.view.kv_store_engine().get(KeyTypeDataSetItem {
+            uid: unique_id.as_bytes(),
+            idx: idx as u8,
+        }) else {
+            return None;
+        };
+        Some(DataItem {
+            data: Some(Data::RawBytes(itembytes)),
+        })
+    }
+
+    pub async fn set_dataversion(&self, req: DataVersionRequest) -> WSResult<()> {
+        // follower just update the version from master
+        let old = self
+            .view
+            .kv_store_engine()
+            .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()));
+        if let Some(old) = old {
+            if old.version > req.version {
+                return Err(WsDataError::SetExpiredDataVersion {
+                    target_version: req.version,
+                    cur_version: old.version,
+                    data_id: req.unique_id.clone(),
+                }
+                .into());
+                // responsor
+                //     .send_resp(DataVersionResponse {
+                //         version: old.version,
+                //     })
+                //     .await;
+                // tracing::warn!("has larger version {}", old.version);
+                // return Ok(());
+            }
+        }
+        self.view.kv_store_engine().set(
+            KeyTypeDataSetMeta(req.unique_id.as_bytes()),
+            &DataSetMeta {
+                version: req.version,
+                data_metas: req.data_metas.into_iter().map(|v| v.into()).collect(),
+                synced_nodes: HashSet::new(),
+            },
+        );
+        self.view.kv_store_engine().flush();
+        Ok(())
+    }
+
     pub async fn write_data(
         &self,
         unique_id: String,

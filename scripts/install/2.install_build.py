@@ -57,6 +57,9 @@ if res.returncode != 0:
 
 os_system_sure("python3 2.1install_wasmedge.py")
 
+os_system_sure("rm -rf /usr/jdk_crac")
+os_system_sure("cp -r inner/jdk_crac /usr/jdk_crac")
+
 # - name: Install WasmEdge
 #   include_tasks: 2.1_ans_install_wasmedge.yml
 

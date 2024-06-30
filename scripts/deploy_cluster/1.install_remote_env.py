@@ -23,6 +23,8 @@ def os_system(command):
 
 # make ../install tar.gz
 os_system_sure("rm -rf install.tar.gz")
+CRAC_INSTALL_DIR = "/usr/jdk_crac"
+os_system_sure(f"cp -r {CRAC_INSTALL_DIR} ../install/inner/jdk_crac")
 os_system_sure("tar -czvf install.tar.gz -C ../install .")
 
 def deploy_to_nodes():

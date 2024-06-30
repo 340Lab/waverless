@@ -30,7 +30,7 @@ def cp_except(src, dest, exclude_list):
 # build backend
 # os_system_sure("ansible-playbook -vv 1.ans_pack_core_and_ui.yml -i ../local_ansible_conf.ini")
 os_system_sure("python3 1.1build_core.py")
-os_system_sure("python3 1.2build_apps.py")
+# os_system_sure("python3 1.2build_apps.py")
 os_system_sure("python3 1.3pack_backend.py")
 os_system_sure("python3 1.4pack_with_ui.py")
 

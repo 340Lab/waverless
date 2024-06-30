@@ -11,12 +11,14 @@ use super::{
         http_handler::HttpHandler,
         m_p2p::P2PModule,
         proto::{
-            write_one_data_request::{data_item, DataItem, FileData},
+            write_one_data_request::{
+                data_item::{self, Data},
+                DataItem, FileData,
+            },
             DataMeta, DataModeCache, DataModeDistribute,
         },
     },
 };
-use crate::result::{WSError, WsIoErr};
 use crate::{
     general::kv_interface::KvOps,
     logical_module_view_impl,
@@ -25,6 +27,10 @@ use crate::{
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::{self, JoinHandleWrapper},
     worker::func::m_instance_manager::InstanceManager,
+};
+use crate::{
+    result::{WSError, WsIoErr},
+    worker::m_executor::Executor,
 };
 use async_trait::async_trait;
 use axum::body::Bytes;
@@ -50,6 +56,7 @@ logical_module_view_impl!(View, p2p, P2PModule);
 logical_module_view_impl!(View, master, Option<Master>);
 logical_module_view_impl!(View, instance_manager, Option<InstanceManager>);
 logical_module_view_impl!(View, data_general, DataGeneral);
+logical_module_view_impl!(View, executor, Option<Executor>);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -516,6 +523,13 @@ impl AppMeta {
     // }
 }
 
+lazy_static::lazy_static! {
+    static ref VIEW: Option<View> = None;
+}
+fn view() -> &'static View {
+    unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() }
+}
+
 #[derive(LogicalModule)]
 pub struct AppMetaManager {
     pub meta: RwLock<AppMetas>,
@@ -531,6 +545,9 @@ impl LogicalModule for AppMetaManager {
         Self: Sized,
     {
         let view = View::new(args.logical_modules_ref.clone());
+        unsafe {
+            let _ = util::non_null(&*VIEW).as_mut().replace(view.clone());
+        }
         let fs_layer = AppMetaVisitOs::new(view.clone());
         Self {
             meta: RwLock::new(AppMetas {
@@ -569,8 +586,28 @@ impl AppMetas {
     //         pattern_2_app_fn: HashMap::new(),
     //     }
     // }
-    pub fn get_app_meta(&self, app: &str) -> Option<&AppMeta> {
-        self.app_metas.get(app)
+    pub async fn get_app_meta(&self, app: &str) -> Option<AppMeta> {
+        // self.app_metas.get(app)
+        let meta = view()
+            .data_general()
+            .get_data_item(format!("app{}", app), 0)
+            .await;
+        let Some(DataItem {
+            data: Some(Data::RawBytes(metabytes)),
+        }) = meta
+        else {
+            return None;
+        };
+
+        let meta = bincode::deserialize_from::<_, AppMeta>(Cursor::new(metabytes));
+        let meta = match meta {
+            Err(e) => {
+                tracing::warn!("meta decode failed {:?}", e);
+                return None;
+            }
+            Ok(meta) => meta,
+        };
+        Some(meta)
     }
     pub fn get_pattern_triggers(
         &self,
@@ -583,6 +620,10 @@ impl AppMetas {
         file_dir: impl AsRef<Path>,
         meta_fs: &AppMetaVisitOs,
     ) -> WSResult<()> {
+        if !file_dir.as_ref().join("apps").exists() {
+            fs::create_dir_all(file_dir.as_ref().join("apps")).unwrap();
+            return Ok(());
+        }
         let entries =
             fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
 
@@ -681,6 +722,14 @@ impl AppMetaManager {
         }
 
         Ok(appmeta)
+    }
+    pub async fn app_available(&self, app: &str) -> WSResult<bool> {
+        Ok(self
+            .view
+            .data_general()
+            .get_data_item(format!("app{}", app), 0)
+            .await
+            .is_some())
     }
     pub async fn app_uploaded(&self, appname: String, data: Bytes) -> WSResult<()> {
         // 1. tmpapp name & dir

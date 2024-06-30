@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use crate::general::m_data_general::DataSetMeta;
+use crate::general::m_data_general::{DataGeneral, DataSetMeta};
 use crate::general::m_kv_store_engine::{KeyTypeDataSetMeta, KvStoreEngine};
 use crate::general::network::m_p2p::{P2PModule, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{self, DataVersionRequest, DataVersionResponse};
-use crate::result::WSResult;
+use crate::result::{WSError, WSResult, WsDataError};
 use crate::sys::LogicalModulesRef;
 use crate::util::JoinHandleWrapper;
 use crate::{
@@ -20,6 +20,7 @@ logical_module_view_impl!(DataFollowerView, data_follower, Option<DataFollower>)
 logical_module_view_impl!(DataFollowerView, p2p, P2PModule);
 logical_module_view_impl!(DataFollowerView, http_handler, Box<dyn HttpHandler>);
 logical_module_view_impl!(DataFollowerView, kv_store_engine, KvStoreEngine);
+logical_module_view_impl!(DataFollowerView, data_general, DataGeneral);
 
 #[derive(LogicalModule)]
 pub struct DataFollower {
@@ -67,41 +68,32 @@ impl DataFollower {
         responsor: RPCResponsor<DataVersionRequest>,
         req: DataVersionRequest,
     ) -> WSResult<()> {
+        let targetv = req.version;
         tracing::debug!(
             "follower receive version({}) for data({})",
             req.version,
             req.unique_id
         );
-        // follower just update the version from master
-        let old = self
-            .view
-            .kv_store_engine()
-            .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()));
-        if let Some(old) = old {
-            if old.version > req.version {
-                responsor
-                    .send_resp(DataVersionResponse {
-                        version: old.version,
-                    })
-                    .await;
-                tracing::warn!("follower has larger version {}", old.version);
-                return Ok(());
-            }
+
+        if let Err(e) = self.view.data_general().set_dataversion(req).await {
+            tracing::warn!("set_dataversion failed, err:{:?}", e);
+            let cur_version = match e {
+                WSError::WsDataError(WsDataError::SetExpiredDataVersion {
+                    cur_version, ..
+                }) => cur_version,
+                _ => 0,
+            };
+            responsor
+                .send_resp(DataVersionResponse {
+                    version: cur_version,
+                })
+                .await;
+            return Err(e);
         }
-        self.view.kv_store_engine().set(
-            KeyTypeDataSetMeta(req.unique_id.as_bytes()),
-            &DataSetMeta {
-                version: req.version,
-                data_metas: req.data_metas.into_iter().map(|v| v.into()).collect(),
-                synced_nodes: HashSet::new(),
-            },
-        );
-        self.view.kv_store_engine().flush();
-        tracing::debug!("follower updated version({})", req.version);
+
+        tracing::debug!("follower updated version({})", targetv);
         responsor
-            .send_resp(DataVersionResponse {
-                version: req.version,
-            })
+            .send_resp(DataVersionResponse { version: targetv })
             .await;
         Ok(())
     }

@@ -66,7 +66,7 @@ impl RpcCustom for ProcessRpc {
             let appman = ProcessRpc::global_m_app_meta_manager();
             let ishttp = {
                 let appmanmetas = appman.meta.read().await;
-                let Some(app) = appmanmetas.get_app_meta(&res.appid) else {
+                let Some(app) = appmanmetas.get_app_meta(&res.appid).await else {
                     tracing::warn!("app {} not found, invalid verify !", res.appid);
                     return None;
                 };

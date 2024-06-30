@@ -8,9 +8,6 @@ CUR_FPATH = os.path.abspath(__file__)
 CUR_FDIR = os.path.dirname(CUR_FPATH)
 # chdir to the directory of this script
 os.chdir(CUR_FDIR)
-os.environ['http_proxy'] = ''
-os.environ['https_proxy'] = ''
-##############################################################################
 
 
 # pa's blog

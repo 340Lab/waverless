@@ -1,4 +1,4 @@
-use axum::extract::{DefaultBodyLimit, Multipart};
+use axum::extract::{DefaultBodyLimit, Multipart, Path};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{routing::post, Router};
@@ -22,9 +22,50 @@ pub(super) fn binds(router: Router, view: super::View) -> Router {
     router
         .route("/appmgmt/upload_app", post(upload_app))
         .layer(DefaultBodyLimit::disable())
+        .route("/:app/:fn", post(call_app_fn))
     // .layer(RequestBodyLimitLayer::new(
     //     250 * 1024 * 1024, /* 250mb */
     // ))
+}
+
+async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) -> Response {
+    if view().p2p().nodes_config.this.1.is_master() {
+        view()
+            .http_handler()
+            .handle_request(&format!("{app}/{func}"), body)
+            .await
+    } else if !view()
+        .appmeta_manager()
+        .app_available(&app)
+        .await
+        .map_or_else(
+            |e| {
+                tracing::debug!("failed to get app available, e:{:?}", e);
+                false
+            },
+            |v| v,
+        )
+    {
+        // # check app valid
+        StatusCode::BAD_REQUEST.into_response()
+    } else {
+        // # call instance run
+
+        let res = view()
+            .executor()
+            .handle_http_task(&format!("{app}/{func}"), body)
+            // .execute_http_app(FunctionCtxBuilder::new(
+            //     app.to_owned(),
+            //     self.local_req_id_allocator.alloc(),
+            //     self.request_handler_view.p2p().nodes_config.this.0,
+            // ))
+            .await;
+        match res {
+            Ok(Some(res)) => (StatusCode::OK, res).into_response(),
+            Ok(None) => StatusCode::OK.into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, format!("err: {:?}", e)).into_response(),
+        }
+    }
 }
 
 async fn upload_app(mut multipart: Multipart) -> Response {
