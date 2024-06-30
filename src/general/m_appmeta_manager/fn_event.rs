@@ -1,11 +1,9 @@
 use crate::general::{
-    kv_interface::KvOps,
     network::proto::sche::distribute_task_req::{Trigger, TriggerKvSet},
 };
 
 use super::{
     super::network::proto::{self, kv::KvRequest},
-    AppMetas,
 };
 
 pub struct EventTriggerInfo {

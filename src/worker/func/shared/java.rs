@@ -1,4 +1,4 @@
-use std::{fmt::format, str::from_utf8};
+use std::{str::from_utf8};
 
 use tokio::process::{self, Command};
 

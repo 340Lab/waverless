@@ -29,7 +29,6 @@ use crate::{
     worker::func::m_instance_manager::InstanceManager,
 };
 use crate::{
-    result::{WSError, WsIoErr},
     worker::m_executor::Executor,
 };
 use async_trait::async_trait;
@@ -44,7 +43,7 @@ use std::{
     path::Path,
 };
 use tokio::sync::RwLock;
-use uuid::Uuid;
+
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(View);

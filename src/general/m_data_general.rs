@@ -18,7 +18,7 @@ use crate::{
     util::JoinHandleWrapper,
 };
 use crate::{
-    result::{WSError, WsDataError},
+    result::{WsDataError},
     sys::LogicalModulesRef,
 };
 use async_trait::async_trait;

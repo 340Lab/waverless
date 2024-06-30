@@ -11,7 +11,7 @@ use ws_derive::LogicalModule;
 use crate::{
     general::{
         m_appmeta_manager::{
-            fn_event::{self, EventTriggerInfo},
+            fn_event::{EventTriggerInfo},
             AppMetaManager,
         },
         m_kv_store_engine::{KeyTypeKv, KeyTypeKvPosition, KvStoreEngine},

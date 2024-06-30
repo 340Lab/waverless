@@ -5,7 +5,6 @@ use tokio::process::Command;
 use crate::{
     general::m_appmeta_manager::AppType,
     result::{WSResult, WsFuncError},
-    util,
     worker::func::{
         m_instance_manager::{EachAppCache, InstanceManager},
         shared::java,

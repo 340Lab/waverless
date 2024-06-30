@@ -1,7 +1,6 @@
 // process function just run in unique process
 
 use std::{
-    process::{self, Stdio},
     sync::Arc,
 };
 
@@ -12,10 +11,9 @@ use tokio::{process::Command, sync::oneshot};
 
 use crate::{
     general::{
-        m_appmeta_manager::{AppType, HttpMethod},
+        m_appmeta_manager::{AppType},
         network::rpc_model::{self, HashValue},
     },
-    result::WsFuncError,
     worker::func::{shared::java, InstanceTrait},
 };
 

@@ -1,5 +1,5 @@
 use super::OperatingSystem;
-use crate::result::{ErrCvt, WSError, WSResult, WsIoErr};
+use crate::result::{WSError, WSResult, WsIoErr};
 use std::{
     fs::{self, File},
     io::{self, Cursor, Read, Seek, Write},
@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 use walkdir::WalkDir;
-use zip::{result::ZipError, write::FileOptions, ZipWriter};
+use zip::{result::ZipError, write::FileOptions};
 
 impl OperatingSystem {
     pub fn unzip_data_2_path(&self, p: impl AsRef<Path>, data: Vec<u8>) -> WSResult<()> {
