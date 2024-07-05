@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use std::{
     ptr::NonNull,
     sync::atomic::{AtomicU32, AtomicUsize},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::oneshot;
 #[cfg(target_os = "linux")]
@@ -304,7 +305,32 @@ impl Executor {
         );
         // TODO: input value should be passed from context, like http request or prev trigger
 
+        let bf_exec_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+
         let res = instance.execute(&mut fn_ctx).await;
+
+        // let return_to_agent_time = SystemTime::now()
+        //     .duration_since(UNIX_EPOCH)
+        //     .expect("Time went backwards")
+        //     .as_millis() as u64;
+
+        let res = res.map(|v| {
+            v.map(|v| {
+                let mut res: serde_json::Value = serde_json::from_str(&v).unwrap();
+                let _ = res.as_object_mut().unwrap().insert(
+                    "bf_exec_time".to_owned(),
+                    serde_json::Value::from(bf_exec_time),
+                );
+                // let _ = res.as_object_mut().unwrap().insert(
+                //     "return_to_agent_time".to_owned(),
+                //     serde_json::Value::from(return_to_agent_time),
+                // );
+                serde_json::to_string(&res).unwrap()
+            })
+        });
 
         let _ = self
             .view

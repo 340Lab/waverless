@@ -43,6 +43,10 @@ os.environ['RUST_BACKTRACE'] = '1'
 os.environ['RUST_LOG'] = 'info,wasm_serverless=debug'
 # use crac jdk (See install/inner/install_crac.py)
 os.environ['JAVA_HOME'] = CRAC_INSTALL_DIR
+# wasmedge
+ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+new_path = '/root/.wasmedge/lib/'
+os.environ['LD_LIBRARY_PATH'] = new_path + ':' + ld_library_path
 
 #     NODE_ID=$1
 NODE_ID = sys.argv[1]

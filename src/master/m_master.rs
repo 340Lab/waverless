@@ -155,6 +155,9 @@ impl Master {
         }
     }
     fn select_node(&self) -> NodeID {
-        2
+        let workers = self.view.p2p().nodes_config.get_worker_nodes();
+        let mut rng = rand::thread_rng();
+        let idx = rng.gen_range(0..workers.len());
+        workers.iter().nth(idx).unwrap().clone()
     }
 }

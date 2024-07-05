@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use axum::extract::{DefaultBodyLimit, Multipart, Path};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -50,7 +52,10 @@ async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) ->
         StatusCode::BAD_REQUEST.into_response()
     } else {
         // # call instance run
-
+        let req_arrive_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
         let res = view()
             .executor()
             .handle_http_task(&format!("{app}/{func}"), body)
@@ -60,6 +65,17 @@ async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) ->
             //     self.request_handler_view.p2p().nodes_config.this.0,
             // ))
             .await;
+        // inject `req_arrive_time`
+        let res = res.map(|v| {
+            v.map(|v| {
+                let mut res: serde_json::Value = serde_json::from_str(&v).unwrap();
+                let _ = res.as_object_mut().unwrap().insert(
+                    "req_arrive_time".to_owned(),
+                    serde_json::Value::from(req_arrive_time),
+                );
+                serde_json::to_string(&res).unwrap()
+            })
+        });
         match res {
             Ok(Some(res)) => (StatusCode::OK, res).into_response(),
             Ok(None) => StatusCode::OK.into_response(),

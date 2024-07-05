@@ -165,9 +165,10 @@ impl LogicalModule for P2PQuicNode {
                                     addr,
                                     e
                                 );
-                                tokio::time::sleep(Duration::from_secs(10)).await;
+                                
                             }
                         }
+                        tokio::time::sleep(Duration::from_secs(10)).await;
                     }
                 })
                 .into(),
@@ -190,12 +191,15 @@ impl LogicalModule for P2PQuicNode {
                                 Ok(msg) => {
                                     if let Some(WireMsg((_head, _, bytes))) = msg {
                                         let addr=String::from_utf8(bytes.to_vec()).unwrap().parse::<SocketAddr>().unwrap();
-                                        tracing::info!("recv connect from {}", addr);
-
+                                        // tracing::info!("recv connect from {}", addr);
+                                        if view.p2p().find_peer_id(&addr).is_none(){
+                                            // tracing::warn!("recv connect from unknown peer {}", addr);
+                                            continue;
+                                        }
                                         // handle_conflict_connection(&view,&shared, &endpoint, connection, incoming);
                                         new_handle_connection_task(addr,&view, shared.clone(), endpoint.clone(), connection, incoming);
                                     }else{
-                                        tracing::info!("didn't recv head"); 
+                                        tracing::warn!("didn't recv head"); 
                                         continue;   
                                     }
                                 }
@@ -313,6 +317,8 @@ fn new_handle_connection_task(
         }));
 }
 
+
+/// remote_addr should be checked
 async fn handle_connection(
     remote_addr: SocketAddr,
     view: &View,

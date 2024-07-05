@@ -154,6 +154,8 @@ impl HttpHandler for MasterHttpHandler {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::NodeConfig;
+
     use super::*;
 
     // test construct_target_path

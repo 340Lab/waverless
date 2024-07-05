@@ -19,6 +19,7 @@ use super::{
         },
     },
 };
+use crate::worker::m_executor::Executor;
 use crate::{
     general::kv_interface::KvOps,
     logical_module_view_impl,
@@ -27,9 +28,6 @@ use crate::{
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::{self, JoinHandleWrapper},
     worker::func::m_instance_manager::InstanceManager,
-};
-use crate::{
-    worker::m_executor::Executor,
 };
 use async_trait::async_trait;
 use axum::body::Bytes;
@@ -742,11 +740,14 @@ impl AppMetaManager {
         let tmpappdir2 = tmpappdir.clone();
         // remove old dir&app
         if let Some(_) = self.meta.write().await.app_metas.remove(&tmpapp) {
-            let ins = self.view.instance_manager().app_instances.remove(&tmpapp);
-            if let Some(ins) = ins {
-                ins.value().kill().await;
-            }
+            tracing::debug!("remove old app meta {}", tmpapp);
         }
+        let ins = self.view.instance_manager().app_instances.remove(&tmpapp);
+        if let Some(ins) = ins {
+            ins.value().kill().await;
+            tracing::debug!("remove old app instance {}", tmpapp);
+        }
+
         if tmpappdir2.exists() {
             // remove old app
             fs::remove_dir_all(&tmpappdir2).unwrap();

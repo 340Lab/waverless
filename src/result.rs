@@ -1,3 +1,5 @@
+use std::os::unix::net::SocketAddr;
+
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
 use prost::{DecodeError, Message};
@@ -40,6 +42,7 @@ pub enum WsRpcErr {
     ConnectionNotEstablished(HashValue),
     RPCTimout(HashValue),
     InvalidMsgData { msg: Box<dyn Message> },
+    UnknownPeer { peer: SocketAddr },
 }
 
 #[derive(Debug)]

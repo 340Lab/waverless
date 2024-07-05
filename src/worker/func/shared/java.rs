@@ -1,4 +1,4 @@
-use std::{str::from_utf8};
+use std::str::from_utf8;
 
 use tokio::process::{self, Command};
 
@@ -50,8 +50,10 @@ pub(super) async fn find_pid(app: &str) -> WSResult<PID> {
 }
 
 pub(super) async fn take_snapshot(app: &str, os: &OperatingSystem) {
-    let _ = os
+    let res = os
         .start_process(OsProcessType::JavaCheckpoints(app.to_owned()))
         .wait()
-        .await;
+        .await
+        .unwrap();
+    assert!(res.success());
 }

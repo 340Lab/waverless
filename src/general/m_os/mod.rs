@@ -148,6 +148,9 @@ impl OperatingSystem {
             }
             OsProcessType::JavaCheckpoints(app) => {
                 let appdir = self.view.appmeta_manager().fs_layer.concat_app_dir(&app);
+                // create checkpoint-dir
+                let _ = std::fs::create_dir(appdir.join("checkpoint-dir"));
+
                 // 打开或创建日志文件
                 let log_file_path = appdir.join("checkpoint.log");
                 // 打开或创建日志文件
