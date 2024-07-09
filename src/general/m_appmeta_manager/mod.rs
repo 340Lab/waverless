@@ -583,7 +583,15 @@ impl AppMetas {
     //         pattern_2_app_fn: HashMap::new(),
     //     }
     // }
+    // pub async fn set_tmp_appmeta(&self, )
+     fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
+        self.app_metas.get(app).cloned()
+    }
     pub async fn get_app_meta(&self, app: &str) -> Option<AppMeta> {
+        if let Some(res)=self.get_tmp_app_meta(app){
+            return Some(res);
+        }
+        
         // self.app_metas.get(app)
         let meta = view()
             .data_general()
