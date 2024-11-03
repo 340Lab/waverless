@@ -2,6 +2,7 @@ pub mod http_handler;
 pub mod m_p2p;
 pub mod m_p2p_quic;
 pub mod msg_pack;
+pub mod proto_ext;
 pub mod rpc_model;
 
 pub mod proto {

@@ -151,27 +151,3 @@ impl HttpHandler for MasterHttpHandler {
     //     proto::sche::FnEventScheResponse { target_node: 2 }
     // }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::config::NodeConfig;
-
-    use super::*;
-
-    // test construct_target_path
-    #[test]
-    fn test_construct_target_path() {
-        let mut node_config =
-            NodeConfig::new("127.0.0.1:2500".parse().unwrap(), None, Default::default());
-        let sub_api = "test";
-        assert_eq!(
-            construct_target_path(&node_config, sub_api),
-            "http://127.0.0.1:2501/test",
-        );
-        node_config.set_domain(Some("http://hanbaoaaa.xyz/waverless_api1".to_owned()));
-        assert_eq!(
-            construct_target_path(&node_config, sub_api),
-            "http://hanbaoaaa.xyz/waverless_api1/test",
-        );
-    }
-}

@@ -1,0 +1,97 @@
+syntax = "proto3";
+package data;
+
+enum DataOpeType{
+  Read = 0;
+  Write = 1;
+}
+
+// depracated
+enum DataModeCache {
+  AlwaysInMem = 0;
+  AlwaysInFs = 1;
+}
+
+// depracated
+enum DataModeDistribute {
+  BroadcastRough = 0;
+}
+
+// depracated
+message DataMeta{
+  DataModeCache cache = 1;
+  DataModeDistribute distribute = 2;
+}
+
+
+message DataOpeRoleUploadApp{}
+
+message DataOpeRoleFuncCall{
+  string app_func=1;
+  uint32 node_id=2;
+}
+
+
+
+message DataScheduleContext{
+   int64 ope_node=1; // data source info
+   DataOpeType ope_type = 2; 
+  repeated uint32 data_sz_bytes=3; // split for big data
+  oneof ope_role {
+    DataOpeRoleUploadApp upload_app = 4;
+    DataOpeRoleFuncCall func_call = 5;
+  }
+}
+
+message DataSplit{
+  uint32 split_size = 1;
+  repeated uint32 node_ids = 2;
+}
+
+message DataVersionScheduleRequest {
+  string unique_id = 1;
+
+  uint64 version = 2; 
+
+  DataScheduleContext context = 3;
+}
+
+message DataCachePlan{
+  uint32 cache_mode=1;
+  repeated uint32 cache_nodes=2; // left empty when mode is all node
+}
+
+message DataVersionScheduleResponse {
+  uint64 version = 1;
+  // split of each data part
+  DataCachePlan cache_plan = 2;
+  repeated DataSplit split = 3;
+}
+
+
+message WriteOneDataRequest {
+  string unique_id = 1;
+  uint64 version = 2;
+
+  repeated DataItem data = 3;
+
+  message FileData {
+      string file_name = 1;
+      bool is_dir =2;
+      bytes file_content = 3;
+  }
+
+  message DataItem {
+      oneof data {
+          FileData file = 1;
+          bytes raw_bytes = 2;
+      }
+  }
+}
+
+message WriteOneDataResponse {
+  uint64 remote_version = 1;
+  bool success = 2;
+  string message = 3; // Optional: To provide additional info in case of failure
+}
+

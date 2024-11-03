@@ -1,0 +1,87 @@
+[package]
+name = "wasm_serverless"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+qp2p.workspace = true        #{ path = "qp2p" }
+tokio.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+prost.workspace = true
+parking_lot.workspace = true
+# raft = { version = "0.7.0", default-features = false, features = [
+#     "prost-codec",
+# ] } # tikv raft
+async-raft.workspace = true #{ path = "async-raft/async-raft" } #
+tracing.workspace = true
+# openraft = "0.8"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+slog.workspace = true
+slog-async.workspace = true
+slog-term.workspace = true
+regex.workspace = true
+camelpaste.workspace = true
+tracing-subscriber.workspace = true
+ws_derive.workspace = true
+clap.workspace = true
+downcast-rs.workspace = true
+bincode.workspace = true
+crossbeam-skiplist.workspace = true
+lazy_static.workspace = true
+axum.workspace = true
+async-channel.workspace = true
+sysinfo.workspace = true
+ssh2.workspace = true
+moka.workspace = true
+rand.workspace = true
+slotmap.workspace = true
+prometheus-client.workspace = true
+tower-http.workspace = true
+tower.workspace = true
+sled.workspace = true
+enum-as-inner.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+zip-extract.workspace = true
+zip.workspace = true
+walkdir.workspace = true
+s3_server = { path = "../s3_server" }
+hyper.workspace = true
+md-5.workspace = true
+path-absolutize.workspace = true
+
+[dependencies.uuid]
+version = "1.8.0"
+features = [
+    "v4",                # Lets you generate random UUIDs
+    "fast-rng",          # Use a faster (but still sufficiently random) RNG
+    "macro-diagnostics", # Enable better diagnostics for compile-time UUIDs
+]
+
+# slog-envlogger = { version = "2.1.0", optional = true }
+
+[build-dependencies]
+prost-build = { version = "0.12" }
+
+
+#[target.'cfg( target_os = "macos" )'.dependencies]
+#wasmer = "4.2.5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wasmedge-sdk = { version = "0.10.1", features = ["async"] }
+
+[profile.test]
+# 0: no optimizations
+# 1: basic optimizations
+# 2: some optimizations
+# 3: all optimizations
+# "s": optimize for binary size
+# "z": optimize for binary size, but also turn off loop vectorization.
+opt-level = 3           # Use slightly better optimizations.
+overflow-checks = false # Disable integer overflow checks.

@@ -153,6 +153,9 @@ pub enum WsFuncError {
 
 #[derive(Debug)]
 pub enum WsDataError {
+    DataSetNotFound {
+        uniqueid: String,
+    },
     SetExpiredDataVersion {
         target_version: u64,
         cur_version: u64,

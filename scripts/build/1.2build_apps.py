@@ -98,7 +98,7 @@ def cp_app_program(prj_dir,app):
 
 
 def pack_app(prj_dir,app,prjyml):
-    print_title(f"pack {prj_dir} {app}")
+    print_title(f"packing {prj_dir} {app}")
     os_system_sure(f"mkdir -p ../../scripts/build/pack/apps/{app}")
     app_yml={"fns":prjyml[app]}
     # write to app.yml
@@ -106,10 +106,12 @@ def pack_app(prj_dir,app,prjyml):
         f.write(yaml.dump(app_yml))
     # cp program
     cp_app_program(prj_dir,app)
+    print_title(f"packed {prj_dir} {app}")
     
 
 
 def pack_demo(app):
+    print_title(f"packing demo {app}")
     prj_dir=os.path.abspath(f"../../demos/{app}")
     os.chdir(prj_dir)
     # check Cargo.toml in the current directory
@@ -133,6 +135,7 @@ def pack_demo(app):
     for app in conf:
         pack_app(prj_dir,app,conf)
     
+    print_title(f"packed demo {app}")
     # if os.path.exists("pom.xml"):
         # os_system_sure("mvn clean package")
         # os_system_sure("cp target/*.jar ../pack/apps")
