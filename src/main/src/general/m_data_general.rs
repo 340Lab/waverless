@@ -4,10 +4,12 @@ use super::{
     network::{
         m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
         proto::{
+            self,
             write_one_data_request::{data_item::Data, DataItem},
-            DataMeta, DataModeDistribute, DataVersionRequest, WriteOneDataRequest,
+            DataMeta, DataModeDistribute, DataVersionScheduleRequest, WriteOneDataRequest,
             WriteOneDataResponse,
         },
+        proto_ext::ProtoExtDataItem,
     },
 };
 use crate::{
@@ -17,13 +19,13 @@ use crate::{
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
 };
-use crate::{
-    result::{WsDataError},
-    sys::LogicalModulesRef,
-};
+use crate::{result::WsDataError, sys::LogicalModulesRef};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use ws_derive::LogicalModule;
 
 // use super::m_appmeta_manager::AppMeta;
@@ -36,10 +38,14 @@ logical_module_view_impl!(DataGeneralView, os, OperatingSystem);
 
 pub type DataVersion = u64;
 
+pub const DATA_UID_PREFIX_APP_META: &str = "app";
+
+// const DATA_UID_PREFIX_OBJ: &str = "obj";
+
 #[derive(LogicalModule)]
 pub struct DataGeneral {
     view: DataGeneralView,
-    pub rpc_call_data_version: RPCCaller<DataVersionRequest>,
+    pub rpc_call_data_version: RPCCaller<DataVersionScheduleRequest>,
 
     rpc_call_write_once_data: RPCCaller<WriteOneDataRequest>,
     rpc_handler_write_once_data: RPCHandler<WriteOneDataRequest>,
@@ -87,8 +93,9 @@ impl DataGeneral {
         responsor: RPCResponsor<WriteOneDataRequest>,
         req: WriteOneDataRequest,
     ) {
-        // ## verify data meta
+        // ## verify data
         tracing::debug!("verify data meta bf write data");
+
         let Some(res) = self
             .view
             .kv_store_engine()
@@ -208,59 +215,126 @@ impl DataGeneral {
         })
     }
 
-    pub async fn set_dataversion(&self, req: DataVersionRequest) -> WSResult<()> {
+    pub async fn set_dataversion(&self, req: DataVersionScheduleRequest) -> WSResult<()> {
         // follower just update the version from master
         let old = self
             .view
             .kv_store_engine()
             .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()));
-        if let Some(old) = old {
-            if old.version > req.version {
-                return Err(WsDataError::SetExpiredDataVersion {
-                    target_version: req.version,
-                    cur_version: old.version,
-                    data_id: req.unique_id.clone(),
-                }
-                .into());
-                // responsor
-                //     .send_resp(DataVersionResponse {
-                //         version: old.version,
-                //     })
-                //     .await;
-                // tracing::warn!("has larger version {}", old.version);
-                // return Ok(());
+
+        let Some(mut old) = old else {
+            return Err(WsDataError::DataSetNotFound {
+                uniqueid: req.unique_id,
             }
+            .into());
+        };
+
+        // only the latest version has the permission
+        if old.version > req.version {
+            return Err(WsDataError::SetExpiredDataVersion {
+                target_version: req.version,
+                cur_version: old.version,
+                data_id: req.unique_id.clone(),
+            }
+            .into());
         }
+
+        // update the version
+        old.version = req.version;
+
         self.view.kv_store_engine().set(
             KeyTypeDataSetMeta(req.unique_id.as_bytes()),
-            &DataSetMeta {
-                version: req.version,
-                data_metas: req.data_metas.into_iter().map(|v| v.into()).collect(),
-                synced_nodes: HashSet::new(),
-            },
+            &old, // &DataSetMetaV1 {
+                  //     version: req.version,
+                  //     data_metas: req.data_metas.into_iter().map(|v| v.into()).collect(),
+                  //     synced_nodes: HashSet::new(),
+                  // },
         );
         self.view.kv_store_engine().flush();
         Ok(())
     }
 
+    ///  check the design here
+    ///  https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Rtxod8uDqoIcRwxOM1rccuXxnQg
     pub async fn write_data(
         &self,
         unique_id: String,
-        data_metas: Vec<DataMeta>,
+        // data_metas: Vec<DataMeta>,
         datas: Vec<DataItem>,
+        context_openode_opetype_operole: Option<(
+            NodeID,
+            proto::DataOpeType,
+            proto::data_schedule_context::OpeRole,
+        )>,
     ) {
-        if data_metas.len() == 0 {
-            tracing::warn!("write_data must have >0 data metas");
-            return;
-        }
-        if datas.len() != data_metas.len() {
-            tracing::warn!("write_data data metas and datas length not match");
-            return;
-        }
-        if DataModeDistribute::BroadcastRough as i32 == data_metas[0].distribute {
-            self.write_data_broadcast_rough(unique_id, data_metas, datas)
+        let p2p = self.view.p2p();
+
+        // Step 1: need the master to do the decision
+        // - require for the latest version for write permission
+        // - require for the distribution and cache mode
+        let resp = {
+            let resp = self
+                .rpc_call_data_version
+                .call(
+                    self.view.p2p(),
+                    p2p.nodes_config.get_master_node(),
+                    DataVersionScheduleRequest {
+                        unique_id: unique_id.clone(),
+                        version: 0,
+                        context: context_openode_opetype_operole.map(
+                            |(ope_node, ope_type, ope_role)| proto::DataScheduleContext {
+                                ope_node: ope_node as i64,
+                                ope_type: ope_type as i32,
+                                data_sz_bytes: datas.iter().map(|v| v.data_sz_bytes()).collect(),
+                                ope_role: Some(ope_role),
+                            },
+                        ),
+                    },
+                    Some(Duration::from_secs(60)),
+                )
                 .await;
+
+            let resp = match resp {
+                Err(e) => {
+                    tracing::warn!("write_data_broadcast_rough require version error: {:?}", e);
+                    return;
+                }
+                Ok(ok) => ok,
+            };
+            resp
+        };
+
+        // Step2: dispatch the data source and caches
+        {
+            let mut write_source_data_tasks = vec![];
+
+            // write the data split to kv
+            for one_data_splits in resp.split {
+                let mut last_node_begin: Option<(NodeID, usize)> = None;
+                let flush_the_data = |nodeid: NodeID, begin: usize| {
+                    let t = tokio::spawn(async move {});
+                    write_source_data_tasks.push(t);
+                };
+                for (idx, node) in one_data_splits.node_ids.iter().enumerate() {
+                    if let Some((node, begin)) = last_node_begin {
+                        if node != *node {
+                            // flush the data
+                        } else {
+                            last_node_begin = Some((*node, idx));
+                        }
+                    } else {
+                        last_node_begin = Some((*node, idx));
+                    }
+                }
+
+                // one_data_splits.node_ids.
+            }
         }
+
+        // if DataModeDistribute::BroadcastRough as i32 == data_metas[0].distribute {
+        //     self.write_data_broadcast_rough(unique_id, data_metas, datas)
+        //         .await;
+        // }
     }
     async fn write_data_broadcast_rough(
         &self,
@@ -269,26 +343,6 @@ impl DataGeneral {
         datas: Vec<DataItem>,
     ) {
         let p2p = self.view.p2p();
-        let resp = self
-            .rpc_call_data_version
-            .call(
-                self.view.p2p(),
-                p2p.nodes_config.get_master_node(),
-                DataVersionRequest {
-                    unique_id: unique_id.clone(),
-                    version: 0,
-                    data_metas,
-                },
-                Some(Duration::from_secs(60)),
-            )
-            .await;
-        let resp = match resp {
-            Err(e) => {
-                tracing::warn!("write_data_broadcast_rough require version error: {:?}", e);
-                return;
-            }
-            Ok(ok) => ok,
-        };
 
         tracing::debug!("start broadcast data with version");
         let version = resp.version;
@@ -361,45 +415,144 @@ impl Into<DataMeta> for DataMetaSys {
     }
 }
 
+/// the data's all in one meta
+/// https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Tqqkdxubpokwi5xREincb1sFnLc
 #[derive(Serialize, Deserialize)]
-pub struct DataSetMeta {
+pub struct DataSetMetaV1 {
     // unique_id: Vec<u8>,
     pub version: u64,
     pub data_metas: Vec<DataMetaSys>,
     pub synced_nodes: HashSet<NodeID>,
 }
+#[derive(Serialize, Deserialize)]
+pub struct DataSetMetaV2 {
+    // unique_id: Vec<u8>,
+    pub api_version: u8,
+    pub version: u64,
+    pub cache_mode: u16,
+    pub datas_splits: Vec<Vec<NodeID>>,
+}
 
-// pub struct DataDescriptionPart {
-//     mode_dist: DataModeDistribute,
-//     mode_cache: DataModeCache,
-// }
-// pub struct DataDescription {
-//     small: DataDescriptionPart,
-//     big: DataDescriptionPart,
-// }
+pub struct DataSetMetaBuilder {
+    building: Option<DataSetMetaV2>,
+}
+impl DataSetMetaBuilder {
+    pub fn new() -> Self {
+        Self {
+            building: Some(DataSetMetaV2 {
+                version: 0,
+                cache_mode: 0,
+                api_version: 2,
+                datas_splits: vec![],
+            }),
+        }
+    }
+    pub fn cache_mode_time_forever(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= 0x00111111;
+        self
+    }
 
-// impl Default for DataDescription {
-//     fn default() -> Self {
-//         Self {
-//             small: DataDescriptionPart {
-//                 mode_dist: DataModeDistribute::GlobalSyncRough,
-//                 mode_cache: DataModeCache::AlwaysInMem,
-//             },
-//             big: DataDescriptionPart {
-//                 mode_dist: DataModeDistribute::GlobalSyncRough,
-//                 mode_cache: DataModeCache::AlwaysInFs,
-//             },
-//         }
-//     }
-// }
+    pub fn cache_mode_pos_allnode(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= 0x11001111;
+        self
+    }
 
-// // data binds
-// pub trait Data {
-//     fn disc() -> DataDescription;
-// }
+    pub fn cache_mode_pos_specnode(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= 0x11011111;
+        self
+    }
 
-// impl Data for AppMeta {
-//     fn disc() -> DataDescription {
-//         DataDescription::default()
-//     }
-// }
+    pub fn version(&mut self, version: u64) -> &mut Self {
+        self.building.as_mut().unwrap().version = version;
+        self
+    }
+
+    pub fn set_data_splits(&mut self, splits: Vec<Vec<NodeID>>) -> &mut Self {
+        self.building.as_mut().unwrap().datas_splits = splits;
+        self
+    }
+
+    pub fn build(&mut self) -> DataSetMetaV2 {
+        self.building.take().unwrap()
+    }
+}
+
+impl From<DataSetMetaV1> for DataSetMetaV2 {
+    fn from(
+        DataSetMetaV1 {
+            version,
+            data_metas,
+            synced_nodes,
+        }: DataSetMetaV1,
+    ) -> Self {
+        DataSetMetaBuilder::new()
+            .version(version)
+            .cache_mode_pos_allnode()
+            .build()
+        // DataSetMetaV2 {
+        //     version,
+        //     data_metas,
+        //     synced_nodes,
+        // }
+    }
+}
+
+#[test]
+fn test_option_and_vec_serialization_size() {
+    // 定义一个具体的值
+    let value: i32 = 42;
+
+    // 创建 Option 类型的变量
+    let some_value: Option<i32> = Some(value);
+    let none_value: Option<i32> = None;
+
+    // 创建 Vec 类型的变量
+    let empty_vec: Vec<i32> = Vec::new();
+    let single_element_vec: Vec<i32> = vec![value];
+
+    let some_empty_vec: Option<Vec<i32>> = Some(vec![]);
+    let some_one_vec: Option<Vec<i32>> = Some(vec![value]);
+
+    // 序列化
+    let serialized_some = bincode::serialize(&some_value).unwrap();
+    let serialized_none = bincode::serialize(&none_value).unwrap();
+    let serialized_empty_vec = bincode::serialize(&empty_vec).unwrap();
+    let serialized_single_element_vec = bincode::serialize(&single_element_vec).unwrap();
+    let serialized_some_empty_vec = bincode::serialize(&some_empty_vec).unwrap();
+    let serialized_some_one_vec = bincode::serialize(&some_one_vec).unwrap();
+
+    // 获取序列化后的字节大小
+    let size_some = serialized_some.len();
+    let size_none = serialized_none.len();
+    let size_empty_vec = serialized_empty_vec.len();
+    let size_single_element_vec = serialized_single_element_vec.len();
+    let size_some_empty_vec = serialized_some_empty_vec.len();
+    let size_some_one_vec = serialized_some_one_vec.len();
+
+    // 打印结果
+    println!("Size of serialized Some(42): {}", size_some);
+    println!("Size of serialized None: {}", size_none);
+    println!("Size of serialized empty Vec: {}", size_empty_vec);
+    println!(
+        "Size of serialized Vec with one element (42): {}",
+        size_single_element_vec
+    );
+    println!(
+        "Size of serialized Some(empty Vec): {}",
+        size_some_empty_vec
+    );
+    println!(
+        "Size of serialized Some(one element Vec): {}",
+        size_some_one_vec
+    );
+
+    // 比较大小
+    assert!(
+        size_some > size_none,
+        "Expected serialized Some to be larger than serialized None"
+    );
+    assert!(
+        size_single_element_vec > size_empty_vec,
+        "Expected serialized Vec with one element to be larger than serialized empty Vec"
+    );
+}

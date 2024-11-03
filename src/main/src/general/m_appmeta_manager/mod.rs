@@ -4,7 +4,7 @@ mod v_os;
 
 use self::v_os::AppMetaVisitOs;
 use super::{
-    m_data_general::DataGeneral,
+    m_data_general::{DataGeneral, DATA_UID_PREFIX_APP_META},
     m_kv_store_engine::{KeyTypeServiceList, KvStoreEngine},
     m_os::OperatingSystem,
     network::{
@@ -19,7 +19,6 @@ use super::{
         },
     },
 };
-use crate::worker::m_executor::Executor;
 use crate::{
     general::kv_interface::KvOps,
     logical_module_view_impl,
@@ -29,6 +28,7 @@ use crate::{
     util::{self, JoinHandleWrapper},
     worker::func::m_instance_manager::InstanceManager,
 };
+use crate::{general::network::proto, worker::m_executor::Executor};
 use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
@@ -584,18 +584,18 @@ impl AppMetas {
     //     }
     // }
     // pub async fn set_tmp_appmeta(&self, )
-     fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
+    fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
         self.app_metas.get(app).cloned()
     }
     pub async fn get_app_meta(&self, app: &str) -> Option<AppMeta> {
-        if let Some(res)=self.get_tmp_app_meta(app){
+        if let Some(res) = self.get_tmp_app_meta(app) {
             return Some(res);
         }
-        
+
         // self.app_metas.get(app)
         let meta = view()
             .data_general()
-            .get_data_item(format!("app{}", app), 0)
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app), 0)
             .await;
         let Some(DataItem {
             data: Some(Data::RawBytes(metabytes)),
@@ -732,7 +732,7 @@ impl AppMetaManager {
         Ok(self
             .view
             .data_general()
-            .get_data_item(format!("app{}", app), 0)
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app), 0)
             .await
             .is_some())
     }
@@ -815,17 +815,7 @@ impl AppMetaManager {
         self.view
             .data_general()
             .write_data(
-                format!("app{}", appname),
-                vec![
-                    DataMeta {
-                        cache: DataModeCache::AlwaysInMem as i32,
-                        distribute: DataModeDistribute::BroadcastRough as i32,
-                    },
-                    DataMeta {
-                        cache: DataModeCache::AlwaysInFs as i32,
-                        distribute: DataModeDistribute::BroadcastRough as i32,
-                    },
-                ],
+                format!("{}{}", DATA_UID_PREFIX_APP_META, appname),
                 vec![
                     DataItem {
                         data: Some(data_item::Data::RawBytes(
@@ -840,6 +830,22 @@ impl AppMetaManager {
                         })),
                     },
                 ],
+                // vec![
+                //     DataMeta {
+                //         cache: DataModeCache::AlwaysInMem as i32,
+                //         distribute: DataModeDistribute::BroadcastRough as i32,
+                //     },
+                //     DataMeta {
+                //         cache: DataModeCache::AlwaysInFs as i32,
+                //         distribute: DataModeDistribute::BroadcastRough as i32,
+                //     },
+                // ],
+                proto::DataScheduleContext {
+                    ope_node: self.view.p2p().nodes_config.this_node(),
+                    ope_type: proto::DataOpeType::Write as i32,
+                    data_sz_bytes: vec![],
+                    ope_role,
+                },
             )
             .await;
         tracing::debug!("app uploaded");
