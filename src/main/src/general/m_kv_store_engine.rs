@@ -2,20 +2,23 @@
 //     // testmap: SkipMap<Vec<u8>, Vec<u8>>,
 //     pub view: KvStorageView,
 // }
+use axum::async_trait;
+use bincode::serialize;
+use bincode::serialize_into;
+use camelpaste::paste;
+use serde::Serialize;
+use serde::{de::DeserializeOwned, ser::SerializeTuple};
 
-use super::{m_data_general::DataSetMeta, m_os::OperatingSystem, network::m_p2p::P2PModule};
+use std::sync::OnceLock;
+
+use super::{m_data_general::DataSetMetaV1, m_os::OperatingSystem, network::m_p2p::P2PModule};
+use crate::general::m_data_general::DataSetMetaV2;
 use crate::{
     logical_module_view_impl,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
-use axum::async_trait;
-use bincode::serialize;
-use bincode::serialize_into;
-use serde::Serialize;
-use serde::{de::DeserializeOwned, ser::SerializeTuple};
-use std::sync::OnceLock;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(View);
@@ -72,17 +75,22 @@ impl KvStoreEngine {
             .insert(key, serialize(value).unwrap())
             .unwrap();
     }
-    pub fn get<'a, K>(&self, key: K) -> Option<K::Value>
+    pub fn get<'a, K>(&self, key_: K) -> Option<K::Value>
     where
         K: KeyType,
     {
-        let key = key.make_key();
+        let key = key_.make_key();
         self.db.get().unwrap().get(key).map_or_else(
             |e| {
                 tracing::error!("get kv error: {:?}", e);
                 None
             },
-            |v| v.map(|v| bincode::deserialize_from(v.as_ref()).unwrap()),
+            |v| {
+                v.map(|v| {
+                    key_.deserialize_from(v.as_ref())
+                        .unwrap_or_else(|| panic!("deserialize failed"))
+                })
+            },
         )
     }
     pub fn del<K>(&self, key: K)
@@ -106,61 +114,140 @@ pub trait KeyType: Serialize {
         serialize_into(&mut key, self).unwrap();
         key
     }
+
+    fn deserialize_from(&self, bytes: &[u8]) -> Option<Self::Value>; //-> Result<T>
+}
+
+macro_rules! generate_key_struct_content {
+    ($id:expr, $latest:ty, [$($old:ty),+]) => {
+        type Value= $latest;
+        fn id(&self) -> u8 {
+            $id
+        }
+        fn deserialize_from(&self, bytes:&[u8]) -> Option<$latest>//-> Result<T>
+        {
+            // 尝试最新版本的反序列化
+            if let Ok(val) = bincode::deserialize::<$latest>(bytes) {
+                return Some(val);
+            }
+
+            // 尝试旧版本的反序列化
+            $(
+                if let Ok(old_val) = bincode::deserialize::<$old>(bytes) {
+                    // 如果旧版本反序列化成功，尝试转换为最新版本
+                    return Some(<$latest>::from(old_val));
+                }
+            )*
+
+            None
+        }
+    };
+    ($id:expr, $latest:ty) => {
+        type Value= $latest;
+        fn id(&self) -> u8 {
+            $id
+        }
+        fn deserialize_from(&self, bytes:&[u8]) -> Option<$latest>//-> Result<T>
+        {
+            // 尝试最新版本的反序列化
+            if let Ok(val) = bincode::deserialize::<$latest>(bytes) {
+                return Some(val);
+            }
+            None
+        }
+    };
+}
+
+macro_rules! generate_key_struct {
+    ([$name:ident], $id:expr, $latest:ty, [$($old:ty),+]) => {
+        paste! {
+            impl KeyType for $name {
+                generate_key_struct_content!( $id, $latest, [$($old),+]);
+            }
+        }
+    };
+    ([$name:ident], $id:expr, $latest:ty) => {
+        paste! {
+            impl KeyType for $name {
+                generate_key_struct_content!( $id, $latest);
+            }
+        }
+    };
+    ([$name:ident,$lifetime:lifetime], $id:expr, $latest:ty, [$($old:ty),+]) => {
+        paste! {
+            impl KeyType for $name<$lifetime> {
+                generate_key_struct_content!( $id, $latest, [$($old),+]);
+            }
+        }
+    };
+    ([$name:ident,$lifetime:lifetime], $id:expr, $latest:ty) => {
+        paste! {
+            impl KeyType for $name<$lifetime> {
+                generate_key_struct_content!( $id, $latest);
+            }
+        }
+    };
 }
 
 pub struct KeyTypeKv<'a>(pub &'a [u8]);
+generate_key_struct!([KeyTypeKv,'_], 1, Vec<u8>);
 
 pub struct KeyTypeKvPosition<'a>(pub &'a [u8]);
+generate_key_struct!([KeyTypeKvPosition,'_], 0, NodeID);
 
 pub struct KeyTypeServiceMeta<'a>(pub &'a [u8]);
+generate_key_struct!([KeyTypeServiceMeta,'_], 2, Vec<u8>);
 
 pub struct KeyTypeServiceList;
+generate_key_struct!([KeyTypeServiceList], 3, Vec<u8>);
 
 pub struct KeyTypeDataSetMeta<'a>(pub &'a [u8]);
+generate_key_struct!([KeyTypeDataSetMeta,'_], 4, DataSetMetaV2, [DataSetMetaV1]);
 
 pub struct KeyTypeDataSetItem<'a> {
     pub uid: &'a [u8],
     pub idx: u8,
 }
+generate_key_struct!([KeyTypeDataSetItem,'_], 5, Vec<u8>);
 
-impl KeyType for KeyTypeKvPosition<'_> {
-    type Value = NodeID;
-    fn id(&self) -> u8 {
-        0
-    }
-}
-impl KeyType for KeyTypeKv<'_> {
-    type Value = Vec<u8>;
-    fn id(&self) -> u8 {
-        1
-    }
-}
-impl KeyType for KeyTypeServiceMeta<'_> {
-    type Value = Vec<u8>;
-    fn id(&self) -> u8 {
-        2
-    }
-}
-impl KeyType for KeyTypeServiceList {
-    type Value = Vec<u8>;
-    fn id(&self) -> u8 {
-        3
-    }
-}
+// impl KeyType for KeyTypeKvPosition<'_> {
+//     type Value = NodeID;
+//     fn id(&self) -> u8 {
+//         0
+//     }
+// }
+// impl KeyType for KeyTypeKv<'_> {
+//     type Value = Vec<u8>;
+//     fn id(&self) -> u8 {
+//         1
+//     }
+// }
+// impl KeyType for KeyTypeServiceMeta<'_> {
+//     type Value = Vec<u8>;
+//     fn id(&self) -> u8 {
+//         2
+//     }
+// }
+// impl KeyType for KeyTypeServiceList {
+//     type Value = Vec<u8>;
+//     fn id(&self) -> u8 {
+//         3
+//     }
+// }
 
-impl KeyType for KeyTypeDataSetMeta<'_> {
-    type Value = DataSetMeta;
-    fn id(&self) -> u8 {
-        4
-    }
-}
+// impl KeyType for KeyTypeDataSetMeta<'_> {
+//     type Value = DataSetMetaV1;
+//     fn id(&self) -> u8 {
+//         4
+//     }
+// }
 
-impl KeyType for KeyTypeDataSetItem<'_> {
-    type Value = Vec<u8>;
-    fn id(&self) -> u8 {
-        5
-    }
-}
+// impl KeyType for KeyTypeDataSetItem<'_> {
+//     type Value = Vec<u8>;
+//     fn id(&self) -> u8 {
+//         5
+//     }
+// }
 
 impl Serialize for KeyTypeKvPosition<'_> {
     fn serialize<S: serde::ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

@@ -2,10 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::general::m_data_general::{DataGeneral, DataSetMeta};
+use crate::general::m_data_general::{DataGeneral, DataSetMetaV1};
 use crate::general::m_kv_store_engine::{KeyTypeDataSetMeta, KvStoreEngine};
 use crate::general::network::m_p2p::{P2PModule, RPCHandler, RPCResponsor};
-use crate::general::network::proto::{self, DataVersionRequest, DataVersionResponse};
+use crate::general::network::proto::{
+    self, DataVersionScheduleRequest, DataVersionScheduleResponse,
+};
 use crate::result::WSResult;
 use crate::sys::LogicalModulesRef;
 use crate::util::JoinHandleWrapper;
@@ -27,7 +29,7 @@ logical_module_view_impl!(DataMasterView, kv_store_engine, KvStoreEngine);
 #[derive(LogicalModule)]
 pub struct DataMaster {
     view: DataMasterView,
-    rpc_handler: RPCHandler<proto::DataVersionRequest>,
+    rpc_handler: RPCHandler<proto::DataVersionScheduleRequest>,
 }
 
 #[async_trait]
@@ -67,8 +69,8 @@ impl LogicalModule for DataMaster {
 impl DataMaster {
     async fn rpc_handler_dataversion_require(
         &self,
-        responsor: RPCResponsor<DataVersionRequest>,
-        req: DataVersionRequest,
+        responsor: RPCResponsor<DataVersionScheduleRequest>,
+        req: DataVersionScheduleRequest,
     ) -> WSResult<()> {
         // ## check version
         tracing::debug!("check version for data({})", req.unique_id);
@@ -78,7 +80,7 @@ impl DataMaster {
             .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()));
         // ##  update version local
         tracing::debug!("update version local for data({})", req.unique_id);
-        let setmeta = RefCell::new(Some(DataSetMeta {
+        let setmeta = RefCell::new(Some(DataSetMetaV1 {
             version: 1,
             data_metas: req.data_metas.iter().map(|v| v.clone().into()).collect(),
             synced_nodes: HashSet::new(),
@@ -162,14 +164,14 @@ impl DataMaster {
             v.version
         );
         responsor
-            .send_resp(DataVersionResponse { version: v.version })
+            .send_resp(DataVersionScheduleResponse { version: v.version })
             .await;
         Ok(())
     }
     async fn rpc_handler_dataversion_synced_on_node(
         &self,
-        responsor: RPCResponsor<DataVersionRequest>,
-        req: DataVersionRequest,
+        responsor: RPCResponsor<DataVersionScheduleRequest>,
+        req: DataVersionScheduleRequest,
     ) -> WSResult<()> {
         // 1. check version
         let v = self
@@ -179,7 +181,7 @@ impl DataMaster {
         let mut v = if let Some(v) = v {
             if v.version != req.version {
                 responsor
-                    .send_resp(DataVersionResponse { version: v.version })
+                    .send_resp(DataVersionScheduleResponse { version: v.version })
                     .await;
                 tracing::warn!(
                     "version not match for data({}), cur: {}",
@@ -191,7 +193,7 @@ impl DataMaster {
             v
         } else {
             responsor
-                .send_resp(DataVersionResponse { version: 0 })
+                .send_resp(DataVersionScheduleResponse { version: 0 })
                 .await;
             tracing::warn!("version not match for data({}), cur: {}", req.unique_id, 0);
             return Ok(());
@@ -212,14 +214,14 @@ impl DataMaster {
             responsor.node_id()
         );
         responsor
-            .send_resp(DataVersionResponse { version: v.version })
+            .send_resp(DataVersionScheduleResponse { version: v.version })
             .await;
         Ok(())
     }
     async fn rpc_handler_dataversion(
         &self,
-        responsor: RPCResponsor<DataVersionRequest>,
-        req: DataVersionRequest,
+        responsor: RPCResponsor<DataVersionScheduleRequest>,
+        req: DataVersionScheduleRequest,
     ) -> WSResult<()> {
         if req.version > 0 {
             self.rpc_handler_dataversion_synced_on_node(responsor, req)
