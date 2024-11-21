@@ -13,7 +13,7 @@ use convert_case::{Case, Casing};
 use proc_macro::{self, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    braced, bracketed, parenthesized,
+    bracketed,
     parse::{Parse, ParseStream},
     parse_macro_input, token, DeriveInput, Ident, Result, Token,
 };
@@ -207,11 +207,17 @@ fn path_is_option(path: &syn::Path) -> bool {
 pub fn logical_module_macro_derive(input: TokenStream) -> TokenStream {
     let input: DeriveInput = parse_macro_input!(input);
     // ident 当前枚举名称
-    let DeriveInput { ident, .. } = input;
+    let DeriveInput {
+        ident, generics, ..
+    } = input;
+
+    // 获取泛型参数（包括生命周期参数）
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
     // 实现 comment 方法
     let output = quote! {
 
-        impl #ident{
+        impl #impl_generics #ident #ty_generics #where_clause{
             pub fn new(args: LogicalModuleNewArgs) -> Self {
                 let ret = Self::inner_new(args);
                 // tracing::info!("new module {}", ret.name());
@@ -269,7 +275,7 @@ struct OuterAttribute {
 
 impl Parse for OuterAttribute {
     fn parse(input: ParseStream) -> Result<Self> {
-        let mut content;
+        let content;
         let _pound_token: Token![#] = input.parse()?;
         let _bracket_token: token::Bracket = bracketed!(content in input);
         let _ident: Ident = content.parse()?;

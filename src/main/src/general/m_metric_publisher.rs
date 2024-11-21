@@ -80,6 +80,7 @@ async fn report_metric_task(view: MetricPublisherView) {
         //     view.metric_observor()
         //         .insert_node_rsc_metric(view.p2p().nodes_config.this.0, metric);
         // } else {
+
         let _res = view
             .metric_publisher()
             .msg_sender
@@ -89,6 +90,7 @@ async fn report_metric_task(view: MetricPublisherView) {
                 metric,
             )
             .await;
+
         // .send_resp(1, 0, metric).await;
         // }
     }

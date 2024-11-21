@@ -1,31 +1,37 @@
 use super::{
-    m_kv_store_engine::{KeyTypeDataSetItem, KeyTypeDataSetMeta, KvStoreEngine},
+    m_kv_store_engine::{
+        KeyTypeDataSetItem, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine, KvVersion,
+    },
     m_os::OperatingSystem,
     network::{
         m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
         proto::{
-            self,
-            write_one_data_request::{data_item::Data, DataItem},
-            DataMeta, DataModeDistribute, DataVersionScheduleRequest, WriteOneDataRequest,
-            WriteOneDataResponse,
+            self, DataMeta, DataMetaGetRequest, DataVersionScheduleRequest,
+            WriteOneDataRequest, WriteOneDataResponse,
         },
         proto_ext::ProtoExtDataItem,
     },
 };
 use crate::{
-    general::network::proto::write_one_data_request,
+    general::m_kv_store_engine::KeyType,
     logical_module_view_impl,
-    result::WSResult,
+    result::{WSError, WSResult, WsRuntimeErr, WsSerialErr},
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
     util::JoinHandleWrapper,
 };
 use crate::{result::WsDataError, sys::LogicalModulesRef};
 use async_trait::async_trait;
+use camelpaste::paste;
+use core::str;
+
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
+use tokio::task::JoinHandle;
 use ws_derive::LogicalModule;
 
 // use super::m_appmeta_manager::AppMeta;
@@ -39,16 +45,47 @@ logical_module_view_impl!(DataGeneralView, os, OperatingSystem);
 pub type DataVersion = u64;
 
 pub const DATA_UID_PREFIX_APP_META: &str = "app";
+pub const DATA_UID_PREFIX_FN_KV: &str = "fkv";
 
+pub const CACHE_MODE_TIME_MASK: u16 = 0xf000;
+pub const CACHE_MODE_TIME_FOREVER_MASK: u16 = 0x0fff;
+pub const CACHE_MODE_TIME_AUTO_MASK: u16 = 0x1fff;
+
+pub const CACHE_MODE_POS_MASK: u16 = 0x0f00;
+pub const CACHE_MODE_POS_ALLNODE_MASK: u16 = 0xf0ff;
+pub const CACHE_MODE_POS_SPECNODE_MASK: u16 = 0xf1ff;
+pub const CACHE_MODE_POS_AUTO_MASK: u16 = 0xf2ff;
+
+pub const CACHE_MODE_MAP_MASK: u16 = 0x00f0;
+pub const CACHE_MODE_MAP_COMMON_KV_MASK: u16 = 0xff0f;
+pub const CACHE_MODE_MAP_FILE_MASK: u16 = 0xff1f;
 // const DATA_UID_PREFIX_OBJ: &str = "obj";
+
+pub fn new_data_unique_id_app(app_name: &str) -> String {
+    format!("{}{}", DATA_UID_PREFIX_APP_META, app_name)
+}
+
+pub fn new_data_unique_id_fn_kv(key: &[u8]) -> Vec<u8> {
+    let mut temp = DATA_UID_PREFIX_FN_KV.as_bytes().to_owned();
+    temp.extend(key);
+    temp
+    // let key_str = str::from_utf8(key).unwrap();
+    // format!("{}{}", DATA_UID_PREFIX_FN_KV, key_str)
+}
 
 #[derive(LogicalModule)]
 pub struct DataGeneral {
     view: DataGeneralView,
-    pub rpc_call_data_version: RPCCaller<DataVersionScheduleRequest>,
 
+    pub rpc_call_data_version_schedule: RPCCaller<DataVersionScheduleRequest>,
     rpc_call_write_once_data: RPCCaller<WriteOneDataRequest>,
+    rpc_call_get_data_meta: RPCCaller<DataMetaGetRequest>,
+    rpc_call_get_data: RPCCaller<proto::GetOneDataRequest>,
+
     rpc_handler_write_once_data: RPCHandler<WriteOneDataRequest>,
+    rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
+    rpc_handler_get_data_meta: RPCHandler<DataMetaGetRequest>,
+    rpc_handler_get_data: RPCHandler<proto::GetOneDataRequest>,
 }
 
 #[async_trait]
@@ -59,140 +96,321 @@ impl LogicalModule for DataGeneral {
     {
         Self {
             view: DataGeneralView::new(args.logical_modules_ref.clone()),
-            rpc_call_data_version: RPCCaller::new(),
+
+            rpc_call_data_version_schedule: RPCCaller::new(),
             rpc_call_write_once_data: RPCCaller::new(),
+            rpc_call_get_data_meta: RPCCaller::new(),
+            rpc_call_get_data: RPCCaller::new(),
+
             rpc_handler_write_once_data: RPCHandler::new(),
+            rpc_handler_data_meta_update: RPCHandler::new(),
+            rpc_handler_get_data_meta: RPCHandler::new(),
+            rpc_handler_get_data: RPCHandler::new(),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
+
         let p2p = self.view.p2p();
-        self.rpc_call_data_version.regist(p2p);
-        self.rpc_call_write_once_data.regist(p2p);
-        let view = self.view.clone();
-        self.rpc_handler_write_once_data
-            .regist(p2p, move |responsor, req| {
-                let view = view.clone();
-                let _ = tokio::spawn(async move {
-                    view.data_general().write_one_data(responsor, req).await;
+        // register rpc callers
+        {
+            self.rpc_call_data_version_schedule.regist(p2p);
+            self.rpc_call_write_once_data.regist(p2p);
+            self.rpc_call_get_data_meta.regist(p2p);
+            self.rpc_call_get_data.regist(p2p);
+        }
+
+        // register rpc handlers
+        {
+            let view = self.view.clone();
+            self.rpc_handler_write_once_data
+                .regist(p2p, move |responsor, req| {
+                    let view = view.clone();
+                    let _ = tokio::spawn(async move {
+                        view.rpc_handle_write_one_data(responsor, req).await;
+                    });
+                    Ok(())
                 });
-                Ok(())
-            });
+            let view = self.view.clone();
+            self.rpc_handler_data_meta_update.regist(
+                p2p,
+                move |responsor: RPCResponsor<proto::DataMetaUpdateRequest>,
+                      req: proto::DataMetaUpdateRequest| {
+                    let view = view.clone();
+                    let _ =
+                        tokio::spawn(
+                            async move { view.rpc_handle_data_meta_update(responsor, req) },
+                        );
+                    Ok(())
+                },
+            );
+            let view = self.view.clone();
+            self.rpc_handler_get_data_meta
+                .regist(p2p, move |responsor, req| {
+                    let view = view.clone();
+                    let _ = tokio::spawn(async move {
+                        view.rpc_handle_get_data_meta(req, responsor).await;
+                    });
+                    Ok(())
+                });
+            let view = self.view.clone();
+            self.rpc_handler_get_data.regist(
+                p2p,
+                move |responsor: RPCResponsor<proto::GetOneDataRequest>,
+                      req: proto::GetOneDataRequest| {
+                    let view = view.clone();
+                    let _ =
+                        tokio::spawn(async move { view.rpc_handle_get_one_data(responsor, req) });
+                    Ok(())
+                },
+            );
+        }
+
         Ok(vec![])
     }
 }
 
-// pub enum DataWrapper {
-//     Bytes(Vec<u8>),
-//     File(PathBuf),
-// }
+impl DataGeneralView {
+    async fn rpc_handle_data_meta_update(
+        self,
+        responsor: RPCResponsor<proto::DataMetaUpdateRequest>,
+        mut req: proto::DataMetaUpdateRequest,
+    ) {
+        let key = KeyTypeDataSetMeta(&req.unique_id);
+        let keybytes = key.make_key();
 
-impl DataGeneral {
-    async fn write_one_data(
-        &self,
+        let write_lock = self.kv_store_engine().with_rwlock(&keybytes);
+        write_lock.write();
+
+        if let Some((_old_version, mut old_meta)) =
+            self.kv_store_engine().get(&key, true, KvAdditionalConf {})
+        {
+            if old_meta.version > req.version {
+                responsor.send_resp(proto::DataMetaUpdateResponse {
+                    version: old_meta.version,
+                    message: "New data version overwrite".to_owned(),
+                });
+                return;
+            }
+            old_meta.version = req.version;
+            if req.serialized_meta.len() > 0 {
+                self.kv_store_engine().set_raw(
+                    &keybytes,
+                    std::mem::take(&mut req.serialized_meta),
+                    true,
+                );
+            } else {
+                self.kv_store_engine().set(key, &old_meta, true);
+            }
+        } else {
+            if req.serialized_meta.len() > 0 {
+                self.kv_store_engine().set_raw(
+                    &keybytes,
+                    std::mem::take(&mut req.serialized_meta),
+                    true,
+                );
+            } else {
+                responsor.send_resp(proto::DataMetaUpdateResponse {
+                    version: 0,
+                    message: "Old meta data not found and missing new meta".to_owned(),
+                });
+                return;
+            }
+        }
+        responsor.send_resp(proto::DataMetaUpdateResponse {
+            version: req.version,
+            message: "Update success".to_owned(),
+        });
+    }
+
+    async fn rpc_handle_get_one_data(
+        self,
+        responsor: RPCResponsor<proto::GetOneDataRequest>,
+        req: proto::GetOneDataRequest,
+    ) -> WSResult<()> {
+        // req.unique_id
+        let kv_store_engine = self.kv_store_engine();
+        let _ = self.get_data_meta(&req.unique_id, true)?;
+        // let meta = bincode::deserialize::<DataSetMetaV2>(&req.serialized_meta).map_err(|err| {
+        //     WsSerialErr::BincodeErr {
+        //         err,
+        //         context: "rpc_handle_get_one_data".to_owned(),
+        //     }
+        // })?;
+        let mut deleted = vec![];
+
+        let mut kv_ope_err = vec![];
+
+        for idx in req.idxs {
+            let value = if req.delete {
+                match kv_store_engine.del(
+                    KeyTypeDataSetItem {
+                        uid: req.unique_id.as_ref(), //req.unique_id.clone(),
+                        idx: idx as u8,
+                    },
+                    false,
+                ) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        kv_ope_err.push(e);
+                        None
+                    }
+                }
+            } else {
+                kv_store_engine.get(
+                    &KeyTypeDataSetItem {
+                        uid: req.unique_id.as_ref(), //req.unique_id.clone(),
+                        idx: idx as u8,
+                    },
+                    false,
+                    KvAdditionalConf {},
+                )
+            };
+            deleted.push(value);
+        }
+
+        tracing::warn!("temporaly no data response");
+
+        let (success, message): (bool, String) = if kv_ope_err.len() > 0 {
+            (false, {
+                let mut msg = String::from("KvEngine operation failed: ");
+                for e in kv_ope_err.iter() {
+                    msg.push_str(&format!("{:?}", e));
+                }
+                msg
+            })
+        } else if deleted.iter().all(|v| v.is_some()) {
+            (true, "success".to_owned())
+        } else {
+            (false, "some data not found".to_owned())
+        };
+
+        responsor
+            .send_resp(proto::GetOneDataResponse {
+                success,
+                data: vec![],
+                message,
+            })
+            .await?;
+
+        Ok(())
+    }
+    async fn rpc_handle_write_one_data(
+        self,
         responsor: RPCResponsor<WriteOneDataRequest>,
         req: WriteOneDataRequest,
     ) {
-        // ## verify data
         tracing::debug!("verify data meta bf write data");
+        let kv_store_engine = self.kv_store_engine();
 
-        let Some(res) = self
-            .view
-            .kv_store_engine()
-            .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()))
-        else {
-            responsor.send_resp(WriteOneDataResponse {
-                remote_version: 0,
-                success: false,
-                message: "Data meta not found".to_owned(),
-            });
-            return;
-        };
-        if res.version != req.version {
-            responsor.send_resp(WriteOneDataResponse {
-                remote_version: res.version,
-                success: false,
-                message: "Data meta version not match".to_owned(),
-            });
-            return;
-        }
-        if req.data.is_empty() {
-            responsor.send_resp(WriteOneDataResponse {
-                remote_version: res.version,
-                success: false,
-                message: "Data is empty".to_owned(),
-            });
-            return;
-        }
-        if req.data[0].data.is_none() {
-            responsor.send_resp(WriteOneDataResponse {
-                remote_version: res.version,
-                success: false,
-                message: "Data enum is none".to_owned(),
-            });
-            return;
-        }
-        for (_idx, data) in req.data.iter().enumerate() {
-            match data.data.as_ref().unwrap() {
-                write_one_data_request::data_item::Data::File(f) => {
-                    if f.file_name.starts_with("/") {
-                        responsor.send_resp(WriteOneDataResponse {
-                            remote_version: res.version,
-                            success: false,
-                            message: format!(
-                                "File name {} starts with / is forbidden",
-                                f.file_name
-                            ),
-                        });
-                        return;
-                    }
-                }
-                _ => {}
+        // Step 0: pre-check
+        {
+            if req.data.is_empty() {
+                responsor.send_resp(WriteOneDataResponse {
+                    remote_version: 0,
+                    success: false,
+                    message: "Request data is empty".to_owned(),
+                });
+                return;
+            }
+            if req.data[0].data_item_dispatch.is_none() {
+                responsor.send_resp(WriteOneDataResponse {
+                    remote_version: 0,
+                    success: false,
+                    message: "Request data enum is none".to_owned(),
+                });
+                return;
             }
         }
-        // ## write data
+
+        // Step1: verify version
+        // take old meta
+        {
+            let keybytes = KeyTypeDataSetMeta(&req.unique_id).make_key();
+            let fail_by_overwrite = || {
+                let message = "New data version overwrite".to_owned();
+                tracing::warn!("{}", message);
+                responsor.send_resp(WriteOneDataResponse {
+                    remote_version: 0,
+                    success: false,
+                    message,
+                });
+            };
+            let fail_with_msg = |message: String| {
+                tracing::warn!("{}", message);
+                responsor.send_resp(WriteOneDataResponse {
+                    remote_version: 0,
+                    success: false,
+                    message,
+                });
+            };
+            loop {
+                let res = kv_store_engine.get(
+                    &KeyTypeDataSetMeta(&req.unique_id),
+                    false,
+                    KvAdditionalConf {},
+                ); //tofix, master send maybe not synced
+                let old_dataset_version = if res.is_none() {
+                    0
+                } else {
+                    res.as_ref().unwrap().1.version
+                };
+                // need to wait for new version
+                if res.is_none() || res.as_ref().unwrap().1.version < req.version {
+                    let (_, new_value) = kv_store_engine.wait_for_new(&keybytes).await;
+                    let Some(new_value) = new_value.as_data_set_meta() else {
+                        fail_with_msg(format!(
+                            "fatal error, kv value supposed to be DataSetMeta, rathe than {:?}",
+                            new_value
+                        ));
+                        return;
+                    };
+
+                    if new_value.version > req.version {
+                        fail_by_overwrite();
+                        return;
+                    } else if new_value.version < req.version {
+                        // still need to wait for new version
+                        continue;
+                    } else {
+                        break;
+                    }
+                } else if old_dataset_version > req.version {
+                    fail_by_overwrite();
+                    return;
+                }
+            }
+        }
+
+        // Step3: write data
         tracing::debug!("start to write data");
         for (idx, data) in req.data.into_iter().enumerate() {
-            match data.data.unwrap() {
-                write_one_data_request::data_item::Data::File(f) => {
-                    tracing::debug!("writing data part{} file {}", idx, f.file_name);
-                    let p: std::path::PathBuf = self.view.os().file_path.join(f.file_name);
-                    let view = self.view.clone();
-
-                    let p2 = p.clone();
-                    let res = if f.is_dir {
-                        tokio::task::spawn_blocking(move || {
-                            view.os().unzip_data_2_path(p2, f.file_content);
-                        })
-                    } else {
-                        // flush to p
-                        tokio::task::spawn_blocking(move || {
-                            view.os().cover_data_2_path(p2, f.file_content);
-                        })
-                    };
-                    let res = res.await;
-                    if let Err(e) = res {
-                        responsor.send_resp(WriteOneDataResponse {
-                            remote_version: req.version,
-                            success: false,
-                            message: format!("Write file error: {:?}, path: {:?}", e, p),
-                        });
-                        return;
-                    }
-                }
-                write_one_data_request::data_item::Data::RawBytes(bytes) => {
-                    tracing::debug!("writing data part{} bytes", idx);
-                    self.view.kv_store_engine().set(
+            match data.data_item_dispatch.unwrap() {
+                proto::data_item::DataItemDispatch::File(f) => {
+                    // just store in kv
+                    kv_store_engine.set(
                         KeyTypeDataSetItem {
-                            uid: req.unique_id.as_bytes(),
+                            uid: req.unique_id.as_ref(), //req.unique_id.clone(),
+                            idx: idx as u8,
+                        },
+                        &f.encode_to_vec(),
+                        false,
+                    );
+                }
+                proto::data_item::DataItemDispatch::RawBytes(bytes) => {
+                    tracing::debug!("writing data part{} bytes", idx);
+                    kv_store_engine.set(
+                        KeyTypeDataSetItem {
+                            uid: &req.unique_id,
                             idx: idx as u8,
                         },
                         &bytes,
+                        false,
                     );
                 }
             }
         }
-        self.view.kv_store_engine().flush();
+        kv_store_engine.flush();
         tracing::debug!("data is written");
         responsor
             .send_resp(WriteOneDataResponse {
@@ -203,78 +421,215 @@ impl DataGeneral {
             .await;
         // ## response
     }
-    pub async fn get_data_item(&self, unique_id: String, idx: u8) -> Option<DataItem> {
-        let Some(itembytes) = self.view.kv_store_engine().get(KeyTypeDataSetItem {
-            uid: unique_id.as_bytes(),
-            idx: idx as u8,
-        }) else {
-            return None;
+
+    async fn rpc_handle_get_data_meta(
+        self,
+        req: proto::DataMetaGetRequest,
+        responsor: RPCResponsor<proto::DataMetaGetRequest>,
+    ) -> WSResult<()> {
+        let meta = self.get_data_meta(&req.unique_id, req.delete)?;
+
+        let serialized_meta = meta.map_or(vec![], |(_kvversion, meta)| {
+            bincode::serialize(&meta).unwrap()
+        });
+
+        responsor
+            .send_resp(proto::DataMetaGetResponse { serialized_meta })
+            .await?;
+
+        Ok(())
+    }
+    // pub async fn
+
+    fn get_data_meta(
+        &self,
+        unique_id: &[u8],
+        delete: bool,
+    ) -> WSResult<Option<(KvVersion, DataSetMetaV2)>> {
+        let kv_store_engine = self.kv_store_engine();
+        let key = KeyTypeDataSetMeta(&unique_id);
+        let keybytes = key.make_key();
+
+        let write_lock = kv_store_engine.with_rwlock(&keybytes);
+        let _guard = write_lock.write();
+
+        let meta_opt = if delete {
+            kv_store_engine.get(&key, true, KvAdditionalConf {})
+        } else {
+            kv_store_engine.del(key, true)?
         };
-        Some(DataItem {
-            data: Some(Data::RawBytes(itembytes)),
+        Ok(meta_opt)
+    }
+}
+
+// pub enum DataWrapper {
+//     Bytes(Vec<u8>),
+//     File(PathBuf),
+// }
+
+impl DataGeneral {
+    async fn get_datameta_from_master(&self, unique_id: &[u8]) -> WSResult<DataSetMetaV2> {
+        let p2p = self.view.p2p();
+        let data_general = self.view.data_general();
+        // get meta from master
+        let meta = data_general
+            .rpc_call_get_data_meta
+            .call(
+                p2p,
+                p2p.nodes_config.get_master_node(),
+                DataMetaGetRequest {
+                    unique_id: unique_id.to_owned(),
+                    delete: true,
+                },
+                Some(Duration::from_secs(30)),
+            )
+            .await?;
+        bincode::deserialize::<DataSetMetaV2>(&meta.serialized_meta).map_err(|e| {
+            WSError::from(WsSerialErr::BincodeErr {
+                err: e,
+                context: "delete data meta at master wrong meta serialized".to_owned(),
+            })
         })
     }
 
-    pub async fn set_dataversion(&self, req: DataVersionScheduleRequest) -> WSResult<()> {
-        // follower just update the version from master
-        let old = self
-            .view
-            .kv_store_engine()
-            .get(KeyTypeDataSetMeta(req.unique_id.as_bytes()));
-
-        let Some(mut old) = old else {
-            return Err(WsDataError::DataSetNotFound {
-                uniqueid: req.unique_id,
+    async fn get_data_by_meta(
+        &self,
+        unique_id: &[u8],
+        meta: DataSetMetaV2,
+        delete: bool,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let view = &self.view;
+        // Step2: delete data on each node
+        let mut each_node_data: HashMap<NodeID, proto::GetOneDataRequest> = HashMap::new();
+        for (idx, data_splits) in meta.datas_splits.iter().enumerate() {
+            for split in &data_splits.splits {
+                let _ = each_node_data
+                    .entry(split.node_id)
+                    .and_modify(|old| {
+                        old.idxs.push(idx as u32);
+                    })
+                    .or_insert(proto::GetOneDataRequest {
+                        unique_id: unique_id.to_owned(),
+                        idxs: vec![idx as u32],
+                        delete,
+                        return_data: true,
+                    });
             }
-            .into());
-        };
-
-        // only the latest version has the permission
-        if old.version > req.version {
-            return Err(WsDataError::SetExpiredDataVersion {
-                target_version: req.version,
-                cur_version: old.version,
-                data_id: req.unique_id.clone(),
-            }
-            .into());
         }
 
-        // update the version
-        old.version = req.version;
+        let mut tasks = vec![];
+        for (node_id, req) in each_node_data {
+            let view = view.clone();
+            let task = tokio::spawn(async move {
+                let req_idxs = req.idxs.clone();
+                let res = view
+                    .data_general()
+                    .rpc_call_get_data
+                    .call(view.p2p(), node_id, req, Some(Duration::from_secs(30)))
+                    .await;
+                let res: WSResult<Vec<(u32, proto::DataItem)>> = res.map(|response| {
+                    if !response.success {
+                        tracing::warn!("get/delete data failed {}", response.message);
+                        vec![]
+                    } else {
+                        req_idxs.into_iter().zip(response.data).collect()
+                    }
+                });
+                (node_id, res)
+            });
+            tasks.push(task);
+        }
 
-        self.view.kv_store_engine().set(
-            KeyTypeDataSetMeta(req.unique_id.as_bytes()),
-            &old, // &DataSetMetaV1 {
-                  //     version: req.version,
-                  //     data_metas: req.data_metas.into_iter().map(|v| v.into()).collect(),
-                  //     synced_nodes: HashSet::new(),
-                  // },
-        );
-        self.view.kv_store_engine().flush();
-        Ok(())
+        let mut node_2_datas: HashMap<(NodeID, usize), proto::DataItem> = HashMap::new();
+        for tasks in tasks {
+            let (node_id, data) = tasks.await.map_err(|err| {
+                WSError::from(WsRuntimeErr::TokioJoin {
+                    err,
+                    context: "delete_data - deleting remote data".to_owned(),
+                })
+            })?;
+            for (idx, data_item) in data? {
+                let _ = node_2_datas.insert((node_id, idx as usize), data_item);
+            }
+        }
+
+        Ok((meta, node_2_datas))
     }
 
-    ///  check the design here
-    ///  https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Rtxod8uDqoIcRwxOM1rccuXxnQg
+    pub async fn get_data(
+        &self,
+        unique_id: impl Into<Vec<u8>>,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let unique_id: Vec<u8> = unique_id.into();
+        // Step1: get meta
+        let meta: DataSetMetaV2 = self.get_datameta_from_master(&unique_id).await?;
+        self.get_data_by_meta(&unique_id, meta, false).await
+    }
+
+    /// return (meta, data_map)
+    /// data_map: (node_id, idx) -> data_items
+    pub async fn delete_data(
+        &self,
+        unique_id: impl Into<Vec<u8>>,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let unique_id: Vec<u8> = unique_id.into();
+
+        // Step1: get meta
+        let meta: DataSetMetaV2 = self.get_datameta_from_master(&unique_id).await?;
+
+        self.get_data_by_meta(&unique_id, meta, true).await
+        //
+    }
+
+    /// - check the uid from DATA_UID_PREFIX_XXX
+    pub async fn get_data_item(&self, unique_id: &[u8], idx: u8) -> Option<proto::DataItem> {
+        let Some((_, itembytes)) = self.view.kv_store_engine().get(
+            &KeyTypeDataSetItem {
+                uid: unique_id,
+                idx: idx as u8,
+            },
+            false,
+            KvAdditionalConf {},
+        ) else {
+            return None;
+        };
+        Some(proto::DataItem {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(itembytes)),
+        })
+    }
+
+    ///  The user's data write entry
+    ///
+    ///  - check the design here
+    ///
+    ///  - check the uid from DATA_UID_PREFIX_XXX
+    ///
+    ///  - https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Rtxod8uDqoIcRwxOM1rccuXxnQg
     pub async fn write_data(
         &self,
-        unique_id: String,
+        unique_id: impl Into<Vec<u8>>,
         // data_metas: Vec<DataMeta>,
-        datas: Vec<DataItem>,
+        datas: Vec<proto::DataItem>,
         context_openode_opetype_operole: Option<(
             NodeID,
             proto::DataOpeType,
             proto::data_schedule_context::OpeRole,
         )>,
-    ) {
+    ) -> WSResult<()> {
         let p2p = self.view.p2p();
+        let unique_id: Vec<u8> = unique_id.into();
+        let log_tag = Arc::new(format!(
+            "write_data,uid:{:?},operole:{:?}",
+            str::from_utf8(&unique_id),
+            context_openode_opetype_operole.as_ref().map(|v| &v.2)
+        ));
 
         // Step 1: need the master to do the decision
         // - require for the latest version for write permission
         // - require for the distribution and cache mode
-        let resp = {
+        let version_schedule_resp = {
             let resp = self
-                .rpc_call_data_version
+                .rpc_call_data_version_schedule
                 .call(
                     self.view.p2p(),
                     p2p.nodes_config.get_master_node(),
@@ -285,7 +640,10 @@ impl DataGeneral {
                             |(ope_node, ope_type, ope_role)| proto::DataScheduleContext {
                                 ope_node: ope_node as i64,
                                 ope_type: ope_type as i32,
-                                data_sz_bytes: datas.iter().map(|v| v.data_sz_bytes()).collect(),
+                                each_data_sz_bytes: datas
+                                    .iter()
+                                    .map(|data_item| data_item.data_sz_bytes() as u32)
+                                    .collect::<Vec<_>>(),
                                 ope_role: Some(ope_role),
                             },
                         ),
@@ -295,9 +653,16 @@ impl DataGeneral {
                 .await;
 
             let resp = match resp {
-                Err(e) => {
-                    tracing::warn!("write_data_broadcast_rough require version error: {:?}", e);
-                    return;
+                Err(inner_e) => {
+                    let e = WsDataError::WriteDataRequireVersionErr {
+                        unique_id,
+                        err: Box::new(inner_e),
+                    };
+                    tracing::warn!("{:?}", e);
+                    return Err(e.into());
+
+                    // tracing::warn!("write_data require version error: {:?}", e);
+                    // return e;
                 }
                 Ok(ok) => ok,
             };
@@ -306,91 +671,167 @@ impl DataGeneral {
 
         // Step2: dispatch the data source and caches
         {
+            // resp.split is decision for each data, so the length should be verified
+            if version_schedule_resp.split.len() != datas.len() {
+                let e = WsDataError::WriteDataSplitLenNotMatch {
+                    unique_id,
+                    expect: datas.len(),
+                    actual: version_schedule_resp.split.len(),
+                };
+                tracing::warn!("{:?}", e);
+                return Err(e.into());
+            }
+
             let mut write_source_data_tasks = vec![];
 
             // write the data split to kv
-            for one_data_splits in resp.split {
-                let mut last_node_begin: Option<(NodeID, usize)> = None;
-                let flush_the_data = |nodeid: NodeID, begin: usize| {
-                    let t = tokio::spawn(async move {});
+            for (one_data_splits, one_data_item) in
+                version_schedule_resp.split.into_iter().zip(datas)
+            {
+                // let mut last_node_begin: Option<(NodeID, usize)> = None;
+                fn flush_the_data(
+                    log_tag: &str,
+                    unique_id: &[u8],
+                    version: u64,
+                    split_size: usize,
+                    view: &DataGeneralView,
+                    one_data_item: &proto::DataItem,
+                    nodeid: NodeID,
+                    offset: usize,
+                    write_source_data_tasks: &mut Vec<JoinHandle<WSResult<WriteOneDataResponse>>>,
+                ) {
+                    let log_tag = log_tag.to_owned();
+                    let unique_id = unique_id.to_owned();
+                    let view = view.clone();
+                    // let version = version_schedule_resp.version;
+                    // let split_size = one_data_splits.split_size as usize;
+                    let one_data_item_split =
+                        one_data_item.clone_split_range(offset..offset + split_size);
+                    let t = tokio::spawn(async move {
+                        tracing::debug!("write_data flushing {}", log_tag);
+                        view.data_general()
+                            .rpc_call_write_once_data
+                            .call(
+                                view.p2p(),
+                                nodeid,
+                                WriteOneDataRequest {
+                                    unique_id,
+                                    version,
+                                    data: vec![one_data_item_split],
+                                },
+                                Some(Duration::from_secs(60)),
+                            )
+                            .await
+                    });
                     write_source_data_tasks.push(t);
-                };
-                for (idx, node) in one_data_splits.node_ids.iter().enumerate() {
-                    if let Some((node, begin)) = last_node_begin {
-                        if node != *node {
-                            // flush the data
-                        } else {
-                            last_node_begin = Some((*node, idx));
+                }
+                for split in one_data_splits.splits.iter() {
+                    flush_the_data(
+                        &log_tag,
+                        &unique_id,
+                        version_schedule_resp.version,
+                        split.data_size as usize,
+                        &self.view,
+                        &one_data_item,
+                        split.node_id,
+                        split.data_offset as usize,
+                        &mut write_source_data_tasks,
+                    );
+                }
+            }
+
+            // count and hanlde failed
+            let mut failed = false;
+            for t in write_source_data_tasks {
+                let res = t.await;
+                match res {
+                    Ok(res) => match res {
+                        Ok(_) => {}
+                        Err(e) => {
+                            failed = true;
+                            tracing::warn!("write source data failed: {}", e);
                         }
-                    } else {
-                        last_node_begin = Some((*node, idx));
+                    },
+
+                    Err(e) => {
+                        failed = true;
+                        tracing::warn!("write_source_data_tasks failed: {}", e);
                     }
                 }
-
-                // one_data_splits.node_ids.
             }
+            if failed {
+                tracing::warn!("TODO: need to rollback");
+            }
+            // let res = join_all(write_source_data_tasks).await;
+            // // check if there's error
+            // if let Some(err)=res.iter().filter(|res|{res.is_err()}).next(){
+            //     tracing::warn!("failed to write data {}")
+            //     panic!("failed to write data");
+            // }
         }
 
+        Ok(())
         // if DataModeDistribute::BroadcastRough as i32 == data_metas[0].distribute {
         //     self.write_data_broadcast_rough(unique_id, data_metas, datas)
         //         .await;
         // }
     }
-    async fn write_data_broadcast_rough(
-        &self,
-        unique_id: String,
-        data_metas: Vec<DataMeta>,
-        datas: Vec<DataItem>,
-    ) {
-        let p2p = self.view.p2p();
 
-        tracing::debug!("start broadcast data with version");
-        let version = resp.version;
-        // use the got version to send to global paralell
-        let mut tasks = vec![];
+    // async fn write_data_broadcast_rough(
+    //     &self,
+    //     unique_id: String,
+    //     data_metas: Vec<DataMeta>,
+    //     datas: Vec<DataItem>,
+    // ) {
+    //     let p2p = self.view.p2p();
 
-        for (_idx, node) in p2p.nodes_config.all_nodes_iter().enumerate() {
-            let n = *node.0;
-            let view = self.view.clone();
-            let datas = datas.clone();
-            let unique_id = unique_id.clone();
-            // let datas = unsafe { util::SendNonNull(util::non_null(&datas)) };
+    //     tracing::debug!("start broadcast data with version");
+    //     let version = resp.version;
+    //     // use the got version to send to global paralell
+    //     let mut tasks = vec![];
 
-            let t = tokio::spawn(async move {
-                view.data_general()
-                    .rpc_call_write_once_data
-                    .call(
-                        view.p2p(),
-                        n,
-                        WriteOneDataRequest {
-                            unique_id,
-                            version,
-                            data: datas,
-                        },
-                        Some(Duration::from_secs(60)),
-                    )
-                    .await
-            });
+    //     for (_idx, node) in p2p.nodes_config.all_nodes_iter().enumerate() {
+    //         let n = *node.0;
+    //         let view = self.view.clone();
+    //         let datas = datas.clone();
+    //         let unique_id = unique_id.clone();
+    //         // let datas = unsafe { util::SendNonNull(util::non_null(&datas)) };
 
-            tasks.push(t);
-        }
-        for t in tasks {
-            let res = t.await.unwrap();
-            match res {
-                Err(e) => {
-                    tracing::warn!("write_data_broadcast_rough broadcast error: {:?}", e);
-                }
-                Ok(ok) => {
-                    if !ok.success {
-                        tracing::warn!(
-                            "write_data_broadcast_rough broadcast error: {:?}",
-                            ok.message
-                        );
-                    }
-                }
-            }
-        }
-    }
+    //         let t = tokio::spawn(async move {
+    //             view.data_general()
+    //                 .rpc_call_write_once_data
+    //                 .call(
+    //                     view.p2p(),
+    //                     n,
+    //                     WriteOneDataRequest {
+    //                         unique_id,
+    //                         version,
+    //                         data: datas,
+    //                     },
+    //                     Some(Duration::from_secs(60)),
+    //                 )
+    //                 .await
+    //         });
+
+    //         tasks.push(t);
+    //     }
+    //     for t in tasks {
+    //         let res = t.await.unwrap();
+    //         match res {
+    //             Err(e) => {
+    //                 tracing::warn!("write_data_broadcast_rough broadcast error: {:?}", e);
+    //             }
+    //             Ok(ok) => {
+    //                 if !ok.success {
+    //                     tracing::warn!(
+    //                         "write_data_broadcast_rough broadcast error: {:?}",
+    //                         ok.message
+    //                     );
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -415,6 +856,7 @@ impl Into<DataMeta> for DataMetaSys {
     }
 }
 
+/// depracated, latest is v2
 /// the data's all in one meta
 /// https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Tqqkdxubpokwi5xREincb1sFnLc
 #[derive(Serialize, Deserialize)]
@@ -424,17 +866,172 @@ pub struct DataSetMetaV1 {
     pub data_metas: Vec<DataMetaSys>,
     pub synced_nodes: HashSet<NodeID>,
 }
-#[derive(Serialize, Deserialize)]
+
+/// the data's all in one meta
+///
+/// attention: new from `DataSetMetaBuilder`
+///
+/// https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Tqqkdxubpokwi5xREincb1sFnLc
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DataSetMetaV2 {
     // unique_id: Vec<u8>,
-    pub api_version: u8,
+    api_version: u8,
     pub version: u64,
     pub cache_mode: u16,
-    pub datas_splits: Vec<Vec<NodeID>>,
+    pub datas_splits: Vec<DataSplit>,
+}
+
+// message EachNodeSplit{
+//     uint32 node_id=1;
+//     uint32 data_offset=2;
+//     uint32 data_size=3;
+//   }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EachNodeSplit {
+    pub node_id: NodeID,
+    pub data_offset: u32,
+    pub data_size: u32,
+}
+
+/// we need to know the split size for one data
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DataSplit {
+    pub splits: Vec<EachNodeSplit>,
+}
+
+impl DataSplit {
+    /// node_2_datas will be consumed partially
+    pub fn recorver_data(
+        &self,
+        unique_id: &[u8],
+        idx: usize,
+        node_2_datas: &mut HashMap<(NodeID, usize), proto::DataItem>,
+    ) -> WSResult<Vec<u8>> {
+        let nodes = node_2_datas
+            .iter()
+            .filter(|v| v.0 .1 == idx)
+            .map(|v| v.0 .0)
+            .collect::<Vec<_>>();
+
+        let mut each_node_splits: HashMap<NodeID, (proto::DataItem, Option<EachNodeSplit>)> =
+            HashMap::new();
+
+        for node in nodes {
+            let data = node_2_datas.remove(&(node, idx)).unwrap();
+            let _ = each_node_splits.insert(node, (data, None));
+        }
+
+        let mut max_size = 0;
+        let mut missing = vec![];
+
+        // zip with split info
+        //  by the way, check if the split is missing
+        for split in &self.splits {
+            let Some(find) = each_node_splits.get_mut(&split.node_id) else {
+                missing.push((*split).clone());
+                continue;
+            };
+            find.1 = Some(split.clone());
+            if split.data_offset + split.data_size > max_size {
+                max_size = split.data_offset + split.data_size;
+            }
+        }
+
+        if missing.len() > 0 {
+            return Err(WsDataError::SplitRecoverMissing {
+                unique_id: unique_id.to_owned(),
+                idx,
+                missing,
+            }
+            .into());
+        }
+
+        let mut recover = vec![0; max_size.try_into().unwrap()];
+
+        for (_node, (data, splitmeta)) in each_node_splits {
+            let splitmeta = splitmeta.unwrap();
+            let begin = splitmeta.data_offset as usize;
+            let end = begin + splitmeta.data_size as usize;
+            recover[begin..end].copy_from_slice(data.as_ref());
+        }
+
+        Ok(recover)
+    }
+}
+
+impl Into<proto::EachNodeSplit> for EachNodeSplit {
+    fn into(self) -> proto::EachNodeSplit {
+        proto::EachNodeSplit {
+            node_id: self.node_id,
+            data_offset: self.data_offset,
+            data_size: self.data_size,
+        }
+    }
+}
+
+impl Into<proto::DataSplit> for DataSplit {
+    fn into(self) -> proto::DataSplit {
+        proto::DataSplit {
+            splits: self.splits.into_iter().map(|s| s.into()).collect(),
+        }
+    }
+}
+//     uint32 split_size = 1;
+//   repeated uint32 node_ids = 2;
+
+#[derive(Debug, Clone, Copy)]
+pub struct CacheModeVisitor(pub u16);
+
+macro_rules! generate_cache_mode_methods {
+    // The macro takes a list of pairs of the form [time, mask] and generates methods.
+    ($(($group:ident, $mode:ident)),*) => {
+        paste!{
+            impl CacheModeVisitor {
+                $(
+                    pub fn [<is _ $group _ $mode>](&self) -> bool {
+                        self.0 & [<CACHE_MODE_ $group:upper _MASK>]
+                            == self.0 & [<CACHE_MODE_ $group:upper _MASK>] & [<CACHE_MODE_ $group:upper _ $mode:upper _MASK>]
+                    }
+                )*
+            }
+
+        }
+    };
+}
+generate_cache_mode_methods!(
+    (time, forever),
+    (time, auto),
+    (pos, allnode),
+    (pos, specnode),
+    (pos, auto),
+    (map, common_kv),
+    (map, file)
+);
+
+#[test]
+fn test_cache_mode_visitor() {
+    let cache_mode_visitor = CacheModeVisitor(CACHE_MODE_TIME_FOREVER_MASK);
+    assert!(cache_mode_visitor.is_time_forever());
+    assert!(!cache_mode_visitor.is_time_auto());
+
+    let cache_mode_visitor = CacheModeVisitor(CACHE_MODE_POS_ALLNODE_MASK);
+    assert!(cache_mode_visitor.is_pos_allnode());
+    assert!(!cache_mode_visitor.is_pos_specnode());
+    assert!(!cache_mode_visitor.is_pos_auto());
+
+    let cache_mode_visitor = CacheModeVisitor(CACHE_MODE_MAP_FILE_MASK);
+    assert!(cache_mode_visitor.is_map_file());
+    assert!(!cache_mode_visitor.is_map_common_kv());
 }
 
 pub struct DataSetMetaBuilder {
     building: Option<DataSetMetaV2>,
+}
+impl From<DataSetMetaV2> for DataSetMetaBuilder {
+    fn from(d: DataSetMetaV2) -> Self {
+        Self { building: Some(d) }
+    }
 }
 impl DataSetMetaBuilder {
     pub fn new() -> Self {
@@ -448,17 +1045,37 @@ impl DataSetMetaBuilder {
         }
     }
     pub fn cache_mode_time_forever(&mut self) -> &mut Self {
-        self.building.as_mut().unwrap().cache_mode &= 0x00111111;
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_TIME_FOREVER_MASK;
+        self
+    }
+
+    pub fn cache_mode_time_auto(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_TIME_AUTO_MASK;
         self
     }
 
     pub fn cache_mode_pos_allnode(&mut self) -> &mut Self {
-        self.building.as_mut().unwrap().cache_mode &= 0x11001111;
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_ALLNODE_MASK;
         self
     }
 
     pub fn cache_mode_pos_specnode(&mut self) -> &mut Self {
-        self.building.as_mut().unwrap().cache_mode &= 0x11011111;
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_SPECNODE_MASK;
+        self
+    }
+
+    pub fn cache_mode_pos_auto(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_AUTO_MASK;
+        self
+    }
+
+    pub fn cache_mode_map_common_kv(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_MAP_COMMON_KV_MASK;
+        self
+    }
+
+    pub fn cache_mode_map_file(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_MAP_FILE_MASK;
         self
     }
 
@@ -467,7 +1084,8 @@ impl DataSetMetaBuilder {
         self
     }
 
-    pub fn set_data_splits(&mut self, splits: Vec<Vec<NodeID>>) -> &mut Self {
+    #[must_use]
+    pub fn set_data_splits(&mut self, splits: Vec<DataSplit>) -> &mut Self {
         self.building.as_mut().unwrap().datas_splits = splits;
         self
     }
@@ -481,8 +1099,8 @@ impl From<DataSetMetaV1> for DataSetMetaV2 {
     fn from(
         DataSetMetaV1 {
             version,
-            data_metas,
-            synced_nodes,
+            data_metas: _,
+            synced_nodes: _,
         }: DataSetMetaV1,
     ) -> Self {
         DataSetMetaBuilder::new()

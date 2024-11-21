@@ -1,13 +1,14 @@
 use std::{
     fmt::Debug,
     future::Future,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Drop},
     pin::Pin,
     ptr::NonNull,
     task::{Context, Poll},
 };
 
 use parking_lot::MutexGuard;
+use rand::{thread_rng, Rng};
 #[cfg(test)]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
@@ -124,11 +125,14 @@ impl StrUnsafeRef {
         StrUnsafeRef(str.as_ptr() as usize, str.len())
     }
     pub fn str<'a>(&self) -> &'a str {
-        // tracing::info!("unsafe str ref");
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("unsafe str ref");
+
         let res =
             std::str::from_utf8(unsafe { std::slice::from_raw_parts(self.0 as *const u8, self.1) })
                 .unwrap();
-        // tracing::info!("unsafe str ref get");
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("unsafe str ref get");
         res
     }
 }
@@ -146,7 +150,12 @@ impl Debug for TryUtf8VecU8 {
 }
 
 pub unsafe fn unsafe_mut<T>(arc: &T) -> &mut T {
-    unsafe { &mut *(arc as *const T as *mut T) }
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("unsafe_mut begin");
+    let res = unsafe { &mut *(arc as *const T as *mut T) };
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("unsafe_mut end");
+    res
 }
 
 struct FutureWrapper<F: Future> {
@@ -189,7 +198,29 @@ where
 }
 
 pub unsafe fn non_null<T>(v: &T) -> NonNull<T> {
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("non_null");
     let ptr = v as *const T as *mut T;
     let non_null = NonNull::new_unchecked(ptr);
     non_null
+}
+
+pub struct DropDebug<T> {
+    tag: String,
+    rand: i32,
+    pub _t: T,
+}
+
+impl<T> DropDebug<T> {
+    pub fn new(tag: String, t: T) -> Self {
+        let rand = thread_rng().gen_range(0..100000000);
+        tracing::debug!("tracked new {} [{}]", tag, rand);
+        Self { tag, _t: t, rand }
+    }
+}
+
+impl<T> Drop for DropDebug<T> {
+    fn drop(&mut self) {
+        tracing::debug!("tracked drop {} [{}]", self.tag, self.rand);
+    }
 }

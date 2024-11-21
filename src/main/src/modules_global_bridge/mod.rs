@@ -7,16 +7,23 @@ lazy_static::lazy_static! {
 }
 
 fn modules() -> &'static LogicalModules {
-    unsafe {
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("modules begin");
+    let res = unsafe {
         (&*MODULES.as_ref().unwrap().inner.as_ptr())
             .as_ref()
             .unwrap()
-    }
+    };
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("modules end");
+    res
 }
 
 pub fn set_singleton_modules(modules: LogicalModulesRef) {
     // *utils::MODULES = Some(modules);
+    tracing::debug!("set_singleton_modules begin");
     unsafe {
         *(&*MODULES as *const _ as *mut _) = Some(modules);
-    }
+    };
+    tracing::debug!("set_singleton_modules end");
 }
