@@ -1,8 +1,9 @@
+
 use downcast_rs::{impl_downcast, Downcast};
 
 use super::{
     m_p2p::MsgId,
-    proto::{self, kv::KvResponse},
+    proto::{self},
 };
 
 macro_rules! count_modules {
@@ -12,20 +13,28 @@ macro_rules! count_modules {
 
 // 定义宏，用于生成 MsgPack trait 的实现
 macro_rules! define_msg_ids {
-    ($module:ty) => {
+    (($module:ty,$arg:ident,$verify:block)) => {
         impl MsgPack for $module {
             fn msg_id(&self) -> MsgId {
                 0
             }
+            fn verify(&self)->bool{
+                let $arg=self;
+                $verify
+            }
         }
     };
-    ($module:ty,$($modules:ty),+) => {
+    (($module:ty,$arg:ident,$verify:block),$(($modules:ty,$args:ident,$verifies:block)),+) => {
         impl MsgPack for $module {
             fn msg_id(&self) -> MsgId {
                 count_modules!($($modules),+)
             }
+            fn verify(&self)->bool{
+                let $arg=self;
+                $verify
+            }
         }
-        define_msg_ids!($($modules),+);
+        define_msg_ids!($(($modules,$args,$verifies)),+);
     };
     // ($($module:ty),+) => {
     //     $(
@@ -43,28 +52,79 @@ macro_rules! define_msg_ids {
 pub trait MsgPack: prost::Message + Downcast {
     fn msg_id(&self) -> MsgId;
     // fn construct_from_raw_mem(bytes: Bytes) {}
+    fn verify(&self) -> bool;
 }
 
 impl_downcast!(MsgPack);
 
 define_msg_ids!(
-    proto::raft::VoteRequest,
-    proto::raft::VoteResponse,
-    proto::raft::AppendEntriesRequest,
-    proto::raft::AppendEntriesResponse,
-    proto::sche::DistributeTaskReq,
-    proto::sche::DistributeTaskResp,
-    proto::metric::RscMetric,
-    proto::kv::KvRequests,
-    proto::kv::KvResponses,
-    proto::remote_sys::GetDirContentReq,
-    proto::remote_sys::GetDirContentResp,
-    proto::remote_sys::RunCmdReq,
-    proto::remote_sys::RunCmdResp,
-    proto::DataVersionScheduleRequest,
-    proto::DataVersionScheduleResponse,
-    proto::WriteOneDataRequest,
-    proto::WriteOneDataResponse
+    (proto::raft::VoteRequest, _pack, { true }),
+    (proto::raft::VoteResponse, _pack, { true }),
+    (proto::raft::AppendEntriesRequest, _pack, { true }),
+    (proto::raft::AppendEntriesResponse, _pack, { true }),
+    (proto::sche::DistributeTaskReq, _pack, { true }),
+    (proto::sche::DistributeTaskResp, _pack, { true }),
+    (proto::metric::RscMetric, _pack, { true }),
+    (proto::kv::KvRequests, pack, {
+        for r in &pack.requests {
+            let r: &proto::kv::KvRequest = r;
+            let Some(op) = r.op.as_ref() else {
+                return false;
+            };
+            match op {
+                proto::kv::kv_request::Op::Set(kv_put_request) => {
+                    if kv_put_request.kv.is_none() {
+                        return false;
+                    }
+                }
+                proto::kv::kv_request::Op::Get(kv_get_request) => {
+                    if kv_get_request.range.is_none() {
+                        return false;
+                    }
+                }
+                proto::kv::kv_request::Op::Delete(kv_delete_request) => {
+                    if kv_delete_request.range.is_none() {
+                        return false;
+                    }
+                }
+                proto::kv::kv_request::Op::Lock(kv_lock_request) => {
+                    if kv_lock_request.range.is_none() {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }),
+    (proto::kv::KvResponses, _pack, { true }),
+    (proto::remote_sys::GetDirContentReq, _pack, { true }),
+    (proto::remote_sys::GetDirContentResp, _pack, { true }),
+    (proto::remote_sys::RunCmdReq, _pack, { true }),
+    (proto::remote_sys::RunCmdResp, _pack, { true }),
+    (proto::DataVersionScheduleRequest, pack, {
+        pack.context.is_some()
+    }),
+    (proto::DataVersionScheduleResponse, pack, {
+        pack.cache_plan.is_some()
+    }),
+    (proto::WriteOneDataRequest, _pack, { true }),
+    (proto::WriteOneDataResponse, _pack, { true }),
+    (proto::DataMetaUpdateRequest, _pack, { true }),
+    (proto::DataMetaUpdateResponse, _pack, { true }),
+    (proto::DataMetaGetRequest, _pack, { true }),
+    (proto::DataMetaGetResponse, _pack, { true }),
+    (proto::GetOneDataRequest, _pack, { true }),
+    (proto::GetOneDataResponse, _pack, { true }),
+    (proto::kv::KvLockRequest, pack, {
+        match pack.read_0_write_1_unlock_2 {
+            0 | 1 | 2 => true,
+            _ => false,
+        }
+    }),
+    (proto::kv::KvLockResponse, _pack, { true }) // (proto::kv::KvLockWaitAcquireNotifyRequest, _pack, { true }),
+                                                 // (proto::kv::KvLockWaitAcquireNotifyResponse, _pack, { true })
+                                                 // (proto::DataDeleteRequest, _pack, { true }),
+                                                 // (proto::DataDeleteResponse, _pack, { true })
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -103,39 +163,28 @@ impl RPCReq for proto::WriteOneDataRequest {
     type Resp = proto::WriteOneDataResponse;
 }
 
-pub trait KvResponseExt {
-    fn new_lock(lock_id: u32) -> KvResponse;
-    fn new_common(kvs: Vec<proto::kv::KvPair>) -> KvResponse;
-    fn lock_id(&self) -> Option<u32>;
-    fn common_kvs(&self) -> Option<&Vec<proto::kv::KvPair>>;
+impl RPCReq for proto::DataMetaUpdateRequest {
+    type Resp = proto::DataMetaUpdateResponse;
 }
 
-impl KvResponseExt for KvResponse {
-    fn new_common(kvs: Vec<proto::kv::KvPair>) -> KvResponse {
-        KvResponse {
-            resp: Some(proto::kv::kv_response::Resp::CommonResp(
-                proto::kv::kv_response::KvResponse { kvs },
-            )),
-        }
-    }
-    fn new_lock(lock_id: u32) -> KvResponse {
-        KvResponse {
-            resp: Some(proto::kv::kv_response::Resp::LockId(lock_id)),
-        }
-    }
-    fn lock_id(&self) -> Option<u32> {
-        match self.resp.as_ref().unwrap() {
-            proto::kv::kv_response::Resp::CommonResp(_) => None,
-            proto::kv::kv_response::Resp::LockId(id) => Some(*id),
-        }
-    }
-    fn common_kvs(&self) -> Option<&Vec<proto::kv::KvPair>> {
-        match self.resp.as_ref().unwrap() {
-            proto::kv::kv_response::Resp::CommonResp(resp) => Some(&resp.kvs),
-            proto::kv::kv_response::Resp::LockId(_) => None,
-        }
-    }
+impl RPCReq for proto::DataMetaGetRequest {
+    type Resp = proto::DataMetaGetResponse;
 }
+
+impl RPCReq for proto::GetOneDataRequest {
+    type Resp = proto::GetOneDataResponse;
+}
+
+impl RPCReq for proto::kv::KvLockRequest {
+    type Resp = proto::kv::KvLockResponse;
+}
+
+// impl RPCReq for proto::kv::KvLockWaitAcquireNotifyRequest {
+//     type Resp = proto::kv::KvLockWaitAcquireNotifyResponse;
+// }
+// impl RPCReq for proto::DataDeleteRequest {
+//     type Resp = proto::DataDeleteResponse;
+// }
 
 // impl MsgId for raft::prelude::Message {
 //     fn msg_id(&self) -> u32 {

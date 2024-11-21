@@ -13,12 +13,21 @@ lazy_static! {
     static ref VIEW: Option<super::View> = None;
 }
 fn view() -> &'static super::View {
-    unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() }
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("unsafe http view begin");
+    let res = unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() };
+    #[cfg(feature = "unsafe-log")]
+    tracing::debug!("unsafe http view end");
+    res
 }
 
 pub(super) fn binds(router: Router, view: super::View) -> Router {
     unsafe {
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("unsafe http view bind");
         let _ = util::non_null(&*VIEW).as_mut().replace(view);
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("unsafe http view bind end");
     }
     tracing::debug!("binds appmeta_manager http");
     router

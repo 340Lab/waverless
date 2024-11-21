@@ -34,59 +34,114 @@ message DataOpeRoleFuncCall{
 
 
 message DataScheduleContext{
-   int64 ope_node=1; // data source info
-   DataOpeType ope_type = 2; 
-  repeated uint32 data_sz_bytes=3; // split for big data
+  // required
+  int64 ope_node=1; // data source info
+  // required
+  DataOpeType ope_type = 2; 
+  repeated uint32 each_data_sz_bytes=3; // split for big data
+  // required
   oneof ope_role {
+    // required
     DataOpeRoleUploadApp upload_app = 4;
+    // required
     DataOpeRoleFuncCall func_call = 5;
   }
 }
 
+message EachNodeSplit{
+  uint32 node_id=1;
+  uint32 data_offset=2;
+  uint32 data_size=3;
+}
+
 message DataSplit{
-  uint32 split_size = 1;
-  repeated uint32 node_ids = 2;
+  repeated EachNodeSplit splits = 1;
 }
 
 message DataVersionScheduleRequest {
-  string unique_id = 1;
+  bytes unique_id = 1;
 
   uint64 version = 2; 
 
+  // required
   DataScheduleContext context = 3;
 }
 
 message DataCachePlan{
   uint32 cache_mode=1;
-  repeated uint32 cache_nodes=2; // left empty when mode is all node
+  // left empty when mode is all node pr no node
+  repeated uint32 cache_nodes=2; 
 }
 
 message DataVersionScheduleResponse {
   uint64 version = 1;
+  // required
   // split of each data part
   DataCachePlan cache_plan = 2;
   repeated DataSplit split = 3;
 }
 
+message DataMetaUpdateRequest{
+  bytes unique_id = 1;
+  uint64 version = 2;
+  // left empty when no update
+  bytes serialized_meta = 3;
+}
+
+
+// return same means updated, otherwise failed
+message DataMetaUpdateResponse{
+  uint64 version = 1;
+  string message = 2; // Optional: To provide additional info in case of failure
+}
+
+
+message DataMetaGetRequest{
+  bytes unique_id = 1;
+  bool delete=2;
+}
+
+message DataMetaGetResponse{
+  bytes serialized_meta = 1;
+}
+
+// message DataDeleteRequest{
+//   message Optional{
+//     uint64 version = 1;
+//     bool data_needed = 2;
+//   }
+//   bytes unique_id = 1;
+//   Optional optional = 2;
+// }
+
+// message DataDeleteResponse{
+//   // left empty when no meta
+//   bytes serialized_meta = 1;
+//   DataItem data = 2;
+// }
+
+message FileData {
+  string file_name_opt = 1; // store in the first node
+  bool is_dir_opt =2;
+  bytes file_content = 3;
+}
+
+message DataItem {
+  oneof data_item_dispatch {
+      FileData file = 1;
+      bytes raw_bytes = 2;
+  }
+}
+
+message OneDataMeta{
+  uint32 idx=1;
+  string type=2;
+}
 
 message WriteOneDataRequest {
-  string unique_id = 1;
+  bytes unique_id = 1;
   uint64 version = 2;
-
   repeated DataItem data = 3;
-
-  message FileData {
-      string file_name = 1;
-      bool is_dir =2;
-      bytes file_content = 3;
-  }
-
-  message DataItem {
-      oneof data {
-          FileData file = 1;
-          bytes raw_bytes = 2;
-      }
-  }
 }
 
 message WriteOneDataResponse {
@@ -95,3 +150,16 @@ message WriteOneDataResponse {
   string message = 3; // Optional: To provide additional info in case of failure
 }
 
+message GetOneDataRequest{
+  bytes unique_id=1;
+  // bytes serialized_meta=2;
+  repeated uint32 idxs=2;
+  bool delete=3;
+  bool return_data=4;
+}
+
+message GetOneDataResponse{
+  bool success=1;
+  repeated DataItem data =2;
+  string message=3;
+}

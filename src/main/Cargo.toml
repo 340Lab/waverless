@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = []    # 默认启用的特性
+unsafe-log = []
 
 [dependencies]
 qp2p.workspace = true        #{ path = "qp2p" }
@@ -51,10 +55,11 @@ futures.workspace = true
 zip-extract.workspace = true
 zip.workspace = true
 walkdir.workspace = true
-s3_server = { path = "../s3_server" }
+# s3_server = { path = "../s3_server" }
 hyper.workspace = true
 md-5.workspace = true
 path-absolutize.workspace = true
+dashmap.workspace = true
 
 [dependencies.uuid]
 version = "1.8.0"

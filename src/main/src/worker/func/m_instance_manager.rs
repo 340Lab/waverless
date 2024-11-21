@@ -119,6 +119,7 @@ pub struct OwnedEachAppCache {
     using: AtomicU64,
     getting: Notify,
 }
+
 impl OwnedEachAppCache {
     pub fn new() -> Self {
         Self {
@@ -144,7 +145,14 @@ impl OwnedEachAppCache {
 
         if let Some(a) = self.cache.iter().next() {
             if let Some(a) = self.cache.remove(&*a.0) {
-                return unsafe { util::non_null(&*a.0).as_mut().take().unwrap() };
+                return unsafe {
+                    #[cfg(feature = "unsafe-log")]
+                    tracing::debug!("reuse instance begin");
+                    let res = util::non_null(&*a.0).as_mut().take().unwrap();
+                    #[cfg(feature = "unsafe-log")]
+                    tracing::debug!("reuse instance end");
+                    res
+                };
             }
         }
 

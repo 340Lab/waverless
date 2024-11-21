@@ -1,14 +1,9 @@
 use super::{utils, utils::m_kv_user_client, HostFuncRegister};
-use crate::general::{
-    kv_interface::{KvInterface, KvOptions},
-    network::{
-        msg_pack::KvResponseExt,
-        proto::{
-            self,
-            kv::{KeyRange, KvPair, KvRequest, KvRequests, KvResponses},
-        },
-    },
+use crate::general::network::proto::{
+    self,
+    kv::{KeyRange, KvPair, KvRequest, KvRequests, KvResponses},
 };
+use crate::general::network::proto_ext::ProtoExtKvResponse;
 use moka::sync::Cache;
 use std::{sync::atomic::AtomicI32, time::Duration};
 #[cfg(target_os = "macos")]
@@ -130,7 +125,14 @@ async fn kv_batch_ope<T>(
     let opes_arg_len = args[1].to_i32();
     let opes_id = utils::mutref::<i32>(&caller, args[2].to_i32());
     let args = utils::i32slice(&caller, opes_arg_ptr, opes_arg_len);
-    let func_ctx = unsafe { utils::current_app_fn_ctx(&caller).0.as_mut() };
+    let func_ctx = unsafe {
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("current_app_fn_ctx begin");
+        let res = utils::current_app_fn_ctx(&caller).0.as_mut();
+        #[cfg(feature = "unsafe-log")]
+        tracing::debug!("current_app_fn_ctx end");
+        res
+    };
 
     // request and response mem position
     let ope_cnt = args[0];
@@ -219,7 +221,9 @@ async fn kv_batch_ope<T>(
     }
     // tracing::debug!("requests:{:?}", requests);
     match m_kv_user_client()
-        .call(
+        .kv_requests(
+            &func_ctx.app,
+            &func_ctx.func,
             KvRequests {
                 requests,
                 app: func_ctx.app.clone(),
@@ -229,7 +233,7 @@ async fn kv_batch_ope<T>(
                     .take_prev_kv_opeid()
                     .map_or(-1, |v| v as i64),
             },
-            KvOptions::new(),
+            // KvOptions::new(),
         )
         .await
     {

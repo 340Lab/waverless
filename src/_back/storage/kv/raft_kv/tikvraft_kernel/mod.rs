@@ -138,7 +138,7 @@ impl RaftThreadState {
                     tracing::info!("proprose join");
                     self.proprosed_join = true;
                     let mut steps = vec![];
-                    for p in &self.view.p2p().peers {
+                    for p in &self.view.p2p() {
                         steps.push(ConfChangeSingle {
                             change_type: ConfChangeType::AddNode.into(),
                             node_id: p.1 as u64,
