@@ -9,7 +9,7 @@ use super::{
     m_os::OperatingSystem,
     network::{http_handler::HttpHandler, m_p2p::P2PModule},
 };
-use crate::{general::network::proto, worker::m_executor::Executor};
+use crate::{general::network::proto, result::WSResultExt, worker::m_executor::Executor};
 use crate::{
     general::{
         kv_interface::KvOps,
@@ -852,17 +852,20 @@ impl AppMetaManager {
                     OpeRole::UploadApp(DataOpeRoleUploadApp {}),
                 )),
             )
-            .await;
+            .await?;
         tracing::debug!("app uploaded");
         Ok(())
     }
 
     pub fn set_app_meta_list(&self, list: Vec<String>) {
-        self.view.kv_store_engine().set(
-            KeyTypeServiceList,
-            &serde_json::to_string(&list).unwrap().into(),
-            false,
-        );
+        self.view
+            .kv_store_engine()
+            .set(
+                KeyTypeServiceList,
+                &serde_json::to_string(&list).unwrap().into(),
+                false,
+            )
+            .todo_handle();
     }
     pub fn get_app_meta_list(&self) -> Vec<String> {
         let res = self

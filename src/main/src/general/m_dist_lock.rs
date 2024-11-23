@@ -17,6 +17,7 @@ use crate::{
     logical_module_view_impl, result::WSResult, sys::LogicalModuleNewArgs, util::JoinHandleWrapper,
 };
 use axum::async_trait;
+use enum_as_inner::EnumAsInner;
 use parking_lot::Mutex;
 use rand::thread_rng;
 use rand::Rng;
@@ -37,6 +38,13 @@ logical_module_view_impl!(View, p2p, P2PModule);
 logical_module_view_impl!(View, dist_lock, DistLock);
 
 type LockReleaseId = u32;
+
+#[derive(EnumAsInner)]
+pub enum DistLockOpe {
+    Read,
+    Write,
+    Unlock(LockReleaseId),
+}
 
 /// https://fvd360f8oos.feishu.cn/wiki/ZUPNwpKLEiRs6Ukzf3ncVa9FnHe
 /// 这个是对于某个key的锁的状态记录，包括读写锁的引用计数，以及等待释放的notify
@@ -452,7 +460,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dist_lock() {
-        let (sys1, sys2) = test_utils::get_test_sys().await;
+        let (_hold, sys1, sys2) = test_utils::get_test_sys().await;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         assert!(sys1.inner.upgrade().is_some());

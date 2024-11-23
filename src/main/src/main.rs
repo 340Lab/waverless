@@ -8,13 +8,15 @@
     clippy::unnecessary_mut_passed,
     unused_results,
     clippy::let_underscore_future,
-    clippy::let_underscore_future
+    clippy::let_underscore_future,
+    unused_must_use
 )]
 
 use clap::Parser;
 use cmd_arg::CmdArgs;
 
 use sys::Sys;
+use tracing::Level;
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
 };
@@ -60,6 +62,21 @@ pub fn start_tracing() {
             }
             if mp.contains("hyper") {
                 return false;
+            }
+            if *v.level() == Level::DEBUG {
+                if mp.contains("wasm_serverless::worker::m_kv_user_client") {
+                    return false;
+                }
+                if mp.contains("wasm_serverless::general::m_data_general") {
+                    return false;
+                }
+                if mp.contains("wasm_serverless::master::m_data_master") {
+                    return false;
+                }
+                if mp.contains("sled::pagecache") {
+                    return false;
+                }
+                // return false;
             }
         }
 
