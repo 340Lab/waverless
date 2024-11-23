@@ -1,5 +1,6 @@
-use std::{collections::HashMap, sync::OnceLock};
+use std::{collections::HashMap, fs, sync::OnceLock};
 
+use futures::lock;
 use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 
@@ -14,17 +15,30 @@ lazy_static! {
         Mutex::new(None);
 }
 
-pub async fn get_test_sys() -> (LogicalModulesRef, LogicalModulesRef) {
+/// sys1 is the master, sys2 is the worker
+pub async fn get_test_sys<'a>() -> (
+    tokio::sync::MutexGuard<
+        'a,
+        std::option::Option<((Sys, LogicalModulesRef), (Sys, LogicalModulesRef))>,
+    >,
+    LogicalModulesRef,
+    LogicalModulesRef,
+) {
     let mut locked = TEST_SYS1_SYS2.lock().await;
     if locked.is_none() {
         *locked = Some(start_2_node().await);
     }
-    let locked = locked.as_ref().unwrap();
-    (locked.0 .1.clone(), locked.1 .1.clone())
+    // let locked = locked.as_ref().unwrap();
+    let sys1_handle = locked.as_ref().unwrap().0 .1.clone();
+    let sys2_handle = locked.as_ref().unwrap().1 .1.clone();
+    (locked, sys1_handle, sys2_handle)
 }
 
+/// sys1 is the master, sys2 is the worker
 async fn start_2_node() -> ((Sys, LogicalModulesRef), (Sys, LogicalModulesRef)) {
     start_tracing();
+    let _ = fs::remove_dir_all("test_temp_dir1");
+    let _ = fs::remove_dir_all("test_temp_dir2");
 
     let node0: NodeConfig = serde_yaml::from_str(
         r#"

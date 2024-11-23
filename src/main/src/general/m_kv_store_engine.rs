@@ -11,6 +11,8 @@ use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::Serialize;
 use serde::{de::DeserializeOwned, ser::SerializeTuple};
+use sled::IVec;
+use tokio::sync::oneshot;
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -31,12 +33,19 @@ use ws_derive::LogicalModule;
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, os, OperatingSystem);
 logical_module_view_impl!(View, p2p, P2PModule);
+logical_module_view_impl!(View, kv_store_engine, KvStoreEngine);
 
+/// start from 1
 pub type KvVersion = usize;
 
 /// attention: non-reentrant
 pub struct KeyLock {
     lock: Arc<RwLock<()>>,
+}
+
+pub enum KeyLockGuard<'a> {
+    Read(RwLockReadGuard<'a, ()>),
+    Write(RwLockWriteGuard<'a, ()>),
 }
 
 impl KeyLock {
@@ -58,7 +67,7 @@ impl KeyLock {
 
 #[derive(LogicalModule)]
 pub struct KvStoreEngine {
-    key_waitings: DashMap<Vec<u8>, Mutex<Vec<tokio::sync::oneshot::Sender<(KvVersion, KvValue)>>>>,
+    key_waitings: DashMap<Vec<u8>, Vec<tokio::sync::oneshot::Sender<(KvVersion, KvValue)>>>,
 
     /// lock should be free when there is no read or write operation on the key
     ///  let's use cache to replace the map
@@ -103,6 +112,7 @@ impl LogicalModule for KvStoreEngine {
     }
 }
 
+#[derive(Debug)]
 pub enum KvAdditionalRes {
     // SerialedValue(Arc<[u8]>),
 }
@@ -120,16 +130,26 @@ impl Default for KvAdditionalConf {
 }
 
 impl KvStoreEngine {
-    pub async fn wait_for_new(&self, key: &[u8]) -> (KvVersion, KvValue) {
+    pub fn register_waiter_for_new(
+        &self,
+        key: &[u8],
+        hold_key_guard: KeyLockGuard<'_>,
+    ) -> oneshot::Receiver<(KvVersion, KvValue)> {
         let (wait_tx, wait_rx) = tokio::sync::oneshot::channel();
+        // 对于每一个key的等待数组，只有这里插入和set时清空；
+        //  临界区讨论：
+        //  首先用户坑定时先校验了没有要求的key，才会监听
+        //  有个问题是，监听还没完成插入的时候，进来了新key怎么办？
+        //    所以要保证用户判断到没有key的时候持有锁，直到插入完成才解锁
         let _ = self
             .key_waitings
             .entry(key.to_owned())
             .and_modify(|v| {
-                v.lock().push(tokio::sync::oneshot::channel().0);
+                v.push(tokio::sync::oneshot::channel().0);
             })
-            .or_insert_with(|| Mutex::new(vec![wait_tx]));
-        wait_rx.await.unwrap()
+            .or_insert_with(|| vec![wait_tx]);
+        drop(hold_key_guard);
+        wait_rx
     }
 
     // make sure some operation is atomic
@@ -172,16 +192,24 @@ impl KvStoreEngine {
         // let
         let mut vec_writer = Cursor::new(vec![0; 8 + value.len()]);
         // assert_eq!(bincode::serialized_size(&kvversion).unwrap(), 8);
-
-        bincode::serialize_into(&mut vec_writer, &kvversion);
+        bincode::serialize_into(&mut vec_writer, &kvversion).unwrap();
         let mut vec = vec_writer.into_inner();
-        vec.extend(value);
+        vec[8..].copy_from_slice(&value);
 
         let _ = db.insert(keybytes, vec).unwrap();
 
+        if let Some(mut key_waitings) = self.key_waitings.get_mut(key) {
+            // if let Some((_, key_waitings)) = self.key_waitings.remove(key) {
+            for wait_tx in key_waitings.drain(..) {
+                wait_tx
+                    .send((kvversion, KvValue::RawData(value.clone())))
+                    .unwrap_or_else(|_| panic!("send new key event failed"));
+            }
+        }
         Ok((kvversion, additinal_res))
     }
 
+    /// first kv version start from 1
     pub fn set<K>(
         &self,
         key: K,
@@ -213,15 +241,16 @@ impl KvStoreEngine {
             1
         };
         // let
+
+        assert_eq!(bincode::serialized_size(&kvversion).unwrap(), 8);
         let mut vec_writer = Cursor::new(vec![
             0;
-            8 + bincode::serialized_size(&kvversion).unwrap()
+            8 + bincode::serialized_size(&value).unwrap()
                 as usize
         ]);
-        assert_eq!(bincode::serialized_size(&kvversion).unwrap(), 8);
 
-        bincode::serialize_into(&mut vec_writer, &kvversion);
-        bincode::serialize_into(&mut vec_writer, value);
+        bincode::serialize_into(&mut vec_writer, &kvversion).unwrap();
+        bincode::serialize_into(&mut vec_writer, value).unwrap();
 
         let _ = db.insert(keybytes, vec_writer.into_inner()).unwrap();
 
@@ -244,6 +273,19 @@ impl KvStoreEngine {
             //     .unwrap_or_else(|| panic!("deserialize failed"));
             (kvversion, v.to_vec().drain(0..8).collect())
         })
+    }
+
+    pub fn decode_kv<K>(key_: &K, data: &IVec) -> (KvVersion, K::Value)
+    where
+        K: KeyType,
+    {
+        let kvversion = bincode::deserialize::<u64>(&data.as_ref()[0..8]);
+        let value = key_.deserialize_from(&data.as_ref()[8..]);
+        if let (Ok(kvversion), Some(value)) = (kvversion, value) {
+            return (kvversion as usize, value);
+        }
+
+        (0, bincode::deserialize::<K::Value>(&data.as_ref()).unwrap())
     }
 
     pub fn get<'a, K>(
@@ -269,21 +311,7 @@ impl KvStoreEngine {
                 tracing::error!("get kv error: {:?}", e);
                 None
             },
-            |v| {
-                v.map(|v| {
-                    // support old no kv version storage format
-                    if let Some(value) = key_.deserialize_from(v.as_ref()) {
-                        (0, value)
-                    } else {
-                        let kvversion =
-                            bincode::deserialize::<u64>(&v.as_ref()[0..8]).unwrap() as usize;
-                        let value: K::Value = key_
-                            .deserialize_from(&v.as_ref()[8..])
-                            .unwrap_or_else(|| panic!("deserialize failed"));
-                        (kvversion, value)
-                    }
-                })
-            },
+            |v| v.map(|v| Self::decode_kv(key_, &v)),
         )
     }
 
@@ -319,18 +347,7 @@ impl KvStoreEngine {
         let _hold_lock_guard = hold_lock.as_ref().map(|lock| lock.write());
 
         let res = self.db.get().unwrap().remove(keybytes).unwrap();
-        Ok(res.map(|v| {
-            // support old no kv version storage format
-            if let Some(value) = key.deserialize_from(v.as_ref()) {
-                (0, value)
-            } else {
-                let kvversion = bincode::deserialize::<u64>(&v.as_ref()[0..8]).unwrap() as usize;
-                let value: K::Value = key
-                    .deserialize_from(&v.as_ref()[8..])
-                    .unwrap_or_else(|| panic!("deserialize failed"));
-                (kvversion, value)
-            }
-        }))
+        Ok(res.map(|v| Self::decode_kv(&key, &v)))
     }
     pub fn flush(&self) {
         let _ = self.db.get().unwrap().flush().unwrap();
@@ -429,6 +446,7 @@ pub enum KvValue {
     ServiceList(Vec<u8>),
     DataSetMeta(DataSetMetaV2),
     DataSetItem(Vec<u8>),
+    RawData(Vec<u8>),
 }
 
 pub struct KeyTypeKv<'a>(pub &'a [u8]);
@@ -527,5 +545,69 @@ impl Serialize for KeyTypeDataSetItem<'_> {
         tup.serialize_element(self.uid)?;
         tup.serialize_element(&self.idx)?;
         tup.end()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        general::{
+            m_data_general::{DataSetMetaBuilder, DataSetMetaV2},
+            m_kv_store_engine::{KeyTypeDataSetMeta, KvAdditionalConf},
+            test_utils,
+        },
+        result::WSResultExt,
+        sys::LogicalModuleNewArgs,
+    };
+
+    use super::View;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_kv_store_engine() {
+        let (_hold, _sys1, sys2) = test_utils::get_test_sys().await;
+        let view = View::new(sys2);
+        let key = "test_kv_store_engine_key";
+        view.kv_store_engine()
+            .set(
+                KeyTypeDataSetMeta(key.as_bytes()),
+                &DataSetMetaBuilder::new()
+                    .cache_mode_map_common_kv()
+                    .cache_mode_pos_allnode()
+                    .cache_mode_time_auto()
+                    .version(3)
+                    .build(),
+                false,
+            )
+            .todo_handle();
+        let set = view
+            .kv_store_engine()
+            .get(
+                &KeyTypeDataSetMeta(key.as_bytes()),
+                false,
+                KvAdditionalConf {},
+            )
+            .unwrap();
+        assert_eq!(set.0, 1);
+        assert_eq!(set.1.version, 3);
+        let del = view
+            .kv_store_engine()
+            .del(KeyTypeDataSetMeta(key.as_bytes()), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(del.0, 1);
+        assert_eq!(del.1.version, 3);
+        assert!(view
+            .kv_store_engine()
+            .get(
+                &KeyTypeDataSetMeta(key.as_bytes()),
+                false,
+                KvAdditionalConf {},
+            )
+            .is_none());
+        assert!(view
+            .kv_store_engine()
+            .del(KeyTypeDataSetMeta(key.as_bytes()), false)
+            .unwrap()
+            .is_none());
     }
 }

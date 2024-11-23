@@ -1,4 +1,4 @@
-use std::os::unix::net::SocketAddr;
+use std::{fmt::Debug, os::unix::net::SocketAddr};
 
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
@@ -12,7 +12,7 @@ use zip_extract::ZipExtractError;
 use crate::{
     general::{
         m_appmeta_manager::FnMeta,
-        m_data_general::{EachNodeSplit},
+        m_data_general::EachNodeSplit,
         network::{proto, rpc_model::HashValue},
     },
     sys::NodeID,
@@ -167,7 +167,7 @@ pub enum WsFuncError {
 #[derive(Debug)]
 pub enum WsDataError {
     DataSetNotFound {
-        uniqueid: String,
+        uniqueid: Vec<u8>,
     },
     SetExpiredDataVersion {
         target_version: u64,
@@ -330,3 +330,19 @@ impl_err_convertor!(SendError, WsNetworkConnErr, SendError);
 impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);
 impl_err_convertor!(RaftError, WsRaftErr, RaftError);
 impl_err_convertor!(std::io::Error, WsIoErr, Io);
+
+pub trait WSResultExt {
+    fn todo_handle(&self);
+}
+
+impl<T: Debug> WSResultExt for WSResult<T> {
+    #[inline]
+    fn todo_handle(&self) {
+        match self {
+            Ok(_ok) => {}
+            Err(err) => {
+                tracing::warn!("result err: {:?}", err);
+            }
+        }
+    }
+}
