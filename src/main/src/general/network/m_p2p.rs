@@ -13,7 +13,7 @@ use super::{
 use crate::{
     config::NodesConfig,
     logical_module_view_impl,
-    result::{ErrCvt, WSResult, WsNetworkConnErr, WsNetworkLogicErr},
+    result::{ErrCvt, WSResult, WSResultExt, WsNetworkConnErr, WsNetworkLogicErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
@@ -104,6 +104,13 @@ impl<R: RPCReq> RPCCaller<R> {
         req: R,
         dur: Option<Duration>,
     ) -> WSResult<R::Resp> {
+        #[cfg(feature = "rpc-log")]
+        tracing::debug!(
+            "call rpc {:?} from {} to {}",
+            req,
+            p2p.nodes_config.this_node(),
+            node_id
+        );
         p2p.call_rpc::<R>(node_id, req, dur).await
     }
 }
@@ -215,6 +222,13 @@ impl Responser {
     where
         RESP: MsgPack + Default,
     {
+        #[cfg(feature = "rpc-log")]
+        tracing::debug!(
+            "resp rpc {:?} from {} to {}",
+            resp,
+            self.view.p2p().nodes_config.this_node(),
+            self.node_id
+        );
         if self.view.p2p().nodes_config.this.0 == self.node_id {
             self.view.p2p().dispatch(
                 self.node_id,
@@ -280,7 +294,17 @@ impl P2PModule {
                         *b.downcast::<M>().unwrap()
                     }
                 };
+                // if msg.msg_id() == 3 {
+                //     tracing::info!("dispatch {:?} from: {}", msg, nid);
+                // }
                 // tracing::debug!("dispatch from {} msg:{:?}", nid, msg);
+                #[cfg(feature = "rpc-log")]
+                tracing::debug!(
+                    "handling rpc {:?} from {} to {}",
+                    msg,
+                    nid,
+                    p2p.nodes_config.this_node(),
+                );
                 f(
                     Responser {
                         task_id,
@@ -396,7 +420,8 @@ impl P2PModule {
                 r.msg_id(),
                 taskid,
                 DispatchPayload::Local(Box::new(r)),
-            );
+            )
+            .todo_handle();
             let resp = rx.await.unwrap();
             let resp = resp.downcast::<RESP>().unwrap();
 
@@ -438,7 +463,12 @@ impl P2PModule {
             Err(err) => {
                 let _ = self.waiting_tasks.remove(&(taskid, node_id)).unwrap();
                 // tracing::info!("1stop holding lock msg:{} node:{}", r.msg_id(), node_id);
-                tracing::error!("rpc send failed: {:?}", err);
+                tracing::error!(
+                    "rpc send failed: {:?}, request({:?}) from node({:?})",
+                    err,
+                    r,
+                    self.nodes_config.this_node()
+                );
                 return Err(err);
             }
         }
@@ -457,7 +487,12 @@ impl P2PModule {
                 let _ = self.waiting_tasks.remove(&(taskid, node_id));
                 // let _ = self.p2p_kernel.close(node_id).await;
 
-                tracing::error!("rpc timeout: {:?} to node {}", err, node_id);
+                tracing::error!(
+                    "rpc timeout: {:?} to node {} with req {:?}",
+                    err,
+                    node_id,
+                    r
+                );
 
                 // tracing::warn!("rpc timeout: {:?} to node {}", err, node_id);
                 // tracing::info!("2stop holding lock msg:{} node:{}", r.msg_id(), node_id);
@@ -483,7 +518,11 @@ impl P2PModule {
             cb(nid, self, taskid, data)?;
             Ok(())
         } else {
-            tracing::warn!("not match id: {}", id);
+            tracing::warn!(
+                "not match id: {}, this node: {}",
+                id,
+                self.nodes_config.this_node()
+            );
             Err(WsNetworkLogicErr::MsgIdNotDispatchable(id).into())
         }
     }

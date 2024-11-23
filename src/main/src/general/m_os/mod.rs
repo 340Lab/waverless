@@ -13,7 +13,7 @@ use super::{
 use crate::{
     general::network::proto,
     logical_module_view_impl,
-    result::{ErrCvt, WSError, WSResult, WsIoErr},
+    result::{ErrCvt, WSError, WSResult, WSResultExt, WsIoErr},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
 };
@@ -239,7 +239,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        responser.send_resp(res).await;
+        responser.send_resp(res).await.todo_handle();
     }
 
     async fn remote_get_dir_content_handler(
@@ -306,7 +306,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        responser.send_resp(res).await;
+        responser.send_resp(res).await.todo_handle();
     }
 
     pub fn open_file(&self, fname: &str) -> WSResult<i32> {
