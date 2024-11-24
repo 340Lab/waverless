@@ -3,7 +3,10 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::{
-    general::m_appmeta_manager::AppType,
+    general::{
+        m_appmeta_manager::{AppType},
+        network::rpc_model::{self, HashValue},
+    },
     result::{WSResult, WsFuncError},
     worker::func::{
         m_instance_manager::{EachAppCache, InstanceManager},
@@ -15,6 +18,7 @@ use super::{process::ProcessInstance, SharedInstance};
 
 impl InstanceManager {
     pub async fn update_checkpoint(&self, app_name: &str, restart: bool) -> WSResult<()> {
+        tracing::debug!("start update_checkpoint");
         async fn debug_port_left() {
             tracing::debug!("debug port left");
             // only for test
@@ -40,6 +44,7 @@ impl InstanceManager {
             .into());
         };
         // state 2 connecting, make others wait
+        tracing::debug!("state 2 connecting, make others wait");
         {
             proc_ins.before_checkpoint();
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -51,6 +56,11 @@ impl InstanceManager {
                 AppType::Jar => java::take_snapshot(app_name, self.view.os()).await,
                 AppType::Wasm => unreachable!(),
             }
+
+            // 打完快照手动 close 一下
+            tracing::debug!("打完快照手动 close 一下, 移除CONN_MAP中的残余 app");
+            rpc_model::close_conn(&HashValue::Str(app_name.to_string().clone()));
+            
         }
         // recover by criu
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -80,6 +90,7 @@ impl InstanceManager {
         Ok(())
     }
 
+    // KV DEBUG
     pub async fn make_checkpoint_for_app(&self, app: &str) -> WSResult<()> {
         tracing::debug!("make checkpoint for app: {}", app);
         let p = self.get_process_instance(&AppType::Jar, app);

@@ -41,7 +41,7 @@ message KvPairs{
 
 message KvResponse{
   message KvResponse{
-    repeated KvPair kvs=1;
+    repeated KvPair kvs=1;  
   }
   oneof resp {
     KvResponse common_resp=1;
@@ -49,15 +49,15 @@ message KvResponse{
   }
 }
 
+message KvResponses{
+  repeated KvResponse responses=1;
+}
+
 message KvRequests{
   string app=1;
   string func=2;
   repeated KvRequest requests=3;
   int64 prev_kv_opeid=4;
-}
-
-message KvResponses{
-  repeated KvResponse responses=1;
 }
 
 // message MetaKvRequest{

@@ -147,6 +147,7 @@ impl ProcessInstance {
         true
     }
 
+    // KV DEBUG
     pub async fn wait_for_verify(&self) -> proc_proto::AppStarted {
         if let Some(v) = self.state.0.read().0.as_connected() {
             return v.clone();

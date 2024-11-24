@@ -9,6 +9,7 @@ use crate::{
 
 use super::process::PID;
 
+// KV DEBUG
 pub(super) fn cold_start(app: &str, os: &OperatingSystem) -> WSResult<process::Child> {
     tracing::debug!("java cold start {}", app);
     let p = os.start_process(OsProcessType::JavaApp(app.to_owned()));

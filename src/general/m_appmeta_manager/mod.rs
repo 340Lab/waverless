@@ -138,6 +138,8 @@ impl<'de> Deserialize<'de> for FnMetaYaml {
             .ok_or_else(|| serde::de::Error::custom("not a map"))?;
         // let calls = map.remove("calls").ok_or_else(|| serde::de::Error::missing_field("calls"))?;
         let mut calls = vec![];
+
+        // KV DEBUG
         fn parse_http_call<'de, D: Deserializer<'de>>(
             map: &serde_yaml::Value,
         ) -> Result<HttpCall, D::Error> {
@@ -695,6 +697,7 @@ impl AppMetaManager {
         // let appdir = self.fs_layer.concat_app_dir(app);
         let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
 
+        // KV DEBUG
         // TODO: 2.check project dir
         // 3. if java, take snapshot
         if let AppType::Jar = appmeta.app_type {
@@ -736,6 +739,8 @@ impl AppMetaManager {
             .await
             .is_some())
     }
+
+    // KV DEBUG
     pub async fn app_uploaded(&self, appname: String, data: Bytes) -> WSResult<()> {
         // 1. tmpapp name & dir
         // TODO: fobidden tmpapp public access
@@ -777,6 +782,7 @@ impl AppMetaManager {
         };
 
         // 3. check meta
+        tracing::debug!("begin check meta");
         let res = self.construct_tmp_app(&tmpapp).await;
         let appmeta = match res {
             Err(e) => {
