@@ -24,7 +24,15 @@ def os_system(command):
 # make ../install tar.gz
 os_system_sure("rm -rf install.tar.gz")
 CRAC_INSTALL_DIR = "/usr/jdk_crac"
-os_system_sure(f"cp -r {CRAC_INSTALL_DIR} ../install/inner/jdk_crac")
+
+# 判断一下 ../install/inner/jdk_crac 存不存在，如果不存在则 cp， 存在则跳过
+dst = "../install/inner/jdk_crac"
+if not os.path.exists(dst):
+    os_system(f"cp -r {CRAC_INSTALL_DIR} {dst}")
+else:
+    print(f"{dst} 已存在，跳过复制。")
+
+# os_system_sure(f"cp -r {CRAC_INSTALL_DIR} ../install/inner/jdk_crac")
 os_system_sure("tar -czvf install.tar.gz -C ../install .")
 
 def deploy_to_nodes():

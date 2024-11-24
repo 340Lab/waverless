@@ -111,6 +111,8 @@ impl OperatingSystem {
     pub fn app_path(&self, app: &str) -> PathBuf {
         self.view.appmeta_manager().fs_layer.concat_app_dir(app)
     }
+
+    // KV DEBUG
     pub fn start_process(&self, p: OsProcessType) -> process::Child {
         let (mut binding, log_file) = match p {
             OsProcessType::JavaApp(app) => {

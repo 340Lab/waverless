@@ -89,7 +89,7 @@ impl LogicalModule for Executor {
         let view = self.view.clone();
         self.view.executor().rpc_handler_distribute_task.regist(
             self.view.p2p(),
-            move |responser, r| {
+            move |responser, r: proto::sche::DistributeTaskReq| {
                 // tracing::info!("rpc recv: {:?}", r);
                 let view = view.clone();
                 let _ = tokio::spawn(async move {

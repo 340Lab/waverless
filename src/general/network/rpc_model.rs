@@ -87,12 +87,15 @@ pub async fn call<Req: ReqMsg>(
     // register the call back
     let (wait_tx, wait_rx) = oneshot::channel();
     let next_task = NEXT_TASK_ID.fetch_add(1, Ordering::SeqCst);
+    tracing::debug!("insert into CALL_MAP next_task:{:?}", next_task.clone());
     let _ = CALL_MAP.write().insert(next_task, wait_tx);
+    tracing::debug!("insert after CALL_MAP.write(): {:?}", CALL_MAP.write());
 
     // send the request
     let mut buf = BytesMut::with_capacity(req.encoded_len() + 8);
     buf.put_i32(req.encoded_len() as i32);
     buf.put_i32(next_task as i32);
+    buf.put_i32(2);
     req.encode(&mut buf).unwrap();
 
     tracing::debug!("send request: {:?} with len: {}", req, buf.len() - 8);
@@ -122,15 +125,16 @@ pub async fn call<Req: ReqMsg>(
 //     Disconnected,
 // }
 
-struct ConnState {
+#[derive(Debug)]
+pub struct ConnState {
     /// record the waiters
     // Connecting(Vec<oneshot::Sender<tokio::sync::mpsc::Sender<Vec<u8>>>>),
-    tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    pub tx: tokio::sync::mpsc::Sender<Vec<u8>>,
 }
 
 lazy_static! {
     /// This is an example for using doc comment attributes
-    static ref CONN_MAP: RwLock<HashMap<HashValue,ConnState>> = RwLock::new(HashMap::new());
+    pub static ref CONN_MAP: RwLock<HashMap<HashValue,ConnState>> = RwLock::new(HashMap::new());
 
     static ref CALL_MAP: RwLock<HashMap<u32,oneshot::Sender<Vec<u8>>>> = RwLock::new(HashMap::new());
 
@@ -147,13 +151,19 @@ async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
     let Some((conn, rx)) =
         listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await
     else {
-        tracing::debug!("verify failed");
+        tracing::warn!("verify failed");
         return;
     };
 
+    tracing::debug!("verify_remote 结束");
+
     listen_task_ext::spawn_send_loop(rx, socktx);
 
+    tracing::debug!("spawn_send_loop 结束");
+
     listen_task_ext::read_loop::<R>(conn, &mut sockrx, &mut len, &mut buf).await;
+
+    tracing::debug!("read_loop 结束");
 }
 
 pub(super) mod listen_task_ext {
@@ -172,8 +182,8 @@ pub(super) mod listen_task_ext {
 
     pub(super) async fn verify_remote<R: RpcCustom>(
         sockrx: &mut OwnedReadHalf,
-        len: &mut usize,
-        buf: &mut [u8],
+        len: &mut usize,   // 0
+        buf: &mut [u8],    // 0
     ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
         async fn verify_remote_inner<R: RpcCustom>(
             sockrx: &mut OwnedReadHalf,
@@ -188,6 +198,8 @@ pub(super) mod listen_task_ext {
 
             let verify_msg_len = consume_i32(0, buf, len);
 
+            tracing::debug!("len: {}, verify_msg_len: {}", len, verify_msg_len);
+
             // println!("waiting for verify msg {}", verify_msg_len);
             if !wait_for_len(sockrx, len, verify_msg_len, buf).await {
                 tracing::warn!("failed to read verify msg");
@@ -195,18 +207,24 @@ pub(super) mod listen_task_ext {
             }
             // println!("wait done");
 
+            tracing::debug!("wait_for_len 完成");
+
             let Some(id) = R::verify(&buf[4..4 + verify_msg_len]).await else {
-                tracing::warn!("verify failed");
+                tracing::warn!("verify failed in verify_remote_inner");
                 return None;
             };
             let (tx, rx) = tokio::sync::mpsc::channel(10);
 
+            // 确定一下为什么 conn_map 里面有上一次连接 id， 需要找这个 conn_map 在哪里都被调用了
             let mut write_conn_map = CONN_MAP.write();
+            tracing::debug!("write_conn_map: {:?}", write_conn_map);
             if write_conn_map.contains_key(&id) {
                 tracing::warn!("conflict conn id: {:?}", id);
                 return None;
             }
             let _ = write_conn_map.insert(id.clone(), ConnState { tx });
+            tracing::debug!("insert into CALL_MAP id:{:?}", id.clone());
+            tracing::debug!("insert after CALL_MAP.write(): {:?}", write_conn_map);
 
             // println!("verify success");
             Some((id, rx))
@@ -230,6 +248,7 @@ pub(super) mod listen_task_ext {
         *len = 0;
         let mut offset = 0;
         loop {
+
             let (msg_len, msg_id, taskid) = {
                 let buf = &mut buf[offset..];
                 if !wait_for_len(socket, len, 9, buf).await {
@@ -243,6 +262,8 @@ pub(super) mod listen_task_ext {
                     consume_i32(5, buf, len) as u32,
                 )
             };
+            
+            tracing::debug!("2 len: {}, msg_len: {}, msg_id: {}, taskid: {}", len, msg_len, msg_id, taskid);
 
             {
                 if buf.len() < offset + msg_len {
@@ -269,12 +290,15 @@ pub(super) mod listen_task_ext {
                     };
 
                     let msg = buf[..msg_len].to_vec();
+                    tracing::debug!("msg: {:?}", msg);
                     cb.send(msg).unwrap();
                 }
 
                 // update the buf meta
                 offset += msg_len;
                 *len -= msg_len;
+
+                tracing::debug!("1 len: {}, msg_len: {}, msg_id: {}, taskid: {}", len, msg_len, msg_id, taskid);
             }
 
             // match socket.read(buf).await {
@@ -331,6 +355,7 @@ pub(super) mod listen_task_ext {
                         return false;
                     }
                     // println!("recv: {:?}", buf[..n]);
+                    tracing::debug!("len += {}", n);
                     *len += n;
                 }
                 Err(e) => {

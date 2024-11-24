@@ -84,6 +84,7 @@ async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) ->
     }
 }
 
+// KV DEBUG
 async fn upload_app(mut multipart: Multipart) -> Response {
     tracing::debug!("upload_app called");
     // only worker can upload app
