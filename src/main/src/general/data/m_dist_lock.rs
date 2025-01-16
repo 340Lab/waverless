@@ -1,8 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fmt;
-use std::fmt::Debug;
-use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::atomic::AtomicUsize;
@@ -22,16 +20,13 @@ use parking_lot::Mutex;
 use rand::thread_rng;
 use rand::Rng;
 use tokio::sync::Notify;
-use tokio::sync::OwnedRwLockReadGuard;
-use tokio::sync::OwnedRwLockWriteGuard;
 use tokio::sync::RwLock;
 use ws_derive::LogicalModule;
 
-use super::network::m_p2p::P2PModule;
-use super::network::m_p2p::RPCCaller;
-use super::network::m_p2p::RPCHandler;
-use super::network::m_p2p::RPCResponsor;
-use super::network::proto;
+use crate::general::network::{
+    m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
+    proto,
+};
 
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, p2p, P2PModule);
@@ -453,7 +448,7 @@ impl DistLock {
 
 #[cfg(test)]
 mod test {
-    use std::{sync::Arc, time::Duration};
+    use std::{time::Duration};
 
     use super::View;
     use crate::general::{network::proto, test_utils};

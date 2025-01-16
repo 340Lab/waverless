@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::unix::net::SocketAddr};
+use std::{fmt::Debug, os::unix::net::SocketAddr, sync::Arc};
 
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
@@ -11,8 +11,8 @@ use zip_extract::ZipExtractError;
 
 use crate::{
     general::{
-        m_appmeta_manager::FnMeta,
-        m_data_general::EachNodeSplit,
+        app::FnMeta,
+        data::m_data_general::{DataItemIdx, DataSplitIdx, EachNodeSplit},
         network::{proto, rpc_model::HashValue},
     },
     sys::NodeID,
@@ -128,6 +128,9 @@ pub enum WsFuncError {
     AppNotFound {
         app: String,
     },
+    InvalidAppMetaDataItem {
+        app: String,
+    },
     FuncNotFound {
         app: String,
         func: String,
@@ -162,12 +165,17 @@ pub enum WsFuncError {
     },
     InstanceJavaPidNotFound(String),
     InstanceProcessStartFailed(std::io::Error),
+    InsranceVerifyFailed(String),
 }
 
 #[derive(Debug)]
 pub enum WsDataError {
     DataSetNotFound {
         uniqueid: Vec<u8>,
+    },
+    GetDataFailed {
+        unique_id: Vec<u8>,
+        msg: String,
     },
     SetExpiredDataVersion {
         target_version: u64,
@@ -182,6 +190,14 @@ pub enum WsDataError {
         unique_id: Vec<u8>,
         expect: usize,
         actual: usize,
+    },
+    KvDeserializeErr {
+        unique_id: Vec<u8>,
+        context: String,
+    },
+    KvGotWrongSplitCountAndIdx {
+        unique_id: Vec<u8>,
+        idx: Vec<DataItemIdx>,
     },
     KvEngineInnerError {
         inner: sled::Error,
@@ -200,13 +216,40 @@ pub enum WsDataError {
     },
     SplitRecoverMissing {
         unique_id: Vec<u8>,
-        idx: usize,
+        idx: DataItemIdx,
         missing: Vec<EachNodeSplit>,
     },
+    SplitDataItemNotRawBytes {
+        unique_id: Vec<u8>,
+        splitidx: DataSplitIdx,
+    },
+    SplitLenMismatch {
+        unique_id: Vec<u8>,
+        splitidx: DataSplitIdx,
+        expect: usize,
+        actual: usize,
+    },
+    UnknownCacheMapMode {
+        mode: u16,
+    },
+    UnknownCacheTimeMode {
+        mode: u16,
+    },
+    UnknownCachePosMode {
+        mode: u16,
+    },
+    ItemIdxOutOfRange {
+        wanted: DataItemIdx,
+        len: u8,
+    },
+    ItemIdxEmpty,
 }
 
 #[derive(Error, Debug)]
 pub enum WSError {
+    #[error("ArcWrapper: {0:?}")]
+    ArcWrapper(Arc<WSError>),
+
     #[error("Io error: {0:?}")]
     WsIoErr(WsIoErr),
 
