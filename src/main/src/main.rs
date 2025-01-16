@@ -9,7 +9,8 @@
     unused_results,
     clippy::let_underscore_future,
     clippy::let_underscore_future,
-    unused_must_use
+    unused_must_use,
+    unconditional_recursion
 )]
 
 use clap::Parser;
@@ -67,12 +68,12 @@ pub fn start_tracing() {
                 if mp.contains("wasm_serverless::worker::m_kv_user_client") {
                     return false;
                 }
-                if mp.contains("wasm_serverless::general::m_data_general") {
-                    return false;
-                }
-                if mp.contains("wasm_serverless::master::m_data_master") {
-                    return false;
-                }
+                // if mp.contains("wasm_serverless::general::m_data_general") {
+                //     return false;
+                // }
+                // if mp.contains("wasm_serverless::master::m_data_master") {
+                //     return false;
+                // }
                 if mp.contains("sled::pagecache") {
                     return false;
                 }

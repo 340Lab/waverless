@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::{net::UnixListener, sync::oneshot};
 
-use crate::result::{WSResult, WsRpcErr};
+use crate::result::{WSResult, WsFuncError, WsRpcErr};
 
 // start from the begining
 #[async_trait]
@@ -71,6 +71,7 @@ pub async fn call<Req: ReqMsg>(
 ) -> WSResult<Req::Resp> {
     // wait for connection if not connected
 
+    tracing::debug!("111111111111111111111111");
     let tx = {
         let mut conn_map = CONN_MAP.write();
         match conn_map.get_mut(&conn) {
@@ -84,10 +85,14 @@ pub async fn call<Req: ReqMsg>(
         }
     };
 
+    tracing::debug!("22222222222222222222222222");
+
     // register the call back
     let (wait_tx, wait_rx) = oneshot::channel();
     let next_task = NEXT_TASK_ID.fetch_add(1, Ordering::SeqCst);
     let _ = CALL_MAP.write().insert(next_task, wait_tx);
+
+    tracing::debug!("33333333333333333333333333");
 
     // send the request
     let mut buf = BytesMut::with_capacity(req.encoded_len() + 8);
@@ -137,23 +142,26 @@ lazy_static! {
     static ref NEXT_TASK_ID: AtomicU32 = AtomicU32::new(0);
 }
 
-async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) {
+async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) -> WSResult<()> {
     tracing::debug!("new connection: {:?}", socket.peer_addr().unwrap());
     let (mut sockrx, socktx) = socket.into_split();
 
     let mut buf = [0; 1024];
     let mut len = 0;
-
-    let Some((conn, rx)) =
-        listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await
-    else {
-        tracing::debug!("verify failed");
-        return;
-    };
+    let (conn, rx) =
+        match listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await {
+            Ok((conn, rx)) => (conn, rx),
+            Err(err) => {
+                tracing::debug!("verify failed {:?}", err);
+                return Err(WsFuncError::InsranceVerifyFailed("verify failed".to_string()).into());
+            }
+        };
 
     listen_task_ext::spawn_send_loop(rx, socktx);
 
     listen_task_ext::read_loop::<R>(conn, &mut sockrx, &mut len, &mut buf).await;
+
+    Ok(())
 }
 
 pub(super) mod listen_task_ext {
@@ -166,7 +174,10 @@ pub(super) mod listen_task_ext {
         sync::mpsc::Receiver,
     };
 
-    use crate::general::network::rpc_model::ConnState;
+    use crate::{
+        general::network::rpc_model::ConnState,
+        result::{WSResult, WsFuncError},
+    };
 
     use super::{HashValue, RpcCustom, CALL_MAP, CONN_MAP};
 
@@ -174,16 +185,19 @@ pub(super) mod listen_task_ext {
         sockrx: &mut OwnedReadHalf,
         len: &mut usize,
         buf: &mut [u8],
-    ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
+    ) -> WSResult<(HashValue, Receiver<Vec<u8>>)> {
         async fn verify_remote_inner<R: RpcCustom>(
             sockrx: &mut OwnedReadHalf,
             len: &mut usize,
             buf: &mut [u8],
-        ) -> Option<(HashValue, Receiver<Vec<u8>>)> {
+        ) -> WSResult<(HashValue, Receiver<Vec<u8>>)> {
             // println!("waiting for verify head len");
             if !wait_for_len(sockrx, len, 4, buf).await {
                 tracing::warn!("failed to read verify head len");
-                return None;
+                return Err(WsFuncError::InsranceVerifyFailed(
+                    "failed to read verify head len".to_string(),
+                )
+                .into());
             }
 
             let verify_msg_len = consume_i32(0, buf, len);
@@ -191,34 +205,43 @@ pub(super) mod listen_task_ext {
             // println!("waiting for verify msg {}", verify_msg_len);
             if !wait_for_len(sockrx, len, verify_msg_len, buf).await {
                 tracing::warn!("failed to read verify msg");
-                return None;
+                return Err(WsFuncError::InsranceVerifyFailed(
+                    "failed to read verify msg".to_string(),
+                )
+                .into());
             }
             // println!("wait done");
 
             let Some(id) = R::verify(&buf[4..4 + verify_msg_len]).await else {
                 tracing::warn!("verify failed");
-                return None;
+                return Err(WsFuncError::InsranceVerifyFailed("verify failed".to_string()).into());
             };
             let (tx, rx) = tokio::sync::mpsc::channel(10);
 
             let mut write_conn_map = CONN_MAP.write();
             if write_conn_map.contains_key(&id) {
                 tracing::warn!("conflict conn id: {:?}", id);
-                return None;
+                return Err(
+                    WsFuncError::InsranceVerifyFailed("conflict conn id".to_string()).into(),
+                );
             }
             let _ = write_conn_map.insert(id.clone(), ConnState { tx });
 
             // println!("verify success");
-            Some((id, rx))
+            Ok((id, rx))
         }
-        let res = tokio::time::timeout(
+        match tokio::time::timeout(
             Duration::from_secs(5),
             verify_remote_inner::<R>(sockrx, len, buf),
         )
         .await
-        .unwrap_or_else(|_elapse| None);
-        // println!("verify return");
-        res
+        {
+            Ok(ok) => ok,
+            Err(_) => {
+                tracing::warn!("verify timeout");
+                Err(WsFuncError::InsranceVerifyFailed("verify timeout".to_string()).into())
+            }
+        }
     }
 
     pub(super) async fn read_loop<R: RpcCustom>(

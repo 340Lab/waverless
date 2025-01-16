@@ -12,7 +12,7 @@ use crate::sys::LogicalModulesRef;
 
 mod utils {
 
-    use wasmedge_sdk::{Caller, CallingFrame, Instance, Memory};
+    use wasmedge_sdk::{Caller, Instance, Memory};
 
     use crate::{
         general::m_os::OperatingSystem,
@@ -25,32 +25,32 @@ mod utils {
     };
 
     pub trait WasmCtx {
-        fn memory(&self, idx: u32) -> Option<Memory>;
-        fn instance(&self) -> Option<&Instance>;
+        fn i_memory(&self, idx: u32) -> Option<Memory>;
+        fn i_instance(&self) -> Option<&Instance>;
     }
 
     impl WasmCtx for Caller {
-        fn memory(&self, idx: u32) -> Option<Memory> {
+        fn i_memory(&self, idx: u32) -> Option<Memory> {
             self.memory(idx)
         }
-        fn instance(&self) -> Option<&Instance> {
+        fn i_instance(&self) -> Option<&Instance> {
             self.instance()
         }
     }
 
-    impl WasmCtx for CallingFrame {
-        fn memory(&self, idx: u32) -> Option<Memory> {
-            self.memory(idx)
-        }
-        fn instance(&self) -> Option<&Instance> {
-            self.instance()
-        }
-    }
+    // impl WasmCtx for CallingFrame {
+    //     fn memory(&self, idx: u32) -> Option<Memory> {
+    //         self.memory(idx)
+    //     }
+    //     fn instance(&self) -> Option<&Instance> {
+    //         self.instance()
+    //     }
+    // }
 
     pub fn u8slice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> &'a [u8] {
         // tracing::debug!("u8slice ptr: {}, len: {}", ptr, len);
         let mem = caller
-            .memory(0)
+            .i_memory(0)
             .unwrap()
             .data_pointer(ptr as u32, len as u32)
             .unwrap();
@@ -67,7 +67,7 @@ mod utils {
 
     pub fn i32slice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> &'a [i32] {
         let mem = caller
-            .memory(0)
+            .i_memory(0)
             .unwrap()
             .data_pointer(ptr as u32, len as u32)
             .unwrap();
@@ -83,7 +83,7 @@ mod utils {
 
     pub fn mutu8sclice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> Option<&'a mut [u8]> {
         if let Ok(mem) = caller
-            .memory(0)
+            .i_memory(0)
             .unwrap()
             .data_pointer_mut(ptr as u32, len as u32)
         {
@@ -103,7 +103,7 @@ mod utils {
     pub fn mutref<'a, T: Sized>(caller: &impl WasmCtx, ptr: i32) -> &'a mut T {
         unsafe {
             &mut *(caller
-                .memory(0)
+                .i_memory(0)
                 .unwrap()
                 .data_pointer_mut(ptr as u32, std::mem::size_of::<T>() as u32)
                 .unwrap() as *mut T)
@@ -115,7 +115,7 @@ mod utils {
             m_instance_manager()
                 .instance_running_function
                 .read()
-                .get(&caller.instance().unwrap().name().unwrap())
+                .get(&caller.i_instance().unwrap().name().unwrap())
                 .unwrap()
                 .0
                 .clone(),

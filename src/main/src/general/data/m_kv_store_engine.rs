@@ -7,7 +7,7 @@ use camelpaste::paste;
 use dashmap::DashMap;
 use enum_as_inner::EnumAsInner;
 
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::Serialize;
 use serde::{de::DeserializeOwned, ser::SerializeTuple};
@@ -19,8 +19,9 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::{m_data_general::DataSetMetaV1, m_os::OperatingSystem, network::m_p2p::P2PModule};
-use crate::general::m_data_general::DataSetMetaV2;
+use crate::general::{
+    data::m_data_general::DataSetMetaV2, m_os::OperatingSystem, network::m_p2p::P2PModule,
+};
 
 use crate::{
     logical_module_view_impl,
@@ -462,7 +463,7 @@ pub struct KeyTypeServiceList;
 generate_key_struct!([KeyTypeServiceList], 3, Vec<u8>);
 
 pub struct KeyTypeDataSetMeta<'a>(pub &'a [u8]);
-generate_key_struct!([KeyTypeDataSetMeta,'_], 4, DataSetMetaV2, [DataSetMetaV1]);
+generate_key_struct!([KeyTypeDataSetMeta,'_], 4, DataSetMetaV2);
 
 pub struct KeyTypeDataSetItem<'a> {
     pub uid: &'a [u8],
@@ -552,12 +553,13 @@ impl Serialize for KeyTypeDataSetItem<'_> {
 mod test {
     use crate::{
         general::{
-            m_data_general::{DataSetMetaBuilder, DataSetMetaV2},
-            m_kv_store_engine::{KeyTypeDataSetMeta, KvAdditionalConf},
+            data::{
+                m_data_general::DataSetMetaBuilder,
+                m_kv_store_engine::{KeyTypeDataSetMeta, KvAdditionalConf},
+            },
             test_utils,
         },
         result::WSResultExt,
-        sys::LogicalModuleNewArgs,
     };
 
     use super::View;
@@ -571,9 +573,9 @@ mod test {
             .set(
                 KeyTypeDataSetMeta(key.as_bytes()),
                 &DataSetMetaBuilder::new()
-                    .cache_mode_map_common_kv()
-                    .cache_mode_pos_allnode()
-                    .cache_mode_time_auto()
+                    .cache_mode_map_common_kv(0)
+                    .cache_mode_pos_allnode(0)
+                    .cache_mode_time_auto(0)
                     .version(3)
                     .build(),
                 false,
