@@ -1,7 +1,7 @@
 pub mod zip;
 
-use super::{
-    m_appmeta_manager::AppMetaManager,
+use crate::general::{
+    app::AppMetaManager,
     network::{
         m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
         proto::remote_sys::{

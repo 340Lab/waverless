@@ -4,7 +4,7 @@ use crate::general::m_os::OperatingSystem;
 use crate::general::network::rpc_model;
 use crate::sys::LogicalModulesRef;
 use crate::{
-    general::m_appmeta_manager::AppType, // worker::host_funcs,
+    general::app::AppType, // worker::host_funcs,
     result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs},
     util::JoinHandleWrapper,
