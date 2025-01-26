@@ -1,3 +1,4 @@
+use crate::general::app::m_executor::Executor;
 use crate::{
     general::network::http_handler::{start_http_handler, HttpHandler},
     logical_module_view_impl,
@@ -6,14 +7,9 @@ use crate::{
     util::{JoinHandleWrapper, WithBind},
 };
 use async_trait::async_trait;
-use axum::{
-    response::{Response},
-    Router,
-};
+use axum::{response::Response, Router};
 use parking_lot::Mutex;
 use ws_derive::LogicalModule;
-
-use super::m_executor::Executor;
 
 #[derive(LogicalModule)]
 pub struct WorkerHttpHandler {
@@ -45,7 +41,7 @@ impl LogicalModule for WorkerHttpHandler {
 }
 
 logical_module_view_impl!(WorkerHttpHandlerView);
-logical_module_view_impl!(WorkerHttpHandlerView, executor, Option<Executor>);
+logical_module_view_impl!(WorkerHttpHandlerView, executor, Executor);
 
 #[async_trait]
 impl HttpHandler for WorkerHttpHandler {

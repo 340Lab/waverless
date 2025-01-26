@@ -1,20 +1,22 @@
-use std::collections::HashSet;
-use std::time::Duration;
-
-use crate::general::data::{
-    m_data_general::{
-        DataGeneral, DataItemIdx, DataSetMetaBuilder, DataSplit, EachNodeSplit,
-    },
-    m_kv_store_engine::{KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine},
-};
-
+use crate::general::app::m_executor::Executor;
+use crate::general::app::DataEventTrigger;
 use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
 };
 use crate::result::{WSResult, WSResultExt};
-use crate::sys::{LogicalModulesRef};
+use crate::sys::{LogicalModulesRef, NodeID};
 use crate::util::JoinHandleWrapper;
+use crate::{
+    general::data::{
+        m_data_general::{
+            CacheMode, DataGeneral, DataItemIdx, DataSetMeta, DataSetMetaBuilder, DataSplit,
+            EachNodeSplit,
+        },
+        m_kv_store_engine::{KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine},
+    },
+    master::app::{fddg::FuncTriggerType, m_app_master::MasterAppMgmt},
+};
 use crate::{
     general::network::http_handler::HttpHandler,
     logical_module_view_impl,
@@ -22,14 +24,18 @@ use crate::{
 };
 use async_trait::async_trait;
 use rand::{thread_rng, Rng};
+use std::collections::HashSet;
+use std::time::Duration;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(DataMasterView);
 logical_module_view_impl!(DataMasterView, data_master, Option<DataMaster>);
 logical_module_view_impl!(DataMasterView, data_general, DataGeneral);
+logical_module_view_impl!(DataMasterView, app_master, Option<MasterAppMgmt>);
 logical_module_view_impl!(DataMasterView, p2p, P2PModule);
 logical_module_view_impl!(DataMasterView, http_handler, Box<dyn HttpHandler>);
 logical_module_view_impl!(DataMasterView, kv_store_engine, KvStoreEngine);
+logical_module_view_impl!(DataMasterView, executor, Executor);
 
 #[derive(LogicalModule)]
 pub struct DataMaster {
@@ -75,107 +81,147 @@ impl LogicalModule for DataMaster {
 }
 
 impl DataMaster {
-    // fn set_data_cache_mode_default(builder: &mut DataSetMetaBuilder) {
-    //     if builder.building.
-    //     // default cache mode
-    //     let _ = builder
-    //         .cache_mode_map_common_kv()
-    //         .cache_mode_pos_auto()
-    //         .cache_mode_time_auto();
-    // }
-    fn set_data_cache_mode_for_meta(
-        req: &DataVersionScheduleRequest,
-        builder: &mut DataSetMetaBuilder,
-    ) {
-        fn default_set_data_cache_mode_for_meta(
+    // return cache mode, splits, cache nodes
+    fn plan_for_write_data(
+        &self,
+        data_unique_id: &[u8],
+        _context: &proto::DataScheduleContext,
+        func_trigger_type: FuncTriggerType,
+    ) -> WSResult<(Vec<CacheMode>, Vec<DataSplit>, Vec<NodeID>)> {
+        fn set_data_cache_mode_for_meta(
             req: &DataVersionScheduleRequest,
             builder: &mut DataSetMetaBuilder,
         ) {
-            // for each item(by split length), set cache mode
-            for idx in 0..req.context.as_ref().unwrap().each_data_sz_bytes.len() {
-                let _ = builder
-                    .cache_mode_time_forever(idx as DataItemIdx)
-                    .cache_mode_pos_allnode(idx as DataItemIdx)
-                    .cache_mode_map_common_kv(idx as DataItemIdx);
-            }
-        }
-        if let Some(context) = req.context.as_ref() {
-            match context.ope_role.as_ref().unwrap() {
-                proto::data_schedule_context::OpeRole::UploadApp(_data_ope_role_upload_app) => {
+            fn default_set_data_cache_mode_for_meta(
+                req: &DataVersionScheduleRequest,
+                builder: &mut DataSetMetaBuilder,
+            ) {
+                // for each item(by split length), set cache mode
+                for idx in 0..req.context.as_ref().unwrap().each_data_sz_bytes.len() {
                     let _ = builder
-                        // 0 is app meta data, map to common kv
-                        .cache_mode_time_forever(0)
-                        .cache_mode_pos_allnode(0)
-                        .cache_mode_map_common_kv(0)
-                        // 1 is app package data, map to file
-                        .cache_mode_time_forever(1)
-                        .cache_mode_pos_allnode(1)
-                        .cache_mode_map_file(1);
-                }
-                proto::data_schedule_context::OpeRole::FuncCall(_data_ope_role_func_call) => {
-                    default_set_data_cache_mode_for_meta(req, builder);
+                        .cache_mode_time_forever(idx as DataItemIdx)
+                        .cache_mode_pos_allnode(idx as DataItemIdx)
+                        .cache_mode_map_common_kv(idx as DataItemIdx);
                 }
             }
-        } else {
-            tracing::warn!(
-                "context is None, use default cache mode, maybe we need to suitable for this case"
-            );
-            default_set_data_cache_mode_for_meta(req, builder);
-        }
-    }
-
-    // fn decide_cache_nodes(
-    //     _ctx: &proto::DataScheduleContext,
-    //     each_item_cache_mode: CacheModeVisitor,
-    // ) -> Vec<NodeID> {
-    //     if cache_mode.is_time_auto() {
-    //         // for time auto, we just do the cache when data is get
-    //         return vec![];
-    //     } else if cache_mode.is_time_forever() {
-    //         if cache_mode.is_pos_auto() {
-    //             // for pos auto, we just do the cache when data is get
-    //             // simple strategy temporarily
-    //             return vec![];
-    //         } else if cache_mode.is_pos_specnode() {
-    //             return vec![];
-    //         } else {
-    //             // all node just return empty, can be just refered from cache_mode
-    //             // no need to redundant info in cache nodes
-    //             return vec![];
-    //         }
-    //     } else {
-    //         panic!("not supported time mode {:?}", cache_mode)
-    //     }
-    // }
-
-    fn decide_each_data_split(&self, ctx: &proto::DataScheduleContext) -> Vec<DataSplit> {
-        // let DEFAULT_SPLIT_SIZE = 4 * 1024 * 1024;
-        let mut datasplits = vec![];
-
-        // simply select a node
-        let node_id = {
-            let rand_node_idx = thread_rng().gen_range(0..self.view.p2p().nodes_config.node_cnt());
-            let mut iter = self.view.p2p().nodes_config.all_nodes_iter();
-            for _ in 0..rand_node_idx {
-                let _ = iter.next();
+            if let Some(context) = req.context.as_ref() {
+                match context.ope_role.as_ref().unwrap() {
+                    proto::data_schedule_context::OpeRole::UploadApp(_data_ope_role_upload_app) => {
+                        let _ = builder
+                            // 0 is app meta data, map to common kv
+                            .cache_mode_time_forever(0)
+                            .cache_mode_pos_allnode(0)
+                            .cache_mode_map_common_kv(0)
+                            // 1 is app package data, map to file
+                            .cache_mode_time_forever(1)
+                            .cache_mode_pos_allnode(1)
+                            .cache_mode_map_file(1);
+                    }
+                    proto::data_schedule_context::OpeRole::FuncCall(_data_ope_role_func_call) => {
+                        default_set_data_cache_mode_for_meta(req, builder);
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    "context is None, use default cache mode, maybe we need to suitable for this case"
+                );
+                default_set_data_cache_mode_for_meta(req, builder);
             }
-            *iter
-                .next()
-                .expect("node count doesn't match all_nodes_iter")
-                .0
-        };
-
-        for sz in ctx.each_data_sz_bytes.iter() {
-            datasplits.push(DataSplit {
-                splits: vec![EachNodeSplit {
-                    node_id,
-                    data_offset: 0,
-                    data_size: *sz,
-                }],
-            });
         }
-        tracing::debug!("decide_each_data_split res: {:?}", datasplits);
-        datasplits
+
+        fn decide_each_data_split(
+            datamaster: &DataMaster,
+            ctx: &proto::DataScheduleContext,
+        ) -> Vec<DataSplit> {
+            // let DEFAULT_SPLIT_SIZE = 4 * 1024 * 1024;
+            let mut datasplits = vec![];
+            let p2p = datamaster.view.p2p();
+
+            // simply select a node
+            let node_id = {
+                let rand_node_idx = thread_rng().gen_range(0..p2p.nodes_config.node_cnt());
+                let mut iter = p2p.nodes_config.all_nodes_iter();
+                for _ in 0..rand_node_idx {
+                    let _ = iter.next();
+                }
+                *iter
+                    .next()
+                    .expect("node count doesn't match all_nodes_iter")
+                    .0
+            };
+
+            for sz in ctx.each_data_sz_bytes.iter() {
+                datasplits.push(DataSplit {
+                    splits: vec![EachNodeSplit {
+                        node_id,
+                        data_offset: 0,
+                        data_size: *sz,
+                    }],
+                });
+            }
+            tracing::debug!("decide_each_data_split res: {:?}", datasplits);
+            datasplits
+        }
+
+        if let Ok(data_unique_id_str) = std::str::from_utf8(data_unique_id) {
+            // get data binded functions
+            // https://fvd360f8oos.feishu.cn/wiki/Zp19wf9sdilwVKk5PlKcGy0CnBd
+            // app_name -> (apptype, fn_name -> fn_meta)
+            let binded_funcs: std::collections::HashMap<
+                String,
+                (
+                    crate::general::app::AppType,
+                    std::collections::HashMap<String, crate::general::app::FnMeta>,
+                ),
+            > = self
+                .view
+                .app_master()
+                .fddg
+                .get_binded_funcs(data_unique_id_str, func_trigger_type);
+
+            // filter functions by condition function
+            for (appname, (app_type, fn_names)) in binded_funcs.iter_mut() {
+                fn_names.retain(|fn_name, fn_meta| {
+                    if let Some(data_accesses) = fn_meta.data_accesses.as_ref() {
+                        // find data access discription
+                        if let Some((key_pattern, data_access)) =
+                            data_accesses.iter().find(|(key_pattern, data_access)| {
+                                if let Some(event) = data_access.event.as_ref() {
+                                    match event {
+                                        DataEventTrigger::WriteWithCondition { condition }
+                                        | DataEventTrigger::NewWithCondition { condition } => false,
+                                        DataEventTrigger::Write | DataEventTrigger::New => false,
+                                    }
+                                } else {
+                                    false
+                                }
+                            })
+                        {
+                            // with condition, call the condition function
+                            let condition_func = match data_access.event.as_ref().unwrap() {
+                                DataEventTrigger::WriteWithCondition { condition }
+                                | DataEventTrigger::NewWithCondition { condition } => condition,
+                                _ => panic!("logical error, find condition must be with condition, so current code is wrong"),
+                            };
+
+                            // call the condition function
+                            self.view.executor().handle_local_call(resp, req)
+                            
+                        } else {
+                            // without condition
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                });
+            }
+
+            // we need master to schedule functions to get func target nodes
+            // then we make the splits to prefer the target nodes and write cache when wrting splits
+        }
+
+        Ok((DataSetMetaBuilder::new().build().cache_mode, vec![], vec![]))
     }
 
     /// Check the dataset sync flow here:
@@ -186,51 +232,52 @@ impl DataMaster {
         responsor: RPCResponsor<DataVersionScheduleRequest>,
         req: DataVersionScheduleRequest,
     ) -> WSResult<()> {
-        // ## check version and decide data split
         let kv_store_engine = self.view.kv_store_engine();
         let ctx = req
             .context
             .as_ref()
             .expect("context is required for DataScheduleContext");
+        let metakey = KeyTypeDataSetMeta(&req.unique_id);
+        let metakey_bytes = metakey.make_key();
         tracing::debug!("check version for data({:?})", req.unique_id);
-        // update the dataset's version
-        let new_meta = {
-            let key_bytes = KeyTypeDataSetMeta(&req.unique_id).make_key();
 
-            let update_version_lock = kv_store_engine.with_rwlock(&key_bytes);
+        // now we expand the meta
+        let (new_meta, cache_nodes) = {
+            let update_version_lock = kv_store_engine.with_rwlock(&metakey_bytes);
             let _guard = update_version_lock.write();
 
-            let dataset_meta = kv_store_engine.get(
-                &KeyTypeDataSetMeta(&req.unique_id),
-                true,
-                KvAdditionalConf::default(),
-            );
-            let set_meta = dataset_meta.map_or_else(
-                || {
-                    tracing::debug!("new dataset meta for data({:?})", req.unique_id);
-                    let mut builder = DataSetMetaBuilder::new();
-                    // version
-                    let _ = builder.version(1);
-                    // data splits bf cache mod
-                    let _ = builder.set_data_splits(self.decide_each_data_split(ctx));
-                    // cache mode
-                    Self::set_data_cache_mode_for_meta(&req, &mut builder);
+            let dataset_meta = kv_store_engine.get(&metakey, true, KvAdditionalConf::default());
 
-                    builder.build()
-                },
-                |(_kv_version, set_meta)| {
-                    tracing::debug!("update dataset meta for data({:?})", req.unique_id);
-                    let version = set_meta.version;
-                    let mut builder = DataSetMetaBuilder::from(set_meta);
-                    // version
-                    let _ = builder.version(version + 1);
-                    // data splits bf cache mod
-                    let _ = builder.set_data_splits(self.decide_each_data_split(ctx));
-                    // cache mode
-                    Self::set_data_cache_mode_for_meta(&req, &mut builder);
-                    builder.build()
-                },
-            );
+            // the we will make the  split plan and cache plan
+            //  then expand the meta
+            //  this process will fail if other write updated the unique id
+            let (item_cache_modes, new_splits, cache_nodes) =
+                self.plan_for_write_data(&req.unique_id, ctx, FuncTriggerType::DataWrite)?;
+
+            // let takeonce=Some((new_meta,new_))
+            let set_meta = if let Some((_kv_version, set_meta)) = dataset_meta {
+                tracing::debug!("update dataset meta for data({:?})", req.unique_id);
+                let version = set_meta.version;
+                let mut builder = DataSetMetaBuilder::from(set_meta);
+                // version
+                let _ = builder.version(version + 1);
+                // data splits bf cache mod
+                let _ = builder.set_data_splits(new_splits);
+                // cache mode
+                let _ = builder.set_cache_mode_for_all(item_cache_modes);
+                builder.build()
+            } else {
+                tracing::debug!("new dataset meta for data({:?})", req.unique_id);
+                let mut builder = DataSetMetaBuilder::new();
+                // version
+                let _ = builder.version(1);
+                // data splits bf cache mod
+                let _ = builder.set_data_splits(new_splits);
+                // cache mode
+                let _ = builder.set_cache_mode_for_all(item_cache_modes);
+                builder.build()
+            };
+
             // ##  update version local
             tracing::debug!(
                 "update version local for data({:?}), the updated meta is {:?}",
@@ -241,7 +288,7 @@ impl DataMaster {
                 .set(KeyTypeDataSetMeta(&req.unique_id), &set_meta, true)
                 .unwrap();
             kv_store_engine.flush();
-            set_meta
+            (set_meta, cache_nodes)
         };
 
         // update version peers
@@ -330,6 +377,7 @@ impl DataMaster {
                     .into_iter()
                     .map(|v| v.into())
                     .collect(),
+                cache_nodes,
             })
             .await
             .todo_handle();

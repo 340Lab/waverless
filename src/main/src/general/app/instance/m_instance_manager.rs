@@ -1,7 +1,11 @@
-use super::shared::process_rpc::ProcessRpc;
-use super::{owned::wasm, shared::SharedInstance, FnExeCtx, Instance, OwnedInstance};
+use crate::general::app::app_native::NativeAppInstance;
+use crate::general::app::app_owned::wasm;
+use crate::general::app::app_shared::process_rpc::ProcessRpc;
+use crate::general::app::app_shared::SharedInstance;
+use crate::general::app::instance::Instance;
 use crate::general::m_os::OperatingSystem;
 use crate::general::network::rpc_model;
+use crate::result::{WSError, WsFuncError};
 use crate::sys::LogicalModulesRef;
 use crate::{
     general::app::AppType, // worker::host_funcs,
@@ -12,6 +16,7 @@ use crate::{
 use crate::{logical_module_view_impl, util};
 use async_trait::async_trait;
 use crossbeam_skiplist::SkipMap;
+use dashmap::DashMap;
 use enum_as_inner::EnumAsInner;
 use std::{
     collections::{HashMap, VecDeque},
@@ -23,8 +28,11 @@ use std::{
     },
     time::Duration,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use ws_derive::LogicalModule;
+
+use super::OwnedInstance;
 
 pub struct LRUCache<R> {
     capacity: usize,
@@ -201,7 +209,7 @@ pub struct InstanceManager {
     pub app_instances: SkipMap<String, EachAppCache>,
     file_dir: PathBuf,
     /// instance addr 2 running function
-    pub instance_running_function: parking_lot::RwLock<HashMap<String, UnsafeFunctionCtx>>,
+    pub instance_running_function: DashMap<String, UnsafeFunctionCtx>,
     pub next_instance_id: AtomicU64,
     pub view: InstanceManagerView,
 }
@@ -231,6 +239,41 @@ impl LogicalModule for InstanceManager {
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
+        // create crac_config
+        let crac_config_path = self.view.os().app_path("crac_config");
+        // - create file with crac_config_path
+        let mut f = {
+            let crac_config_path = crac_config_path.clone();
+            tokio::fs::File::options()
+                .create(true)
+                .write(true)
+                .open(&crac_config_path)
+                .await
+                .map_err(|err| {
+                    WSError::from(WsFuncError::CreateCracConfigFailed {
+                        path: crac_config_path.to_str().unwrap().to_owned(),
+                        err: err,
+                    })
+                })?
+        };
+
+        // - write datas
+        f.write_all(
+            b"type: FILE
+action: ignore
+---
+type: SOCKET
+action: close",
+        )
+        .await
+        .map_err(|err| {
+            WSError::from(WsFuncError::CreateCracConfigFailed {
+                path: crac_config_path.to_str().unwrap().to_owned(),
+                err: err,
+            })
+        })?;
+
+        // start process rpc
         Ok(vec![rpc_model::spawn::<ProcessRpc>(
             self.file_dir
                 .join("agent.sock")
@@ -262,6 +305,7 @@ impl InstanceManager {
                     .put(v);
             }
             Instance::Shared(v) => drop(v),
+            Instance::Native(_) => {}
         }
     }
     pub async fn load_instance(&self, app_type: &AppType, instance_name: &str) -> Instance {
@@ -276,6 +320,7 @@ impl InstanceManager {
                 .get(&self.file_dir, instance_name)
                 .await
                 .into(),
+            AppType::Native => NativeAppInstance::new().into(),
         }
     }
     pub async fn drap_app_instances(&self, app: &str) {
