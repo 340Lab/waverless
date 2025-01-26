@@ -279,7 +279,7 @@ impl DataGeneralView {
         responsor: RPCResponsor<proto::GetOneDataRequest>,
         req: proto::GetOneDataRequest,
     ) -> WSResult<()> {
-        tracing::debug!("rpc_handle_get_one_data {:?}", req);
+        tracing::debug!("starting rpc_handle_get_one_data {:?}", req);
 
         // req.unique_id
         let kv_store_engine = self.kv_store_engine();
@@ -348,6 +348,7 @@ impl DataGeneralView {
         if success {
             for v in got_or_deleted {
                 let decode_res = proto::DataItem::decode_persist(v.unwrap().1);
+                tracing::debug!("decode_res type: {:?}", decode_res.to_string());
                 // if let Ok(v) = decode_res {
                 got_or_deleted_checked.push(decode_res);
                 // } else {
@@ -382,32 +383,6 @@ impl DataGeneralView {
     ) {
         tracing::debug!("verify data meta bf write data");
         let kv_store_engine = self.kv_store_engine();
-
-        // Step 0: pre-check
-        {
-            if req.data.is_empty() {
-                responsor
-                    .send_resp(WriteOneDataResponse {
-                        remote_version: 0,
-                        success: false,
-                        message: "Request data is empty".to_owned(),
-                    })
-                    .await
-                    .todo_handle();
-                return;
-            }
-            if req.data[0].data_item_dispatch.is_none() {
-                responsor
-                    .send_resp(WriteOneDataResponse {
-                        remote_version: 0,
-                        success: false,
-                        message: "Request data enum is none".to_owned(),
-                    })
-                    .await
-                    .todo_handle();
-                return;
-            }
-        }
 
         // Step1: verify version
         // take old meta
@@ -557,8 +532,16 @@ impl DataGeneralView {
         //     res.as_ref().unwrap().1.version
         // };
 
-        for (idx, data) in req.data.into_iter().enumerate() {
+        for data_with_idx in req.data.into_iter() {
+            let proto::DataItemWithIdx { idx, data } = data_with_idx;
+            let data = data.unwrap();
             let serialize = data.encode_persist();
+            tracing::debug!(
+                "writing data part uid({:?}) idx({}) item({})",
+                req.unique_id,
+                idx,
+                data.to_string()
+            );
             if let Err(err) = kv_store_engine.set(
                 KeyTypeDataSetItem {
                     uid: req.unique_id.as_ref(), //req.unique_id.clone(),
@@ -802,20 +785,19 @@ impl DataGeneral {
         // // TODO 读取数据的时候先看看缓存有没有，如果没有再读数据源，如果有从缓存里面拿，需要校验 version
         // if !delete {
         //     let mut cached_items = HashMap::new();
-        //     // 遍历需要获取的索引
         //     for idx in WantIdxIter::new(&ty) {
-        //         let cache_key = (unique_id.clone(), idx);
-        //         // 根据缓存模式选择缓存源
-        //         let cached = if meta.cache_mode_visitor(idx).is_time_auto() {
-        //             self.auto_cache.get(&cache_key)
+        //         let cache_list = if meta.cache_mode_visitor(idx).is_time_auto() {
+        //             self.auto_cache.clone()
         //         } else if meta.cache_mode_visitor(idx).is_time_forever() {
-        //             self.forever_cache.get(&cache_key)
+        //             self.forever_cache.clone()
         //         } else {
         //             None
         //         };
-        //         let Some(cached) = cached else {
-        //         };
+        //         if cache_list.is_none() {
+        //             continue;
+        //         }
         //         // 从缓存中获取数据
+        //         let cache_key = (unique_id.clone(), idx);
         //         let cached_value = cache_list.get(&cache_key);
         //         // 如果找到缓存且版本匹配
         //         if let Some((cached_version, cached_item)) = cached_value {
@@ -845,8 +827,8 @@ impl DataGeneral {
         //         return Ok((meta, cached_items));
         //     }
         // }
-        // TODO 如果缓存里只有一部分或者没有，则需要从数据源读取，并且要在数据源读取时判断是不是已经在缓存里找到了
 
+        // 如果缓存里没有，则需要从数据源读取
         let mut cache: Vec<bool> = Vec::new();
         for _ in 0..meta.data_item_cnt() {
             match &ty {
@@ -1198,8 +1180,11 @@ impl DataGeneral {
             let mut write_source_data_tasks = vec![];
 
             // write the data split to kv
-            for (one_data_splits, one_data_item) in
-                version_schedule_resp.split.into_iter().zip(datas)
+            for (dataitem_idx, (one_data_splits, one_data_item)) in version_schedule_resp
+                .split
+                .into_iter()
+                .zip(datas)
+                .enumerate()
             {
                 // let mut last_node_begin: Option<(NodeID, usize)> = None;
                 fn flush_the_data(
@@ -1211,6 +1196,7 @@ impl DataGeneral {
                     one_data_item: &proto::DataItem,
                     nodeid: NodeID,
                     offset: usize,
+                    dataitem_idx: usize,
                     write_source_data_tasks: &mut Vec<JoinHandle<WSResult<WriteOneDataResponse>>>,
                 ) {
                     let log_tag = log_tag.to_owned();
@@ -1224,7 +1210,10 @@ impl DataGeneral {
                         let req = WriteOneDataRequest {
                             unique_id,
                             version,
-                            data: vec![one_data_item_split],
+                            data: vec![proto::DataItemWithIdx {
+                                idx: dataitem_idx as u32,
+                                data: Some(one_data_item_split),
+                            }],
                         };
                         tracing::debug!(
                             "[{}] write_data flushing, target node: {}, `WriteOneDataRequest` msg_id: {}",
@@ -1249,6 +1238,7 @@ impl DataGeneral {
                         &one_data_item,
                         split.node_id,
                         split.data_offset as usize,
+                        dataitem_idx,
                         &mut write_source_data_tasks,
                     );
                 }
@@ -1381,6 +1371,8 @@ pub struct DataSetMetaV1 {
     pub synced_nodes: HashSet<NodeID>,
 }
 
+pub type CacheMode = u16;
+
 /// the data's all in one meta
 ///
 /// attention: new from `DataSetMetaBuilder`
@@ -1391,7 +1383,7 @@ pub struct DataSetMetaV2 {
     // unique_id: Vec<u8>,
     api_version: u8,
     pub version: u64,
-    pub cache_mode: Vec<u16>,
+    pub cache_mode: Vec<CacheMode>,
     /// the data splits for each data item, the index is the data item index
     pub datas_splits: Vec<DataSplit>,
 }
@@ -1623,6 +1615,21 @@ impl DataSetMetaBuilder {
         self
     }
 
+    pub fn set_cache_mode(&mut self, idx: DataItemIdx, mode: u16) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode[idx as usize] = mode;
+        self
+    }
+
+    pub fn set_cache_mode_for_all(&mut self, mode: Vec<u16>) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode = mode;
+        assert_eq!(
+            self.building.as_mut().unwrap().cache_mode.len(),
+            self.building.as_mut().unwrap().datas_splits.len(),
+            "cache mode len must be equal to data splits len"
+        );
+        self
+    }
+
     pub fn build(&mut self) -> DataSetMetaV2 {
         self.building.take().unwrap()
     }
@@ -1648,62 +1655,64 @@ impl DataSetMetaBuilder {
 //     }
 // }
 
-#[test]
-fn test_option_and_vec_serialization_size() {
-    // 定义一个具体的值
-    let value: i32 = 42;
+mod test {
+    #[test]
+    fn test_option_and_vec_serialization_size() {
+        // 定义一个具体的值
+        let value: i32 = 42;
 
-    // 创建 Option 类型的变量
-    let some_value: Option<i32> = Some(value);
-    let none_value: Option<i32> = None;
+        // 创建 Option 类型的变量
+        let some_value: Option<i32> = Some(value);
+        let none_value: Option<i32> = None;
 
-    // 创建 Vec 类型的变量
-    let empty_vec: Vec<i32> = Vec::new();
-    let single_element_vec: Vec<i32> = vec![value];
+        // 创建 Vec 类型的变量
+        let empty_vec: Vec<i32> = Vec::new();
+        let single_element_vec: Vec<i32> = vec![value];
 
-    let some_empty_vec: Option<Vec<i32>> = Some(vec![]);
-    let some_one_vec: Option<Vec<i32>> = Some(vec![value]);
+        let some_empty_vec: Option<Vec<i32>> = Some(vec![]);
+        let some_one_vec: Option<Vec<i32>> = Some(vec![value]);
 
-    // 序列化
-    let serialized_some = bincode::serialize(&some_value).unwrap();
-    let serialized_none = bincode::serialize(&none_value).unwrap();
-    let serialized_empty_vec = bincode::serialize(&empty_vec).unwrap();
-    let serialized_single_element_vec = bincode::serialize(&single_element_vec).unwrap();
-    let serialized_some_empty_vec = bincode::serialize(&some_empty_vec).unwrap();
-    let serialized_some_one_vec = bincode::serialize(&some_one_vec).unwrap();
+        // 序列化
+        let serialized_some = bincode::serialize(&some_value).unwrap();
+        let serialized_none = bincode::serialize(&none_value).unwrap();
+        let serialized_empty_vec = bincode::serialize(&empty_vec).unwrap();
+        let serialized_single_element_vec = bincode::serialize(&single_element_vec).unwrap();
+        let serialized_some_empty_vec = bincode::serialize(&some_empty_vec).unwrap();
+        let serialized_some_one_vec = bincode::serialize(&some_one_vec).unwrap();
 
-    // 获取序列化后的字节大小
-    let size_some = serialized_some.len();
-    let size_none = serialized_none.len();
-    let size_empty_vec = serialized_empty_vec.len();
-    let size_single_element_vec = serialized_single_element_vec.len();
-    let size_some_empty_vec = serialized_some_empty_vec.len();
-    let size_some_one_vec = serialized_some_one_vec.len();
+        // 获取序列化后的字节大小
+        let size_some = serialized_some.len();
+        let size_none = serialized_none.len();
+        let size_empty_vec = serialized_empty_vec.len();
+        let size_single_element_vec = serialized_single_element_vec.len();
+        let size_some_empty_vec = serialized_some_empty_vec.len();
+        let size_some_one_vec = serialized_some_one_vec.len();
 
-    // 打印结果
-    println!("Size of serialized Some(42): {}", size_some);
-    println!("Size of serialized None: {}", size_none);
-    println!("Size of serialized empty Vec: {}", size_empty_vec);
-    println!(
-        "Size of serialized Vec with one element (42): {}",
-        size_single_element_vec
-    );
-    println!(
-        "Size of serialized Some(empty Vec): {}",
-        size_some_empty_vec
-    );
-    println!(
-        "Size of serialized Some(one element Vec): {}",
-        size_some_one_vec
-    );
+        // 打印结果
+        println!("Size of serialized Some(42): {}", size_some);
+        println!("Size of serialized None: {}", size_none);
+        println!("Size of serialized empty Vec: {}", size_empty_vec);
+        println!(
+            "Size of serialized Vec with one element (42): {}",
+            size_single_element_vec
+        );
+        println!(
+            "Size of serialized Some(empty Vec): {}",
+            size_some_empty_vec
+        );
+        println!(
+            "Size of serialized Some(one element Vec): {}",
+            size_some_one_vec
+        );
 
-    // 比较大小
-    assert!(
-        size_some > size_none,
-        "Expected serialized Some to be larger than serialized None"
-    );
-    assert!(
-        size_single_element_vec > size_empty_vec,
-        "Expected serialized Vec with one element to be larger than serialized empty Vec"
-    );
+        // 比较大小
+        assert!(
+            size_some > size_none,
+            "Expected serialized Some to be larger than serialized None"
+        );
+        assert!(
+            size_single_element_vec > size_empty_vec,
+            "Expected serialized Vec with one element to be larger than serialized empty Vec"
+        );
+    }
 }

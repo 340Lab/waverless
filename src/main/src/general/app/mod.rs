@@ -1,10 +1,20 @@
+pub mod app_native;
+pub mod app_owned;
+pub mod app_shared;
 pub mod fn_event;
 mod http;
-mod v_os;
+pub mod instance;
+pub mod m_executor;
+pub mod v_os;
 
-use self::v_os::AppMetaVisitOs;
-use crate::{general::network::proto, result::WSResultExt, worker::m_executor::Executor};
-use crate::{general::network::proto_ext::ProtoExtDataItem, util::VecExt};
+use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType};
+use crate::general::app::app_native::native_apps;
+use crate::general::app::instance::m_instance_manager::InstanceManager;
+use crate::general::app::m_executor::Executor;
+use crate::general::app::v_os::AppMetaVisitOs;
+use crate::general::network::proto_ext::ProtoExtDataItem;
+use crate::util::VecExt;
+use crate::{general::network::proto, result::WSResultExt};
 use crate::{
     general::{
         data::{
@@ -27,13 +37,12 @@ use crate::{
     result::{ErrCvt, WSResult, WsFuncError},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::{self, JoinHandleWrapper},
-    worker::func::m_instance_manager::InstanceManager,
 };
-
 use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::path::PathBuf;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
@@ -42,10 +51,7 @@ use std::{
     path::Path,
 };
 use tokio::sync::RwLock;
-
 use ws_derive::LogicalModule;
-
-use super::data::m_data_general::{GetOrDelDataArg, GetOrDelDataArgType};
 
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, os, OperatingSystem);
@@ -54,9 +60,9 @@ logical_module_view_impl!(View, http_handler, Box<dyn HttpHandler>);
 logical_module_view_impl!(View, appmeta_manager, AppMetaManager);
 logical_module_view_impl!(View, p2p, P2PModule);
 logical_module_view_impl!(View, master, Option<Master>);
-logical_module_view_impl!(View, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(View, instance_manager, InstanceManager);
 logical_module_view_impl!(View, data_general, DataGeneral);
-logical_module_view_impl!(View, executor, Option<Executor>);
+logical_module_view_impl!(View, executor, Executor);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -121,13 +127,14 @@ pub enum HttpCall {
 pub enum FnCallMeta {
     Http { method: HttpMethod, call: HttpCall },
     Rpc,
+    Event,
 }
 
 #[derive(Debug)]
 pub struct FnMetaYaml {
     /// key to operations
     pub calls: Vec<FnCallMeta>,
-    pub kvs: Option<BTreeMap<String, Vec<String>>>,
+    pub kvs: Option<BTreeMap<String, Vec<serde_yaml::Value>>>,
 }
 
 impl<'de> Deserialize<'de> for FnMetaYaml {
@@ -192,23 +199,62 @@ impl<'de> Deserialize<'de> for FnMetaYaml {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Hash, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KeyPattern(pub String);
 
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct KvMeta {
+//     set: bool,
+//     get: bool,
+//     delete: bool,
+//     pub pattern: KeyPattern,
+// }
+
+#[derive(Debug, Clone, Serialize, Deserialize, EnumAsInner)]
+pub enum DataEventTrigger {
+    Write,
+    New,
+    WriteWithCondition { condition: String },
+    NewWithCondition { condition: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KvMeta {
+pub struct DataAccess {
     set: bool,
     get: bool,
     delete: bool,
-    pub pattern: KeyPattern,
+    pub event: Option<DataEventTrigger>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FnSyncAsyncSupport {
+    Sync,
+    Async,
+    SyncAndAsync,
+}
+
+impl FnSyncAsyncSupport {
+    pub fn syncable(&self) -> bool {
+        matches!(
+            self,
+            FnSyncAsyncSupport::Sync | FnSyncAsyncSupport::SyncAndAsync
+        )
+    }
+    pub fn asyncable(&self) -> bool {
+        matches!(
+            self,
+            FnSyncAsyncSupport::Async | FnSyncAsyncSupport::SyncAndAsync
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FnMeta {
+    pub sync_async: FnSyncAsyncSupport,
     pub calls: Vec<FnCallMeta>,
     // pub event: Vec<FnEvent>,
     // pub args: Vec<FnArg>,
-    pub kvs: Option<Vec<KvMeta>>,
+    pub data_accesses: Option<HashMap<KeyPattern, DataAccess>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,20 +262,55 @@ pub struct AppMetaYaml {
     pub fns: HashMap<String, FnMetaYaml>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AppType {
     Jar,
     Wasm,
+    Native,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppMeta {
     pub app_type: AppType,
-    fns: HashMap<String, FnMeta>,
+    pub fns: HashMap<String, FnMeta>,
     cache_contains_http_fn: Option<bool>,
 }
 
 impl AppMeta {
+    pub fn new(app_type: AppType, fns: HashMap<String, FnMeta>) -> Self {
+        Self {
+            app_type,
+            fns,
+            cache_contains_http_fn: None,
+        }
+    }
+
+    pub async fn new_from_yaml(
+        metayaml: AppMetaYaml,
+        app_name: &str,
+        meta_fs: &AppMetaVisitOs,
+    ) -> WSResult<Self> {
+        let fns = metayaml
+            .fns
+            .into_iter()
+            .map(|(fnname, fnmeta)| {
+                let fnmeta = fnmeta.into();
+                (fnname, fnmeta)
+            })
+            .collect();
+        let app_type = meta_fs.get_app_type(app_name).await?;
+        Ok(Self {
+            app_type,
+            fns,
+            cache_contains_http_fn: None,
+        })
+    }
+    pub fn fns(&self) -> Vec<String> {
+        self.fns.iter().map(|(fnname, _)| fnname.clone()).collect()
+    }
+    pub fn get_fn_meta(&self, fnname: &str) -> Option<&FnMeta> {
+        self.fns.get(fnname)
+    }
     pub fn contains_http_fn(&self) -> bool {
         if let Some(v) = self.cache_contains_http_fn {
             return v;
@@ -313,85 +394,6 @@ impl FnMeta {
             _ => None,
         })
     }
-
-    pub fn match_key(&self, key: &[u8], ope: KvOps) -> Option<KeyPattern> {
-        let key = if let Ok(key) = std::str::from_utf8(key) {
-            key
-        } else {
-            return None;
-        };
-        if let Some(kvs) = &self.kvs {
-            for kv in kvs {
-                if kv.pattern.match_key(key) {
-                    match ope {
-                        KvOps::Get => {
-                            if kv.get {
-                                return Some(kv.pattern.clone());
-                            }
-                        }
-                        KvOps::Set => {
-                            if kv.set {
-                                return Some(kv.pattern.clone());
-                            }
-                        }
-                        KvOps::Delete => {
-                            if kv.delete {
-                                return Some(kv.pattern.clone());
-                            }
-                        }
-                    }
-                    tracing::info!("allow ope {:?}, cur ope:{:?}", kv, ope);
-                }
-            }
-            // tracing::info!("no key pattern matched for key: {}", key);
-        }
-
-        None
-    }
-
-    pub fn try_get_kv_meta_by_index(&self, index: usize) -> Option<&KvMeta> {
-        if let Some(kvs) = &self.kvs {
-            return kvs.get(index);
-        }
-        None
-    }
-
-    // / index should be valid
-    // fn get_kv_meta_by_index_unwrap(&self, index: usize) -> &KvMeta {
-    //     self.try_get_kv_meta_by_index(index).unwrap()
-    // }
-    // /// get event related kvmeta matches operation
-    // pub fn get_event_kv(&self, ope: KvOps, event: &FnEvent) -> Option<&KvMeta> {
-    //     match event {
-    //         FnEvent::KvSet(kv_set) => {
-    //             if ope == KvOps::Set {
-    //                 return Some(self.get_kv_meta_by_index_unwrap(*kv_set));
-    //             }
-    //         }
-    //         FnEvent::HttpApp => {}
-    //     }
-    //     None
-    // }
-
-    // / find kv event trigger with match the `pattern` and `ope`
-    // pub fn find_will_trigger_kv_event(&self, _pattern: &KeyPattern, _ope: KvOps) -> Option<&KvMeta> {
-    //     unimplemented!()
-    //     // self.event.iter().find_map(|event| {
-    //     //     match event {
-    //     //         FnEvent::HttpApp => {}
-    //     //         FnEvent::KvSet(key_index) => {
-    //     //             if ope == KvOps::Set {
-    //     //                 let res = self.get_kv_meta_by_index_unwrap(*key_index);
-    //     //                 if res.pattern == *pattern {
-    //     //                     return Some(res);
-    //     //                 }
-    //     //             }
-    //     //         }
-    //     //         FnEvent::HttpFn => {}
-    //     //     }
-    //     //     None
-    //     // })
-    // }
 }
 
 impl KeyPattern {
@@ -400,7 +402,7 @@ impl KeyPattern {
     }
     // match {} for any words
     // "xxxx_{}_{}" matches "xxxx_abc_123"
-    // “xxxx{}{}" matches "xxxxabc123"
+    // "xxxx{}{}" matches "xxxxabc123"
     pub fn match_key(&self, key: &str) -> bool {
         let re = self.0.replace("{}", "[a-zA-Z0-9]+");
         // let pattern_len = re.len();
@@ -438,40 +440,87 @@ impl KeyPattern {
 
 impl From<FnMetaYaml> for FnMeta {
     fn from(yaml: FnMetaYaml) -> Self {
-        let kvs = if let Some(kvs) = yaml.kvs {
-            Some(
-                kvs.into_iter()
-                    .map(|(key, ops)| {
-                        let mut set = false;
-                        let mut get = false;
-                        let mut delete = false;
-                        for op in ops {
-                            if op == "set" {
-                                set = true;
-                            } else if op == "get" {
-                                get = true;
-                            } else if op == "delete" {
-                                delete = true;
-                            } else {
-                                panic!("invalid operation: {}", op);
-                            }
-                        }
-                        // TODO: check key pattern
-                        KvMeta {
-                            delete,
-                            set,
-                            get,
-                            pattern: KeyPattern::new(key),
-                        }
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        };
         let res = Self {
             calls: yaml.calls,
-            kvs,
+            data_accesses: if let Some(kvs) = yaml.kvs {
+                Some(
+                    kvs.into_iter()
+                        .map(|(key, ops)| {
+                            let mut set = false;
+                            let mut get = false;
+                            let mut delete = false;
+                            let mut event = None;
+                            for op in ops {
+                                #[derive(Serialize, Deserialize)]
+                                struct TriggerWithCondition {
+                                    condition: String,
+                                }
+                                if let Some(opstr) = op.as_str() {
+                                    match opstr {
+                                        "write" | "set" => set = true,
+                                        "read" | "get" => get = true,
+                                        "delete" => delete = true,
+                                        "trigger_by_write" => {
+                                            event = Some(DataEventTrigger::Write);
+                                        }
+                                        "trigger_by_new" => {
+                                            event = Some(DataEventTrigger::New);
+                                        }
+                                        _ => {
+                                            panic!("invalid op: {:?}", op);
+                                        }
+                                    }
+                                } else if let Ok(trigger_with_condition) =
+                                    serde_yaml::from_value::<HashMap<String, TriggerWithCondition>>(
+                                        op.clone(),
+                                    )
+                                {
+                                    if trigger_with_condition.len() == 1 {
+                                        if let Some(t) =
+                                            trigger_with_condition.get("trigger_by_write")
+                                        {
+                                            event = Some(DataEventTrigger::WriteWithCondition {
+                                                condition: t.condition.clone(),
+                                            });
+                                        } else if let Some(t) =
+                                            trigger_with_condition.get("trigger_by_new")
+                                        {
+                                            event = Some(DataEventTrigger::NewWithCondition {
+                                                condition: t.condition.clone(),
+                                            });
+                                        } else {
+                                            panic!("invalid op: {:?}", op);
+                                        }
+                                    } else {
+                                        panic!("invalid op: {:?}", op);
+                                    }
+                                } else {
+                                    panic!("invalid op: {:?}", op);
+                                }
+                            }
+                            // // TODO: check key pattern
+                            // KvMeta {
+                            //     delete,
+                            //     set,
+                            //     get,
+                            //     pattern: KeyPattern::new(key),
+                            // }
+
+                            (
+                                KeyPattern::new(key),
+                                DataAccess {
+                                    delete,
+                                    set,
+                                    get,
+                                    event,
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            },
         };
         // assert!(res.check_kv_valid());
         res
@@ -489,44 +538,6 @@ impl From<FnMetaYaml> for FnMeta {
 //     }
 // }
 
-impl AppMeta {
-    pub async fn new(
-        metayaml: AppMetaYaml,
-        app_name: &str,
-        meta_fs: &AppMetaVisitOs,
-    ) -> WSResult<Self> {
-        let fns = metayaml
-            .fns
-            .into_iter()
-            .map(|(fnname, fnmeta)| {
-                let fnmeta = fnmeta.into();
-                (fnname, fnmeta)
-            })
-            .collect();
-        let app_type = meta_fs.get_app_type(app_name).await?;
-        Ok(Self {
-            app_type,
-            fns,
-            cache_contains_http_fn: None,
-        })
-    }
-    pub fn fns(&self) -> Vec<String> {
-        self.fns.iter().map(|(fnname, _)| fnname.clone()).collect()
-    }
-    pub fn get_fn_meta(&self, fnname: &str) -> Option<&FnMeta> {
-        self.fns.get(fnname)
-    }
-    // pub fn http_trigger_fn(&self) -> Option<&str> {
-    //     self.fns.iter().find_map(|(fnname, fnmeta)| {
-    //         if fnmeta.event.iter().any(|e| e == &FnEvent::HttpApp) {
-    //             Some(fnname.as_str())
-    //         } else {
-    //             None
-    //         }
-    //     })
-    // }
-}
-
 lazy_static::lazy_static! {
     static ref VIEW: Option<View> = None;
 }
@@ -542,6 +553,7 @@ pub struct AppMetaManager {
     meta: RwLock<AppMetas>,
     pub fs_layer: AppMetaVisitOs,
     view: View,
+    pub native_apps: HashMap<String, AppMeta>,
     // app_meta_list_lock: Mutex<()>,
 }
 
@@ -567,25 +579,31 @@ impl LogicalModule for AppMetaManager {
             }),
             view,
             fs_layer,
+            native_apps: native_apps(),
             // app_meta_list_lock: Mutex::new(()),
         }
     }
     async fn init(&self) -> WSResult<()> {
-        let mut router = self.view.http_handler().building_router();
+        {
+            let mut router = self.view.http_handler().building_router();
 
-        let take = router.option_mut().take().unwrap();
-        let take = http::binds(take, self.view.clone());
-        let _ = router.option_mut().replace(take);
-        // .route("/appman/upload", post(handler2))
+            let take = router.option_mut().take().unwrap();
+            let take = http::binds(take, self.view.clone());
+            let _ = router.option_mut().replace(take);
+            // .route("/appman/upload", post(handler2))
+        }
+        self.load_apps().await?;
 
         Ok(())
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        self.meta
-            .write()
-            .await
-            .load_all_app_meta(&self.view.os().file_path, &self.fs_layer)
-            .await?;
+        // load apps
+
+        // self.meta
+        //     .write()
+        //     .await
+        //     .load_all_app_meta(&self.view.os().file_path, &self.fs_layer)
+        //     .await?;
         Ok(vec![])
     }
 }
@@ -608,76 +626,80 @@ impl AppMetas {
     ) -> Option<&Vec<(String, String)>> {
         self.pattern_2_app_fn.get(pattern.borrow())
     }
-    async fn load_all_app_meta(
-        &mut self,
-        file_dir: impl AsRef<Path>,
-        meta_fs: &AppMetaVisitOs,
-    ) -> WSResult<()> {
-        if !file_dir.as_ref().join("apps").exists() {
-            fs::create_dir_all(file_dir.as_ref().join("apps")).unwrap();
-            return Ok(());
-        }
-        let entries =
-            fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
+    // async fn load_all_app_meta(
+    //     &mut self,
+    //     file_dir: impl AsRef<Path>,
+    //     meta_fs: &AppMetaVisitOs,
+    // ) -> WSResult<()> {
+    //     if !file_dir.as_ref().join("apps").exists() {
+    //         fs::create_dir_all(file_dir.as_ref().join("apps")).unwrap();
+    //         return Ok(());
+    //     }
+    //     let entries =
+    //         fs::read_dir(file_dir.as_ref().join("apps")).map_err(|e| ErrCvt(e).to_ws_io_err())?;
 
-        // 遍历文件夹中的每个条目
-        for entry in entries {
-            // 获取目录项的 Result<DirEntry, io::Error>
-            let entry = entry.map_err(|e| ErrCvt(e).to_ws_io_err())?;
-            // 获取目录项的文件名
-            let file_name = entry.file_name();
-            // dir name is the app name
-            let app_name = file_name.to_str().unwrap().to_owned();
+    //     // 遍历文件夹中的每个条目
+    //     for entry in entries {
+    //         // 获取目录项的 Result<DirEntry, io::Error>
+    //         let entry = entry.map_err(|e| ErrCvt(e).to_ws_io_err())?;
+    //         // 获取目录项的文件名
+    //         let file_name = entry.file_name();
+    //         // dir name is the app name
+    //         let app_name = file_name.to_str().unwrap().to_owned();
 
-            // allow spec files
-            if entry.file_type().unwrap().is_file() {
-                let allowed_files = vec!["crac_config"];
-                assert!(allowed_files
-                    .contains(&&*(*entry.file_name().as_os_str().to_string_lossy()).to_owned()));
-                continue;
-            }
+    //         // allow spec files
+    //         if entry.file_type().unwrap().is_file() {
+    //             let allowed_files = vec!["crac_config"];
+    //             assert!(allowed_files
+    //                 .contains(&&*(*entry.file_name().as_os_str().to_string_lossy()).to_owned()));
+    //             continue;
+    //         }
 
-            // allow only dir
-            assert!(entry.file_type().unwrap().is_dir());
+    //         // allow only dir
+    //         assert!(entry.file_type().unwrap().is_dir());
 
-            // read app config yaml
-            let meta_yaml = {
-                let apps_dir = file_dir.as_ref().join("apps");
-                let file_name_str = app_name.clone();
-                tokio::task::spawn_blocking(move || AppMetaYaml::read(apps_dir, &*file_name_str))
-                    .await
-                    .unwrap()
-            };
+    //         // read app config yaml
+    //         let meta_yaml = {
+    //             let apps_dir = file_dir.as_ref().join("apps");
+    //             let file_name_str = app_name.clone();
+    //             tokio::task::spawn_blocking(move || AppMetaYaml::read(apps_dir, &*file_name_str))
+    //                 .await
+    //                 .unwrap()
+    //         };
 
-            // transform
-            let meta = AppMeta::new(meta_yaml, &app_name, meta_fs).await.unwrap();
+    //         // transform
+    //         let meta = AppMeta::new(meta_yaml, &app_name, meta_fs).await.unwrap();
 
-            //TODO: build and checks
-            // - build up key pattern to app fn
+    //         //TODO: build and checks
+    //         // - build up key pattern to app fn
 
-            // for (fnname, fnmeta) in &meta.fns {
-            //     for event in &fnmeta.event {
-            //         match event {
-            //             // not kv event, no key pattern
-            //             FnEvent::HttpFn => {}
-            //             FnEvent::HttpApp => {}
-            //             FnEvent::KvSet(key_index) => {
-            //                 let kvmeta = fnmeta.try_get_kv_meta_by_index(*key_index).unwrap();
-            //                 self.pattern_2_app_fn
-            //                     .entry(kvmeta.pattern.0.clone())
-            //                     .or_insert_with(Vec::new)
-            //                     .push((app_name.clone(), fnname.clone()));
-            //             }
-            //         }
-            //     }
-            // }
-            let _ = self.tmp_app_metas.insert(app_name, meta);
-        }
-        Ok(())
-    }
+    //         // for (fnname, fnmeta) in &meta.fns {
+    //         //     for event in &fnmeta.event {
+    //         //         match event {
+    //         //             // not kv event, no key pattern
+    //         //             FnEvent::HttpFn => {}
+    //         //             FnEvent::HttpApp => {}
+    //         //             FnEvent::KvSet(key_index) => {
+    //         //                 let kvmeta = fnmeta.try_get_kv_meta_by_index(*key_index).unwrap();
+    //         //                 self.pattern_2_app_fn
+    //         //                     .entry(kvmeta.pattern.0.clone())
+    //         //                     .or_insert_with(Vec::new)
+    //         //                     .push((app_name.clone(), fnname.clone()));
+    //         //             }
+    //         //         }
+    //         //     }
+    //         // }
+    //         let _ = self.tmp_app_metas.insert(app_name, meta);
+    //     }
+    //     Ok(())
+    // }
 }
 
 impl AppMetaManager {
+    async fn load_apps(&self) -> WSResult<()> {
+        // TODO: Implement app loading logic
+        Ok(())
+    }
     async fn construct_tmp_app(&self, tmpapp: &str) -> WSResult<AppMeta> {
         // 1.meta
         // let appdir = self.fs_layer.concat_app_dir(app);
@@ -740,14 +762,76 @@ impl AppMetaManager {
         }
     }
 
-    // call inner AppMetas.get_app_meta
-    pub async fn get_app_meta(&self, app: &str) -> WSResult<Option<AppMeta>> {
+    /// get app by idx 1
+    pub async fn load_app_file(&self, app: &str, datameta: DataSetMetaV2) -> WSResult<()> {
+        tracing::debug!(
+            "calling get_or_del_data to load app file, app: {}, datameta: {:?}",
+            app,
+            datameta
+        );
+        let mut data = match self
+            .view
+            .data_general()
+            .get_or_del_data(GetOrDelDataArg {
+                meta: Some(datameta),
+                unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
+                ty: GetOrDelDataArgType::PartialOne { idx: 1 },
+            })
+            .await
+        {
+            Err(err) => {
+                tracing::warn!("get app file failed, err: {:?}", err);
+                return Err(err);
+            }
+            Ok((_datameta, data)) => data,
+        };
+
+        let proto::DataItem {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(appfiledata)),
+        } = data.remove(&1).unwrap()
+        else {
+            return Err(WsFuncError::InvalidAppMetaDataItem {
+                app: app.to_owned(),
+            }
+            .into());
+        };
+
+        // extract app file
+        let zipfilepath = appfiledata.file_name_opt;
+        let appdir = self.fs_layer.concat_app_dir(app);
+        let res = tokio::task::spawn_blocking(move || {
+            // remove old app dir
+            if appdir.exists() {
+                fs::remove_dir_all(&appdir).unwrap();
+            }
+            // open zip file
+            let zipfile = std::fs::File::open(zipfilepath)?;
+            zip_extract::extract(zipfile, &appdir, false)
+        })
+        .await
+        .unwrap();
+
+        if let Err(err) = res {
+            tracing::warn!("extract app file failed, err: {:?}", err);
+            return Err(WsFuncError::AppPackFailedZip(err).into());
+        }
+
+        Ok(())
+    }
+    /// get app meta by idx 0
+    /// None DataSetMetaV2 means temp app prepared
+    /// Some DataSetMetaV2 means app from inner storage
+    pub async fn get_app_meta(
+        &self,
+        app: &str,
+    ) -> WSResult<Option<(AppMeta, Option<DataSetMetaV2>)>> {
         if let Some(res) = self.meta.read().await.get_tmp_app_meta(app) {
-            return Ok(Some(res));
+            return Ok(Some((res, None)));
         }
 
         // self.app_metas.get(app)
-        let meta = view()
+        tracing::debug!("calling get_or_del_data to get app meta, app: {}", app);
+        let datameta = view()
             .data_general()
             .get_or_del_data(GetOrDelDataArg {
                 meta: None,
@@ -757,8 +841,7 @@ impl AppMetaManager {
             .await;
 
         // only one data item
-        let (_, meta): (_, proto::DataItem) = match meta {
-            Ok((_, datas)) => datas.into_iter().next().unwrap(),
+        let (datameta, meta): (DataSetMetaV2, proto::DataItem) = match datameta {
             Err(err) => match err {
                 WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
                     tracing::debug!(
@@ -772,6 +855,7 @@ impl AppMetaManager {
                     return Err(err);
                 }
             },
+            Ok((datameta, mut datas)) => (datameta, datas.remove(&0).unwrap()),
         };
 
         let proto::DataItem {
@@ -799,7 +883,7 @@ impl AppMetaManager {
             }
             Ok(meta) => meta,
         };
-        Ok(Some(meta))
+        Ok(Some((meta, Some(datameta))))
     }
 
     pub async fn app_uploaded(&self, appname: String, data: Bytes) -> WSResult<()> {

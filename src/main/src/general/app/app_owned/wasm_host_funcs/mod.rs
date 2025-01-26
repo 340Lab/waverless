@@ -4,25 +4,20 @@ mod fs;
 mod kv;
 mod result;
 
+use crate::sys::LogicalModulesRef;
 use fs::FsFuncsRegister;
 use kv::KvFuncsRegister;
 use result::ResultFuncsRegister;
 
-use crate::sys::LogicalModulesRef;
-
 mod utils {
 
-    use wasmedge_sdk::{Caller, Instance, Memory};
-
+    use crate::general::app::m_executor::FnExeCtx;
+    use crate::general::app::InstanceManager;
     use crate::{
-        general::m_os::OperatingSystem,
-        sys::LogicalModulesRef,
-        util::SendNonNull,
-        worker::{
-            func::{m_instance_manager::InstanceManager, FnExeCtx},
-            m_kv_user_client::KvUserClient,
-        },
+        general::m_os::OperatingSystem, sys::LogicalModulesRef, util::SendNonNull,
+        worker::m_kv_user_client::KvUserClient,
     };
+    use wasmedge_sdk::{Caller, Instance, Memory};
 
     pub trait WasmCtx {
         fn i_memory(&self, idx: u32) -> Option<Memory>;
@@ -153,8 +148,6 @@ mod utils {
                 .as_ref()
                 .unwrap()
                 .instance_manager
-                .as_ref()
-                .unwrap()
         }
     }
 }

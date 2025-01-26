@@ -1,4 +1,5 @@
-use crate::sys::{LogicalModules, LogicalModulesRef};
+use crate::sys::LogicalModules;
+use crate::sys::LogicalModulesRef;
 
 pub mod process_func;
 
