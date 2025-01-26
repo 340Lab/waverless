@@ -2,24 +2,20 @@ pub mod proc_proto {
     include!(concat!(env!("OUT_DIR"), "/process_rpc_proto.rs"));
 }
 
+use self::proc_proto::{FuncCallReq, FuncCallResp};
+use super::SharedInstance;
+use crate::general::app::app_shared::process_rpc::proc_proto::AppStarted;
 use crate::{
     general::network::rpc_model::{self, HashValue, MsgIdBind, ReqMsg, RpcCustom},
-    modules_global_bridge::process_func::{
-        ModulesGlobalBrigeInstanceManager,
-    },
+    modules_global_bridge::process_func::ModulesGlobalBrigeInstanceManager,
     result::WSResult,
     sys::LogicalModulesRef,
-    worker::func::shared::process_rpc::proc_proto::AppStarted,
 };
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use prost::Message;
 use std::{collections::HashMap, path::Path, time::Duration};
 use tokio::sync::oneshot;
-
-use self::proc_proto::{FuncCallReq, FuncCallResp};
-
-use super::SharedInstance;
 
 // const AGENT_SOCK_PATH: &str = "agent.sock";
 
@@ -90,7 +86,7 @@ impl RpcCustom for ProcessRpc {
             // }
 
             // update to the instance
-            let insman = ProcessRpc::global_m_instance_manager().unwrap();
+            let insman = ProcessRpc::global_m_instance_manager();
             let instance = insman.app_instances.get(&res.appid).expect(&format!(
                 "instance should be inited before get the verify {}",
                 res.appid
