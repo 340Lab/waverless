@@ -3,11 +3,12 @@
 use super::process_rpc::{self, proc_proto};
 use crate::general::app::app_shared::java;
 use crate::general::app::instance::InstanceTrait;
-use crate::general::app::m_executor::FnExeCtx;
+use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxBase, FnExeCtxSync};
 use crate::general::{
     app::AppType,
     network::rpc_model::{self, HashValue},
 };
+use crate::result::{WSError, WsFuncError};
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use parking_lot::RwLock;
@@ -199,75 +200,24 @@ impl InstanceTrait for ProcessInstance {
     fn instance_name(&self) -> String {
         self.app.clone()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtx) -> crate::result::WSResult<Option<String>> {
-        // if rpc_model::start_remote_once(rpc_model::HashValue::Str(fn_ctx.func.to_owned())) {
-        //     // cold start the java process
-        // }
+    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> crate::result::WSResult<Option<String>> {
+        let _ = self.wait_for_verify().await;
+        tracing::debug!(
+            "wait_for_verify done, call app:{}, func:{}",
+            fn_ctx.app(),
+            fn_ctx.func()
+        );
+        tracing::debug!("before process_rpc::call_func ");
+        let res =
+            process_rpc::call_func(fn_ctx.app(), fn_ctx.func(), fn_ctx.http_str_unwrap()).await;
+        tracing::debug!("after process_rpc::call_func ");
+        return res.map(|v| Some(v.ret_str));
+    }
 
-        // if fn_ctx.func_meta.allow_rpc_call()
-        {
-            let _ = self.wait_for_verify().await;
-            tracing::debug!(
-                "wait_for_verify done, call app:{}, func:{}",
-                fn_ctx.app,
-                fn_ctx.func
-            );
-            tracing::debug!("before process_rpc::call_func ");
-            let res =
-                process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap()).await;
-            tracing::debug!("after process_rpc::call_func ");
-            return res.map(|v| Some(v.ret_str));
-            // return process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
-            //     .await
-            //     .map(|v| Some(v.ret_str));
-        }
-
-        // if let Some(httpmethod) = fn_ctx.func_meta.allow_http_call() {
-        //     let fnverify = self.wait_for_verify().await;
-        //     let Some(http_port) = &fnverify.http_port else {
-        //         return Err(WsFuncError::FuncBackendHttpNotSupported {
-        //             fname: fn_ctx.func.to_owned(),
-        //         }
-        //         .into());
-        //     };
-        //     let http_url = format!("http://127.0.0.1:{}/{}", http_port, fn_ctx.func);
-        //     let res = match httpmethod {
-        //         HttpMethod::Get => reqwest::get(http_url).await,
-        //         HttpMethod::Post => {
-        //             reqwest::Client::new()
-        //                 .post(http_url)
-        //                 .body(fn_ctx.http_str_unwrap())
-        //                 .send()
-        //                 .await
-        //         }
-        //     };
-
-        //     let ok = match res {
-        //         Err(e) => {
-        //             return Err(WsFuncError::FuncHttpFail {
-        //                 app: fn_ctx.app.clone(),
-        //                 func: fn_ctx.func.clone(),
-        //                 http_err: e,
-        //             }
-        //             .into());
-        //         }
-        //         Ok(ok) => ok,
-        //     };
-
-        //     return ok
-        //         .text()
-        //         .await
-        //         .map_err(|e| {
-        //             WsFuncError::FuncHttpFail {
-        //                 app: fn_ctx.app.clone(),
-        //                 func: fn_ctx.func.clone(),
-        //                 http_err: e,
-        //             }
-        //             .into()
-        //         })
-        //         .map(|ok| Some(ok));
-        // }
-        // unreachable!("Missing call description in func meta");
+    /// Process instances don't support synchronous execution
+    /// See [`FnExeCtxSyncAllowedType`] for supported types (currently only Native)
+    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> crate::result::WSResult<Option<String>> {
+        Err(WsFuncError::UnsupportedAppType.into())
     }
 }
 

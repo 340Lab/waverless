@@ -2,18 +2,15 @@ pub mod app_checkpoint;
 
 use std::collections::HashMap;
 
-use super::AppMeta;
-use super::AppType;
-use crate::general::app::instance::Instance;
-use crate::general::app::instance::InstanceTrait;
-use crate::general::app::m_executor::FnExeCtx;
-use crate::general::app::DataAccess;
-use crate::general::app::DataEventTrigger;
-use crate::general::app::FnMeta;
-use crate::general::app::KeyPattern;
+use super::{
+    AffinityPattern, AffinityRule, AppMeta, AppType, DataAccess, DataEventTrigger, FnMeta,
+    KeyPattern, NodeTag,
+};
+use crate::general::app::instance::{Instance, InstanceTrait};
+use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxSync};
 use crate::general::data::m_data_general::DATA_UID_PREFIX_APP_META;
 use crate::new_map;
-use crate::result::WSResult;
+use crate::result::{WSResult, WsFuncError};
 use async_trait::async_trait;
 
 pub struct NativeAppInstance {
@@ -28,12 +25,19 @@ impl NativeAppInstance {
 
 #[async_trait]
 impl InstanceTrait for NativeAppInstance {
-    // don’t need instance name
+    // don't need instance name
     fn instance_name(&self) -> String {
         "native_app_dummy_instance".to_string()
     }
-    async fn execute(&self, _fn_ctx: &mut FnExeCtx) -> WSResult<Option<String>> {
+    async fn execute(&self, _fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>> {
+        // Native apps don't support async execution
+        Err(WsFuncError::UnsupportedAppType.into())
+    }
+
+    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>> {
+        // For now, just return None as native apps don't produce results
         todo!()
+        // Ok(None)
     }
 }
 
@@ -63,6 +67,7 @@ pub fn native_apps() -> HashMap<String, AppMeta> {
             AppType::Native,
             new_map!(HashMap {
                 "checkpointable".to_string() => FnMeta {
+                    sync_async: super::FnSyncAsyncSupport::Sync,
                     calls: vec![],
                     data_accesses: Some(new_map!(HashMap {
                         KeyPattern(DATA_UID_PREFIX_APP_META.to_string()) => DataAccess {
@@ -71,21 +76,28 @@ pub fn native_apps() -> HashMap<String, AppMeta> {
                             delete: false,
                             event: None,
                         }
-                    }))
+                    })),
+                    affinity: Some(AffinityRule {
+                        tags: vec![NodeTag::Worker],
+                        nodes: AffinityPattern::All,
+                    }),
                 },
                 "checkpoint".to_string() => FnMeta {
+                    sync_async: super::FnSyncAsyncSupport::Async,
                     calls: vec![],
-                    data_accesses: Some({
-                        new_map!(HashMap {
-                            KeyPattern(DATA_UID_PREFIX_APP_META.to_string()) => DataAccess {
-                                get: true,
-                                set: false,
-                                delete: false,
-                                event: Some(DataEventTrigger::WriteWithCondition {
-                                    condition: "checkpointable".to_string(),
-                                }),
-                            }
-                        })
+                    data_accesses: Some(new_map!(HashMap {
+                        KeyPattern(DATA_UID_PREFIX_APP_META.to_string()) => DataAccess {
+                            get: true,
+                            set: false,
+                            delete: false,
+                            event: Some(DataEventTrigger::WriteWithCondition {
+                                condition: "checkpointable".to_string(),
+                            }),
+                        }
+                    })),
+                    affinity: Some(AffinityRule {
+                        tags: vec![NodeTag::Worker],
+                        nodes: AffinityPattern::All,
                     }),
                 },
             }),

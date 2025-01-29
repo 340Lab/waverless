@@ -8,7 +8,7 @@ pub trait ModulesGlobalBrigeInstanceManager: Sized + 'static {
 
 impl ModulesGlobalBrigeInstanceManager for ProcessRpc {
     unsafe fn global_m_instance_manager() -> &'static InstanceManager {
-        super::modules().instance_manager()
+        &super::modules().instance_manager
     }
 }
 
