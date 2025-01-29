@@ -143,6 +143,8 @@ macro_rules! logical_module_view_impl {
                         .unwrap();
                     #[cfg(feature="unsafe-log")]
                     tracing::debug!("unsafe ptr end");
+
+                    let _: &dyn Send = res;
                     res
                 }
             }
@@ -160,6 +162,9 @@ macro_rules! logical_module_view_impl {
 
                     #[cfg(feature="unsafe-log")]
                     tracing::debug!("unsafe ptr end2 {}",tag);
+
+                    // 编译期校验 $type 是Send的类型
+                    let _: &dyn Send = res;
 
                     res
                 }
@@ -179,6 +184,9 @@ macro_rules! logical_module_view_impl {
             //     self.inner.setup(modules);
             // }
         }
+
+        // unsafe send
+        unsafe impl Send for $module {}
     };
 }
 

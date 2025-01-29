@@ -1,7 +1,7 @@
 use crate::general::app::app_owned::wasm_host_funcs;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::instance::OwnedInstance;
-use crate::general::app::m_executor::{EventCtx, FnExeCtx};
+use crate::general::app::m_executor::{EventCtx, FnExeCtxAsync, FnExeCtxBase, FnExeCtxSync};
 use crate::result::{WSResult, WsFuncError};
 use async_trait::async_trait;
 use std::{mem::ManuallyDrop, path::Path};
@@ -70,7 +70,7 @@ impl InstanceTrait for WasmInstance {
             .next()
             .unwrap()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtx) -> WSResult<Option<String>> {
+    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>> {
         #[cfg(target_os = "linux")]
         {
             let mut final_err = None;
@@ -80,9 +80,9 @@ impl InstanceTrait for WasmInstance {
             }
 
             // retry loop
-            let mut params = fn_ctx.event_ctx.conv_to_wasm_params(&self);
+            let mut params = fn_ctx.event_ctx().conv_to_wasm_params(&self);
             for turn in 0..2 {
-                let func = fn_ctx.func.clone();
+                let func = fn_ctx.func().to_owned();
                 let Err(err) = self
                     .run_func_async(
                         &AsyncState::new(),
@@ -108,21 +108,26 @@ impl InstanceTrait for WasmInstance {
                 }
 
                 if turn == 0 && fn_ctx.empty_http() && is_func_type_mismatch(&err) {
-                    fn_ctx.res = None;
+                    fn_ctx.set_result(None);
                     continue;
                 } else {
                     tracing::error!("run func failed with err: {}", err);
                     final_err = Some(err);
                     break;
-                    // return None;
                 }
             }
             if let Some(err) = final_err {
-                Err(WsFuncError::WasmError(*err).into())
+                Err(WsFuncError::WasmError(err).into())
             } else {
-                Ok(fn_ctx.res.take())
+                Ok(fn_ctx.take_result())
             }
         }
+    }
+
+    /// WASM instances don't support synchronous execution
+    /// See [`FnExeCtxSyncAllowedType`] for supported types (currently only Native)
+    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>> {
+        Err(WsFuncError::UnsupportedAppType.into())
     }
 }
 

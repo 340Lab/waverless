@@ -1,4 +1,5 @@
 use super::{utils, HostFuncRegister};
+use crate::general::app::m_executor::FnExeCtxAsync;
 
 #[cfg(target_os = "macos")]
 use wasmer::{imports, Function, FunctionType, Imports};
@@ -13,8 +14,8 @@ type WriteResultArgs = (i32, i32);
 #[host_function]
 fn write_result(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, HostFuncError> {
     let fname = utils::u8slice(&caller, args[0].to_i32(), args[1].to_i32());
-    unsafe { utils::current_app_fn_ctx(&caller).0.as_mut() }.res =
-        Some(std::str::from_utf8(fname).unwrap().to_string());
+    unsafe { utils::current_app_fn_ctx(&caller).0.as_mut() }
+        .set_result(Some(std::str::from_utf8(fname).unwrap().to_string()));
 
     Ok(vec![])
 }
