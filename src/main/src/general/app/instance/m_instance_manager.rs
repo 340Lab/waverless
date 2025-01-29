@@ -3,6 +3,8 @@ use crate::general::app::app_owned::wasm;
 use crate::general::app::app_shared::process_rpc::ProcessRpc;
 use crate::general::app::app_shared::SharedInstance;
 use crate::general::app::instance::Instance;
+use crate::general::app::m_executor::FnExeCtxAsync;
+use crate::general::app::m_executor::FnExeCtxSync;
 use crate::general::m_os::OperatingSystem;
 use crate::general::network::rpc_model;
 use crate::result::{WSError, WsFuncError};
@@ -217,7 +219,10 @@ pub struct InstanceManager {
 logical_module_view_impl!(InstanceManagerView);
 logical_module_view_impl!(InstanceManagerView, os, OperatingSystem);
 
-pub struct UnsafeFunctionCtx(pub NonNull<FnExeCtx>);
+pub enum UnsafeFunctionCtx {
+    Sync(NonNull<FnExeCtxSync>),
+    Async(NonNull<FnExeCtxAsync>),
+}
 
 unsafe impl Send for UnsafeFunctionCtx {}
 unsafe impl Sync for UnsafeFunctionCtx {}
@@ -233,7 +238,7 @@ impl LogicalModule for InstanceManager {
         Self {
             app_instances: SkipMap::new(),
             file_dir: args.nodes_config.file_dir.clone(),
-            instance_running_function: parking_lot::RwLock::new(HashMap::new()),
+            instance_running_function: DashMap::new(),
             next_instance_id: AtomicU64::new(0),
             view: InstanceManagerView::new(args.logical_modules_ref.clone()),
         }
@@ -244,6 +249,15 @@ impl LogicalModule for InstanceManager {
         // - create file with crac_config_path
         let mut f = {
             let crac_config_path = crac_config_path.clone();
+            // 确保父目录存在
+            if let Some(parent) = crac_config_path.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|err| {
+                    WSError::from(WsFuncError::CreateCracConfigFailed {
+                        path: parent.to_str().unwrap().to_owned(),
+                        err: err,
+                    })
+                })?;
+            }
             tokio::fs::File::options()
                 .create(true)
                 .write(true)
@@ -294,7 +308,7 @@ impl InstanceManager {
     //     Ok(())
     // }
 
-    pub async fn finish_using(&self, instance_name: &str, instance: Instance) {
+    pub fn finish_using(&self, instance_name: &str, instance: Instance) {
         match instance {
             Instance::Owned(v) => {
                 self.app_instances
@@ -308,6 +322,7 @@ impl InstanceManager {
             Instance::Native(_) => {}
         }
     }
+
     pub async fn load_instance(&self, app_type: &AppType, instance_name: &str) -> Instance {
         match &app_type {
             AppType::Jar => self.get_process_instance(app_type, instance_name).into(),
@@ -323,6 +338,23 @@ impl InstanceManager {
             AppType::Native => NativeAppInstance::new().into(),
         }
     }
+
+    /// Synchronous version of instance loading
+    /// Only supports [`FnExeCtxSyncAllowedType`] app types (currently only Native)
+    /// For other types like Jar and Wasm, returns UnsupportedAppType error
+    pub fn load_instance_sync(
+        &self,
+        app_type: &AppType,
+        _instance_name: &str, // 添加下划线前缀表示有意未使用
+    ) -> WSResult<Instance> {
+        match &app_type {
+            // Native 类型可以直接同步创建
+            AppType::Native => Ok(NativeAppInstance::new().into()),
+            // Jar 和 Wasm 类型不支持同步加载
+            AppType::Jar | AppType::Wasm => Err(WSError::from(WsFuncError::UnsupportedAppType)),
+        }
+    }
+
     pub async fn drap_app_instances(&self, app: &str) {
         let _inss = self.app_instances.remove(app);
         // if let Some(inss) = inss {

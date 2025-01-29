@@ -1,0 +1,203 @@
+# Waverless 项目关键设计笔记
+
+## 1. 函数执行上下文设计
+
+### 1.1 基础结构
+- `FnExeCtx`: 私有的基础结构体，包含函数执行的基本信息
+  ```rust
+  struct FnExeCtx {
+      pub app: String,
+      pub app_type: AppType,
+      pub func: String,
+      pub func_meta: FnMeta,
+      pub req_id: ReqId,
+      pub event_ctx: EventCtx,
+      pub res: Option<String>,
+      pub sub_waiters: Vec<JoinHandle<()>>,
+      _dummy_private: (),
+  }
+  ```
+
+### 1.2 公开特化类型
+- `FnExeCtxAsync` 和 `FnExeCtxSync`:
+  - 异步执行上下文支持 Jar、Wasm、Native 类型，包含子任务支持和完整的性能监控和日志。
+  - 同步执行上下文仅支持 Native 类型，不支持子任务，包含基本的性能监控和日志。
+
+### 1.3 类型安全
+- `FnExeCtxAsyncAllowedType` 和 `FnExeCtxSyncAllowedType`:
+  - 异步允许的类型 (Jar, Wasm, Native)
+  - 同步允许的类型 (仅 Native)
+  - 通过 `TryFrom<AppType>` 在编译时强制类型安全
+
+## 2. 实例管理设计
+
+### 2.1 实例类型与管理器
+- `Instance` 和 `InstanceManager`:
+  - `Instance` 包含 Owned、Shared 和 Native 类型。
+  - `InstanceManager` 管理应用实例和运行时函数上下文。
+  ```rust
+  pub enum Instance {
+      Owned(OwnedInstance),
+      Shared(SharedInstance),
+      Native(NativeAppInstance),
+  }
+  
+  pub struct InstanceManager {
+      pub app_instances: SkipMap<String, EachAppCache>,
+      pub instance_running_function: DashMap<String, UnsafeFunctionCtx>,
+  }
+  ```
+
+### 2.2 运行时函数上下文
+- `UnsafeFunctionCtx`:
+  - 包含 Sync 和 Async 类型，分别对应 `FnExeCtxSync` 和 `FnExeCtxAsync`。
+
+## 3. 关键修改记录
+
+### 3.1 同步/异步执行流程优化与错误处理增强
+- 简化 `finish_using`，移除不必要的异步版本，统一使用同步实现。
+- 添加同步版本的 `load_instance_sync`，仅支持 Native 类型。
+- 优化 `execute_sync` 中的异步调用处理，统一性能监控和日志记录格式。
+- 添加 `UnsupportedAppType` 错误类型，完善同步执行时的类型检查。
+
+## 4. 待办事项
+- [x] 考虑添加同步版本的 `load_instance`
+- [ ] 优化 `execute_sync` 中的异步-同步转换
+- [ ] 完善错误处理和日志记录
+
+## 5. 核心设计原则
+
+### 5.1 基础原则与 View 模式设计规则
+- 同步/异步分离，类型安全，性能监控，资源管理。
+- View 生成：
+  - View 结构体和 `LogicalModule` trait 的实现由宏生成。
+  - 只需实现 `inner_new` 函数，使用 `logical_module_view_impl!` 生成访问函数。
+  - 每个需要访问的模块都需要单独的 impl 宏调用。
+
+### 5.2 去掉 #[derive(LogicalModule)] 的原因和注意事项
+- 实现特定功能：根据需求在 `DataGeneralView` 中实现特定功能，检查冲突。
+- `inner` 字段的管理：由宏管理，不能直接操作，通过宏生成的接口使用。
+- 错误分析：去掉派生后，仔细分析和解决可能出现的错误。
+
+## 6. msg_pack 消息封装
+
+### 6.1 基本原则与实现示例
+- 使用 `msg_pack.rs` 中的宏实现 trait，使用 `define_msg_ids!` 管理消息类型。
+- 通过 `RPCReq` trait 定义请求-响应关系。
+  ```rust
+  define_msg_ids!(
+      (proto::sche::BatchDataRequest, pack, { true }),
+      (proto::sche::BatchDataResponse, _pack, { true })
+  );
+  
+  impl RPCReq for proto::sche::BatchDataRequest {
+      type Resp = proto::sche::BatchDataResponse;
+  }
+  ```
+
+### 6.2 最佳实践
+- 新增消息类型时：在 `define_msg_ids!` 中添加定义，实现 `RPCReq` trait。
+- 使用消息时：使用 `RPCCaller` 和 `RPCHandler`，遵循统一的错误处理。
+
+## 7. Waverless 代码规范核心规则
+
+### 7.1 文档维护与代码组织原则
+- 文档压缩原则：保持无损压缩，合并重复内容，简化表述，重构文档结构。
+- 文档更新规则：确认信息完整性，保留技术细节，使用清晰结构展示信息。
+- 代码组织规则：宏生成的访问函数直接使用，非 pub 函数只在一个地方定义，View 负责核心实现，具体模块负责自己的功能，通过 View 访问其他模块。
+
+### 7.2 代码修改原则
+- 不随意删除或修改已有的正确实现
+- 不在多处实现同一功能
+- 保持代码结构清晰简单
+- 修改前先理解设计原则
+
+#### 异步任务处理原则
+- 分析生命周期和所有权需求
+- 避免盲目克隆，只克隆必要数据
+- 考虑类型特征（如 P2PModule 的轻量级 Clone）
+- 评估替代方案
+
+```rust
+// 反例：过度克隆
+let p2p = self.p2p().clone();        // 不必要，P2PModule 本身就是轻量级的
+let data_general = self.data_general().clone();  // 不必要，同上
+
+// 正例：按需克隆
+let split_info = split.clone();  // 必要，因为来自临时变量的引用
+```
+
+分析要点：
+- 使用场景：确认异步任务中的实际需求
+- 类型特征：检查是否已实现轻量级 Clone
+- 生命周期：特别关注临时变量引用
+- 替代方案：考虑其他实现方式
+
+### 7.3 错误与正确示例
+- 错误示例：手动实现已有的宏生成函数，在两个地方都实现同一个函数，过度修改已有代码结构，有损压缩文档内容。
+- 正确示例：使用宏生成的访问函数，在合适的位置添加新功能，遵循已有的代码组织方式，保持文档的完整性和准确性。
+
+### 7.4 异步任务变量处理规范
+
+#### 1. 变量分析原则
+- 生命周期分析：确定变量在异步任务中的生存期
+- 所有权需求：判断是否需要克隆或移动所有权
+- 类型特征：考虑变量的类型特性（如 Clone、Send、'static 等）
+- 数据共享：评估是否需要在多个任务间共享数据
+
+#### 2. 克隆策略
+必须克隆的情况：
+- 临时变量引用：`split_info.clone()`（来自迭代器）
+- 多任务共享：`unique_id.clone()`（多个任务需要）
+- 部分数据：`data_item.clone_split_range()`（只克隆需要的范围）
+
+不需要克隆的情况：
+- 值类型复制：`version`（直接复制即可）
+- 已实现 Copy：基本数据类型
+- 单一任务使用：不需要在多个任务间共享的数据
+
+#### 3. View 模式使用规范
+基本原则：
+- View 本身已经是完整引用：不需要额外的 view 字段
+- 异步任务中使用：`self.clone()`
+- 模块访问：通过 view 直接访问其他模块
+
+示例代码：
+```rust
+// 正确示例
+let view = self.clone();  // View 本身克隆
+let resp = view.data_general().rpc_call_write_once_data...
+
+// 错误示例
+let view = self.view.clone();  // 错误：不需要额外的 view 字段
+let data_general = self.data_general().clone();  // 错误：不需要单独克隆模块
+```
+
+#### 4. 异步任务数据处理检查清单
+- [ ] 是否只克隆必要的数据？
+- [ ] 临时变量是否正确处理？
+- [ ] View 的使用是否符合规范？
+- [ ] 是否避免了重复克隆？
+- [ ] 数据共享策略是否合理？
+
+#### 5. 常见场景示例
+
+1. 批量数据处理：
+```rust
+// 正确处理临时变量和部分数据
+let split_info = split_info.clone();  // 临时变量必须克隆
+let data_item = data_item.clone_split_range(range);  // 只克隆需要的部分
+let view = self.clone();  // View 克隆用于异步任务
+```
+
+2. 并发任务处理：
+```rust
+// 使用信号量和数据共享
+let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+let view = self.clone();  // 一次克隆，多处使用
+for node_id in nodes {
+    let permit = semaphore.clone();
+    let view = view.clone();  // View 在任务间共享
+    tokio::spawn(async move { ... });
+}
+```

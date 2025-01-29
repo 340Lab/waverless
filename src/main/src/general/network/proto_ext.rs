@@ -1,4 +1,8 @@
+use crate::general::app::DataEventTrigger;
 use crate::general::data::m_dist_lock::DistLockOpe;
+use crate::general::network::proto::sche::distribute_task_req::{
+    DataEventTriggerNew, DataEventTriggerWrite, Trigger,
+};
 
 use super::proto::{self, kv::KvResponse, FileData};
 
@@ -231,6 +235,77 @@ impl DataItemExt for proto::DataItem {
                 ret.extend_from_slice(bytes);
                 ret
             }
+        }
+    }
+}
+
+pub trait ProtoExtDataEventTrigger {
+    fn into_proto_trigger(self, key: Vec<u8>, opeid: u32) -> Trigger;
+}
+
+impl ProtoExtDataEventTrigger for DataEventTrigger {
+    fn into_proto_trigger(self, key: Vec<u8>, opeid: u32) -> Trigger {
+        match self {
+            DataEventTrigger::Write | DataEventTrigger::WriteWithCondition { .. } => {
+                Trigger::EventWrite(DataEventTriggerWrite { key, opeid })
+            }
+            DataEventTrigger::New | DataEventTrigger::NewWithCondition { .. } => {
+                Trigger::EventNew(DataEventTriggerNew { key, opeid })
+            }
+        }
+    }
+}
+
+// Example usage in tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_data_event_trigger_conversion() {
+        let key = b"test_key".to_vec();
+        let opeid = 1;
+
+        // Test Write
+        let write_trigger = DataEventTrigger::Write.into_proto_trigger(key.clone(), opeid);
+        if let Trigger::EventWrite(trigger) = write_trigger {
+            assert_eq!(trigger.key, key);
+            assert_eq!(trigger.opeid, opeid);
+        } else {
+            panic!("Expected EventWrite trigger");
+        }
+
+        // Test WriteWithCondition (should produce same proto as Write)
+        let write_cond_trigger = DataEventTrigger::WriteWithCondition {
+            condition: "test_condition".to_string(),
+        }
+        .into_proto_trigger(key.clone(), opeid);
+        if let Trigger::EventWrite(trigger) = write_cond_trigger {
+            assert_eq!(trigger.key, key);
+            assert_eq!(trigger.opeid, opeid);
+        } else {
+            panic!("Expected EventWrite trigger");
+        }
+
+        // Test New
+        let new_trigger = DataEventTrigger::New.into_proto_trigger(key.clone(), opeid);
+        if let Trigger::EventNew(trigger) = new_trigger {
+            assert_eq!(trigger.key, key);
+            assert_eq!(trigger.opeid, opeid);
+        } else {
+            panic!("Expected EventNew trigger");
+        }
+
+        // Test NewWithCondition (should produce same proto as New)
+        let new_cond_trigger = DataEventTrigger::NewWithCondition {
+            condition: "test_condition".to_string(),
+        }
+        .into_proto_trigger(key.clone(), opeid);
+        if let Trigger::EventNew(trigger) = new_cond_trigger {
+            assert_eq!(trigger.key, key);
+            assert_eq!(trigger.opeid, opeid);
+        } else {
+            panic!("Expected EventNew trigger");
         }
     }
 }

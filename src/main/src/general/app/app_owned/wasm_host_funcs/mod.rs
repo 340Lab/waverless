@@ -4,6 +4,7 @@ mod fs;
 mod kv;
 mod result;
 
+use crate::general::app::instance::m_instance_manager::UnsafeFunctionCtx;
 use crate::sys::LogicalModulesRef;
 use fs::FsFuncsRegister;
 use kv::KvFuncsRegister;
@@ -11,7 +12,8 @@ use result::ResultFuncsRegister;
 
 mod utils {
 
-    use crate::general::app::m_executor::FnExeCtx;
+    use super::UnsafeFunctionCtx;
+    use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxBase};
     use crate::general::app::InstanceManager;
     use crate::{
         general::m_os::OperatingSystem, sys::LogicalModulesRef, util::SendNonNull,
@@ -105,15 +107,17 @@ mod utils {
         }
     }
 
-    pub fn current_app_fn_ctx(caller: &impl WasmCtx) -> SendNonNull<FnExeCtx> {
+    pub fn current_app_fn_ctx(caller: &impl WasmCtx) -> SendNonNull<FnExeCtxAsync> {
         let app_fn = SendNonNull(
-            m_instance_manager()
+            match m_instance_manager()
                 .instance_running_function
-                .read()
                 .get(&caller.i_instance().unwrap().name().unwrap())
                 .unwrap()
-                .0
-                .clone(),
+                .value()
+            {
+                UnsafeFunctionCtx::Async(ptr) => ptr.clone(),
+                UnsafeFunctionCtx::Sync(_) => panic!("Expected async function context"),
+            },
         );
         app_fn
     }

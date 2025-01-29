@@ -57,8 +57,8 @@ struct FnExeCtx {
     pub app: String,
     pub app_type: AppType,
     pub func: String,
-    pub func_meta: FnMeta,
-    pub req_id: ReqId,
+    pub _func_meta: FnMeta,
+    pub _req_id: ReqId,
     pub event_ctx: EventCtx,
     pub res: Option<String>,
     /// remote scheduling tasks
@@ -110,20 +110,56 @@ impl FnExeCtxAsync {
             inner: FnExeCtx {
                 app,
                 func,
-                req_id,
+                _req_id: req_id,
                 event_ctx,
                 res: None,
                 sub_waiters: vec![],
                 app_type: apptype.into(),
-                func_meta,
+                _func_meta: func_meta,
                 _dummy_private: (),
             },
         }
+    }
+
+    pub fn event_ctx(&self) -> &EventCtx {
+        &self.inner.event_ctx
+    }
+
+    pub fn empty_http(&self) -> bool {
+        match &self.inner.event_ctx {
+            EventCtx::Http(text) => text.is_empty(),
+            _ => false,
+        }
+    }
+
+    pub fn http_str_unwrap(&self) -> String {
+        match &self.inner.event_ctx {
+            EventCtx::Http(text) => text.clone(),
+            _ => panic!("not http event ctx"),
+        }
+    }
+
+    pub fn set_result(&mut self, result: Option<String>) {
+        self.inner.res = result;
+    }
+
+    pub fn take_result(&mut self) -> Option<String> {
+        self.inner.res.take()
     }
 }
 
 pub enum FnExeCtxSyncAllowedType {
     Native,
+}
+
+impl TryFrom<AppType> for FnExeCtxSyncAllowedType {
+    type Error = WSError;
+    fn try_from(v: AppType) -> Result<Self, WSError> {
+        match v {
+            AppType::Native => Ok(FnExeCtxSyncAllowedType::Native),
+            AppType::Jar | AppType::Wasm => Err(WSError::from(WsFuncError::UnsupportedAppType)),
+        }
+    }
 }
 
 impl Into<AppType> for FnExeCtxSyncAllowedType {
@@ -149,33 +185,33 @@ impl FnExeCtxSync {
             inner: FnExeCtx {
                 app,
                 func,
-                req_id,
+                _req_id: req_id,
                 event_ctx,
                 res: None,
                 sub_waiters: vec![],
                 app_type: apptype.into(),
-                func_meta,
+                _func_meta: func_meta,
                 _dummy_private: (),
             },
         }
     }
 }
 
-impl FnExeCtx {
-    pub fn empty_http(&self) -> bool {
-        match &self.event_ctx {
-            EventCtx::Http(str) => str.len() == 0,
-            _ => false,
-        }
-    }
-    /// call this when you are sure it's a http event
-    pub fn http_str_unwrap(&self) -> String {
-        match &self.event_ctx {
-            EventCtx::Http(str) => str.to_owned(),
-            _ => panic!("not a http event"),
-        }
-    }
-}
+// impl FnExeCtx {
+//     pub fn empty_http(&self) -> bool {
+//         match &self.event_ctx {
+//             EventCtx::Http(str) => str.len() == 0,
+//             _ => false,
+//         }
+//     }
+//     /// call this when you are sure it's a http event
+//     pub fn http_str_unwrap(&self) -> String {
+//         match &self.event_ctx {
+//             EventCtx::Http(str) => str.to_owned(),
+//             _ => panic!("not a http event"),
+//         }
+//     }
+// }
 
 logical_module_view_impl!(ExecutorView);
 logical_module_view_impl!(ExecutorView, p2p, P2PModule);
@@ -191,28 +227,47 @@ pub struct Executor {
     view: ExecutorView,
 }
 
-// pub struct FunctionCtxBuilder {
-//     pub app: String,
-//     pub req_id: ReqId,
-//     // pub trigger_node: NodeID,
-// }
-// impl FunctionCtxBuilder {
-//     pub fn new(app: String, req_id: ReqId) -> Self {
-//         Self {
-//             app,
-//             req_id,
-//             // trigger_node: 0,
-//         }
-//     }
-//     pub fn build(self, func: String) -> FunctionCtx {
-//         FunctionCtx {
-//             app: self.app,
-//             func,
-//             req_id: self.req_id,
-//             // trigger_node: self.trigger_node,
-//         }
-//     }
-// }
+/// Base trait for function execution contexts
+pub trait FnExeCtxBase {
+    /// Get the application name
+    fn app(&self) -> &str;
+    /// Get the function name
+    fn func(&self) -> &str;
+    /// Get the event context
+    fn event_ctx(&self) -> &EventCtx;
+    /// Get mutable reference to event context
+    fn event_ctx_mut(&mut self) -> &mut EventCtx;
+}
+
+impl FnExeCtxBase for FnExeCtxAsync {
+    fn app(&self) -> &str {
+        &self.inner.app
+    }
+    fn func(&self) -> &str {
+        &self.inner.func
+    }
+    fn event_ctx(&self) -> &EventCtx {
+        &self.inner.event_ctx
+    }
+    fn event_ctx_mut(&mut self) -> &mut EventCtx {
+        &mut self.inner.event_ctx
+    }
+}
+
+impl FnExeCtxBase for FnExeCtxSync {
+    fn app(&self) -> &str {
+        &self.inner.app
+    }
+    fn func(&self) -> &str {
+        &self.inner.func
+    }
+    fn event_ctx(&self) -> &EventCtx {
+        &self.inner.event_ctx
+    }
+    fn event_ctx_mut(&mut self) -> &mut EventCtx {
+        &mut self.inner.event_ctx
+    }
+}
 
 #[async_trait]
 impl LogicalModule for Executor {
@@ -263,7 +318,7 @@ impl Executor {
     }
 
     pub async fn local_call_execute_async(&self, ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
-        self.execute(ctx.inner).await
+        self.execute(ctx).await
     }
 
     pub fn local_call_execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {
@@ -366,9 +421,13 @@ impl Executor {
             fnmeta.clone(),
             req.task_id as usize,
             match req.trigger.unwrap() {
-                distribute_task_req::Trigger::KvSet(set) => EventCtx::KvSet {
-                    key: set.key,
-                    opeid: Some(set.opeid),
+                distribute_task_req::Trigger::EventNew(new) => EventCtx::KvSet {
+                    key: new.key,
+                    opeid: Some(new.opeid),
+                },
+                distribute_task_req::Trigger::EventWrite(write) => EventCtx::KvSet {
+                    key: write.key,
+                    opeid: Some(write.opeid),
                 },
             },
         );
@@ -382,7 +441,7 @@ impl Executor {
         {
             tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
         }
-        let _ = self.execute(ctx.inner).await;
+        let _ = self.execute(ctx).await;
     }
 
     pub async fn handle_http_task(&self, route: &str, text: String) -> WSResult<Option<String>> {
@@ -521,38 +580,92 @@ impl Executor {
     //     //     .await
     // }
 
-    fn execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {}
-
-    /// prepare app and func before call execute
-    async fn execute(&self, mut fn_ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
-        // let app = fn_ctx.app.clone();
-        // let func = fn_ctx.func.clone();
-        // let event = fn_ctx.event_ctx.clone();
-
+    fn execute_sync(&self, mut ctx: FnExeCtxSync) -> WSResult<Option<String>> {
         let instance = self
             .view
             .instance_manager()
-            .load_instance(&fn_ctx.app_type, &fn_ctx.app)
+            .load_instance_sync(&ctx.inner.app_type, &ctx.inner.app)?;
+
+        let _ = self
+            .view
+            .instance_manager()
+            .instance_running_function
+            .insert(
+                instance.instance_name().to_owned(),
+                UnsafeFunctionCtx::Sync(
+                    NonNull::new(&ctx as *const FnExeCtxSync as *mut FnExeCtxSync).unwrap(),
+                ),
+            );
+
+        tracing::debug!(
+            "start run sync instance {} app {} fn {}",
+            instance.instance_name(),
+            ctx.inner.app,
+            ctx.inner.func
+        );
+
+        let bf_exec_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+
+        tracing::debug!("start execute sync");
+        let res = instance.execute_sync(&mut ctx)?;
+
+        let res = res.map(|v| {
+            let mut res: serde_json::Value = serde_json::from_str(&*v).unwrap();
+            let _ = res.as_object_mut().unwrap().insert(
+                "bf_exec_time".to_owned(),
+                serde_json::Value::from(bf_exec_time),
+            );
+            serde_json::to_string(&res).unwrap()
+        });
+
+        let _ = self
+            .view
+            .instance_manager()
+            .instance_running_function
+            .remove(&instance.instance_name());
+
+        tracing::debug!(
+            "finish run sync instance {} fn {}, res:{:?}",
+            instance.instance_name(),
+            ctx.inner.func,
+            res
+        );
+
+        self.view
+            .instance_manager()
+            .finish_using(&ctx.inner.app, instance);
+
+        Ok(res)
+    }
+
+    /// prepare app and func before call execute
+    async fn execute(&self, mut fn_ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
+        let instance = self
+            .view
+            .instance_manager()
+            .load_instance(&fn_ctx.inner.app_type, &fn_ctx.inner.app)
             .await;
 
         let _ = self
             .view
             .instance_manager()
             .instance_running_function
-            .write()
             .insert(
                 instance.instance_name().to_owned(),
-                UnsafeFunctionCtx(
-                    NonNull::new(&fn_ctx as *const FnExeCtx as *mut FnExeCtx).unwrap(),
+                UnsafeFunctionCtx::Async(
+                    NonNull::new(&fn_ctx as *const FnExeCtxAsync as *mut FnExeCtxAsync).unwrap(),
                 ),
             );
+
         tracing::debug!(
             "start run instance {} app {} fn {}",
             instance.instance_name(),
-            fn_ctx.app,
-            fn_ctx.func
+            fn_ctx.inner.app,
+            fn_ctx.inner.func
         );
-        // TODO: input value should be passed from context, like http request or prev trigger
 
         let bf_exec_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -562,11 +675,6 @@ impl Executor {
         tracing::debug!("start execute");
         let res = instance.execute(&mut fn_ctx).await;
 
-        // let return_to_agent_time = SystemTime::now()
-        //     .duration_since(UNIX_EPOCH)
-        //     .expect("Time went backwards")
-        //     .as_millis() as u64;
-
         let res = res.map(|v| {
             v.map(|v| {
                 let mut res: serde_json::Value = serde_json::from_str(&*v).unwrap();
@@ -574,10 +682,6 @@ impl Executor {
                     "bf_exec_time".to_owned(),
                     serde_json::Value::from(bf_exec_time),
                 );
-                // let _ = res.as_object_mut().unwrap().insert(
-                //     "return_to_agent_time".to_owned(),
-                //     serde_json::Value::from(return_to_agent_time),
-                // );
                 serde_json::to_string(&res).unwrap()
             })
         });
@@ -586,26 +690,23 @@ impl Executor {
             .view
             .instance_manager()
             .instance_running_function
-            .write()
-            .remove(&instance.instance_name())
-            .unwrap();
+            .remove(&instance.instance_name());
 
         tracing::debug!(
             "finish run instance {} fn {}, res:{:?}",
             instance.instance_name(),
-            fn_ctx.func,
+            fn_ctx.inner.func,
             res
         );
 
-        while let Some(t) = fn_ctx.sub_waiters.pop() {
+        while let Some(t) = fn_ctx.inner.sub_waiters.pop() {
             let _ = t.await.unwrap();
         }
+
         self.view
             .instance_manager()
-            .finish_using(&fn_ctx.app, instance)
-            .await;
+            .finish_using(&fn_ctx.inner.app, instance);
 
         res
-        // TODO：wait for related tasks triggered.
     }
 }
