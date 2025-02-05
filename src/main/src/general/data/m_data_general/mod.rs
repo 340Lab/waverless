@@ -1,4 +1,7 @@
 mod dataitem;
+mod batch;
+
+use crate::general::data::m_data_general::batch::BatchManager;
 
 use crate::general::data::m_data_general::dataitem::WantIdxIter;
 use crate::general::data::m_data_general::dataitem::WriteSplitDataTaskGroup;
@@ -90,14 +93,15 @@ pub fn new_data_unique_id_fn_kv(key: &[u8]) -> Vec<u8> {
 #[derive(LogicalModule)]
 pub struct DataGeneral {
     view: DataGeneralView,
+    batch_manager: Arc<BatchManager>,
     pub rpc_call_data_version_schedule: RPCCaller<proto::DataVersionScheduleRequest>,
     rpc_call_write_once_data: RPCCaller<proto::WriteOneDataRequest>,
-    rpc_call_batch_data: RPCCaller<proto::sche::BatchDataRequest>,
+    rpc_call_batch_data: RPCCaller<proto::BatchDataRequest>,
     rpc_call_get_data_meta: RPCCaller<proto::DataMetaGetRequest>,
     rpc_call_get_data: RPCCaller<proto::GetOneDataRequest>,
 
     rpc_handler_write_once_data: RPCHandler<proto::WriteOneDataRequest>,
-    rpc_handler_batch_data: RPCHandler<proto::sche::BatchDataRequest>,
+    rpc_handler_batch_data: RPCHandler<proto::BatchDataRequest>,
     rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
     rpc_handler_get_data_meta: RPCHandler<proto::DataMetaGetRequest>,
     rpc_handler_get_data: RPCHandler<proto::GetOneDataRequest>,
@@ -107,10 +111,7 @@ pub struct DataGeneral {
 }
 
 impl DataGeneral {
-    fn next_batch_id(&self) -> u32 {
-        static NEXT_BATCH_ID: AtomicU32 = AtomicU32::new(1);  // 从1开始,保留0作为特殊值
-        NEXT_BATCH_ID.fetch_add(1, Ordering::Relaxed)
-    }
+    // next_batch_id 方法已被移除，因为在当前代码中未被引用。如果将来需要，可重新实现该功能。
 
     async fn write_data_batch(
         &self,
@@ -128,14 +129,17 @@ impl DataGeneral {
         let view = self.view.clone();
         
         // Initialize batch transfer
-        let init_req = proto::sche::BatchDataRequest {
+        let init_req = proto::BatchDataRequest {
             unique_id: unique_id.to_vec(),
             version,
-            batch_id: 0,  // 使用 0 作为初始化标记
-            total_batches: total_batches as u32,
-            data: vec![],
-            data_item_idx: data_item_idx as u32,
-            is_complete: false,
+            request_id: Some(proto::BatchRequestId {
+                node_id: 0,
+                sequence: 0,
+            }),  // 使用 0 作为初始化标记
+            block_type: proto::BatchDataBlockType::Memory as i32,
+            block_index: data_item_idx as u32,
+            operation: proto::DataOpeType::Write as i32,
+            data: vec![]
         };
 
         let init_resp = self
@@ -152,28 +156,27 @@ impl DataGeneral {
             return Err(WsDataError::BatchTransferFailed {
                 node: node_id,
                 batch: 0,
-                reason: init_resp.error,
+                reason: init_resp.error_message,
             }
             .into());
         }
 
-        let batch_id = init_resp.batch_id;
+        let request_id = init_resp.request_id;
 
         // Send data in batches
         for batch_idx in 0..total_batches {
             let start = batch_idx * batch_size;
             let end = (start + batch_size).min(total_size);
-            let is_last = batch_idx == total_batches - 1;
 
             let batch_data = data.clone_split_range(start..end);
-            let batch_req = proto::sche::BatchDataRequest {
-                    unique_id: unique_id.to_vec(),
-                    version,
-                batch_id,
-                    total_batches: total_batches as u32,
+            let batch_req = proto::BatchDataRequest {
+                unique_id: unique_id.to_vec(),
+                version,
+                request_id: request_id.clone(),
+                block_type: proto::BatchDataBlockType::Memory as i32,
                 data: batch_data.encode_persist(),
-                    data_item_idx: data_item_idx as u32,
-                is_complete: is_last,
+                block_index: data_item_idx as u32,
+                operation: proto::DataOpeType::Write as i32,
             };
 
             let batch_resp = self
@@ -190,7 +193,7 @@ impl DataGeneral {
                 return Err(WsDataError::BatchTransferFailed {
                     node: node_id,
                     batch: batch_idx as u32,
-                    reason: batch_resp.error,
+                    reason: batch_resp.error_message,
                 }
                 .into());
             }
@@ -837,15 +840,15 @@ impl DataGeneral {
         responsor: RPCResponsor<proto::DataMetaGetRequest>,
     ) -> WSResult<()> {
         tracing::debug!("rpc_handle_get_data_meta with req({:?})", req);
-        let meta = self.view.get_data_meta(&req.unique_id, req.delete)?;
-        if meta.is_none() {
-            tracing::debug!("rpc_handle_get_data_meta data meta not found");
-        } else {
-            tracing::debug!("rpc_handle_get_data_meta data meta found");
-        }
-        let serialized_meta = meta.map_or(vec![], |(_kvversion, meta)| {
-            bincode::serialize(&meta).unwrap()
-        });
+        let meta = self.view.get_metadata(&req.unique_id, req.delete).await?;
+        tracing::debug!("rpc_handle_get_data_meta data meta found");
+        
+        let serialized_meta = bincode::serialize(&meta).map_err(|err| {
+            WsSerialErr::BincodeErr {
+                err,
+                context: "rpc_handle_get_data_meta".to_owned(),
+            }
+        })?;
 
         responsor
             .send_resp(proto::DataMetaGetResponse { serialized_meta })
@@ -863,9 +866,10 @@ impl DataGeneral {
 
         let kv_store_engine = self.view.kv_store_engine();
         let _ = self.view
-            .get_data_meta(&req.unique_id, req.delete)
+            .get_metadata(&req.unique_id, req.delete)
+            .await
             .map_err(|err| {
-                tracing::warn!("rpc_handle_get_one_data get_data_meta failed: {:?}", err);
+                tracing::warn!("rpc_handle_get_one_data get_metadata failed: {:?}", err);
                 err
             })?;
 
@@ -976,7 +980,7 @@ pub type CacheMode = u16;
 /// attention: new from `DataSetMetaBuilder`
 ///
 /// https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Tqqkdxubpokwi5xREincb1sFnLc
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug,Clone)]
 pub struct DataSetMetaV2 {
     // unique_id: Vec<u8>,
     api_version: u8,
@@ -1365,6 +1369,20 @@ impl DataGeneralView {
         };
         Ok(meta_opt)
     }
+
+    pub async fn get_metadata(
+        &self,
+        unique_id: &[u8],
+        delete: bool,
+    ) -> WSResult<DataSetMetaV2> {
+        // 先尝试从本地获取
+        if let Some((_version, meta)) = self.get_data_meta(unique_id, delete)? {
+            return Ok(meta);
+        }
+
+        // 本地不存在，从 master 获取
+        self.data_general().get_or_del_datameta_from_master(unique_id, delete).await
+    }
 }
 
 impl From<JoinError> for WSError {
@@ -1381,6 +1399,7 @@ impl LogicalModule for DataGeneral {
     {
         Self {
             view: DataGeneralView::new(args.logical_modules_ref.clone()),
+            batch_manager: Arc::new(BatchManager::new()),
             rpc_call_data_version_schedule: RPCCaller::new(),
             rpc_call_write_once_data: RPCCaller::new(),
             rpc_call_batch_data: RPCCaller::new(),
@@ -1412,62 +1431,62 @@ impl LogicalModule for DataGeneral {
 
         // register rpc handlers
         {
-            let this = self.clone();
+            let view = self.view.clone();
             self.rpc_handler_write_once_data
                 .regist(p2p, move |responsor, req| {
-                    let this = this.clone();
+                    let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        this.rpc_handle_write_one_data(responsor, req).await;
+                        view.data_general().rpc_handle_write_one_data(responsor, req).await;
                     });
                     Ok(())
                 });
 
-            let this = self.clone();
+            let view = self.view.clone();
             self.rpc_handler_batch_data.regist(
                 p2p,
-                move |responsor: RPCResponsor<proto::sche::BatchDataRequest>,
-                      req: proto::sche::BatchDataRequest| {
-                    let this = this.clone();
+                move |responsor: RPCResponsor<proto::BatchDataRequest>,
+                      req: proto::BatchDataRequest| {
+                    let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        this.rpc_handle_batch_data(responsor, req).await;
+                        view.data_general().rpc_handle_batch_data(responsor, req).await;
                     });
                     Ok(())
                 },
             );
 
-            let this = self.clone();
+            let view = self.view.clone();
             self.rpc_handler_data_meta_update.regist(
                 p2p,
                 move |responsor: RPCResponsor<proto::DataMetaUpdateRequest>,
                       req: proto::DataMetaUpdateRequest| {
-                    let this = this.clone();
+                    let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        this.rpc_handle_data_meta_update(responsor, req).await
+                        view.data_general().rpc_handle_data_meta_update(responsor, req).await
                     });
                     Ok(())
                 },
             );
 
-            let this = self.clone();
+            let view = self.view.clone();
             self.rpc_handler_get_data_meta
                 .regist(p2p, move |responsor, req| {
-                    let this = this.clone();
+                    let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        this.rpc_handle_get_data_meta(req, responsor)
+                        view.data_general().rpc_handle_get_data_meta(req, responsor)
                             .await
                             .todo_handle();
                     });
                     Ok(())
                 });
 
-            let this = self.clone();
+            let view = self.view.clone();
             self.rpc_handler_get_data.regist(
                 p2p,
                 move |responsor: RPCResponsor<proto::GetOneDataRequest>,
                       req: proto::GetOneDataRequest| {
-                    let this = this.clone();
+                    let view = view.clone();
                     let _ = tokio::spawn(async move { 
-                        this.rpc_handle_get_one_data(responsor, req).await 
+                        view.data_general().rpc_handle_get_one_data(responsor, req).await 
                     });
                     Ok(())
                 },
