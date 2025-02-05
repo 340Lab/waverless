@@ -170,3 +170,30 @@ message GetOneDataResponse{
   repeated DataItem data =2;
   string message=3;
 }
+
+enum BatchDataBlockType {
+    MEMORY = 0;    // 内存数据块
+    FILE = 1;      // 文件数据块
+}
+
+message BatchRequestId {
+    uint32 node_id = 1;               // 节点ID
+    uint64 sequence = 2;              // 原子自增序列号
+}
+
+message BatchDataRequest {
+    BatchRequestId request_id = 1;        // 请求唯一标识（节点ID + 序列号）
+    BatchDataBlockType block_type = 2;    // 数据块类型（文件/内存）
+    uint32 block_index = 3;              // 数据块索引
+    bytes data = 4;                      // 数据块内容
+    DataOpeType operation = 5;          // 操作类型
+    bytes unique_id = 6;                 // 数据唯一标识
+    uint64 version = 7;                  // 数据版本
+}
+
+message BatchDataResponse {
+    BatchRequestId request_id = 1;         // 对应请求ID
+    bool success = 2;                    // 处理状态
+    string error_message = 3;            // 错误信息
+    uint64 version = 4;                  // 处理后的版本
+}

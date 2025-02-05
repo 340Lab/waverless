@@ -150,15 +150,15 @@ impl WriteSplitDataTaskGroup {
         unique_id: Vec<u8>,
         splits: Vec<Range<usize>>,
         mut rx: tokio::sync::mpsc::Receiver<WSResult<(DataSplitIdx, proto::DataItem)>>,
-        cachemode: CacheModeVisitor,
+        block_type: proto::BatchDataBlockType,
     ) -> WSResult<Self> {
         tracing::debug!(
-            "new merge task group for uid({:?}), cachemode({})",
+            "new merge task group for uid({:?}), block_type({:?})",
             unique_id,
-            cachemode.0
+            block_type
         );
-        if cachemode.is_map_file() {
-            tracing::debug!("cachemode is map_file");
+        if block_type == proto::BatchDataBlockType::File {
+            tracing::debug!("block_type is file");
             // base64
             // let file_path = PathBuf::from(format!("{:?}.data", unique_id));
             let file_path = PathBuf::from(format!(
@@ -220,8 +220,8 @@ impl WriteSplitDataTaskGroup {
                 }
             }
             Ok(Self::ToFile { file_path, tasks })
-        } else if cachemode.is_map_common_kv() {
-            tracing::debug!("cachemode is map_common_kv");
+        } else if block_type == proto::BatchDataBlockType::Memory {
+            tracing::debug!("block_type is memory");
             let (shared_mem, owned_accesses) = new_shared_mem(&splits);
             let mut owned_accesses = owned_accesses
                 .into_iter()
@@ -265,7 +265,7 @@ impl WriteSplitDataTaskGroup {
             }
             Ok(Self::ToMem { shared_mem, tasks })
         } else {
-            panic!("cachemode should be map_file or map_mem");
+            panic!("block_type should be file or memory");
         }
     }
 
