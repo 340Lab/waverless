@@ -105,13 +105,14 @@ pub struct DataGeneral {
     rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
     rpc_handler_get_data_meta: RPCHandler<proto::DataMetaGetRequest>,
     rpc_handler_get_data: RPCHandler<proto::GetOneDataRequest>,
-
-    // 用于跟踪批量传输的状态
-    batch_transfers: DashMap<String, (u64, Vec<u8>)>, // 修改类型为 (unique_id -> (version, data))
 }
 
 impl DataGeneral {
-    // next_batch_id 方法已被移除，因为在当前代码中未被引用。如果将来需要，可重新实现该功能。
+    #[allow(dead_code)]
+    fn next_batch_id(&self) -> u32 {
+        static NEXT_BATCH_ID: AtomicU32 = AtomicU32::new(1);  // 从1开始,保留0作为特殊值
+        NEXT_BATCH_ID.fetch_add(1, Ordering::Relaxed)
+    }
 
     async fn write_data_batch(
         &self,
@@ -120,85 +121,46 @@ impl DataGeneral {
         data: proto::DataItem,
         data_item_idx: usize,
         node_id: NodeID,
-        batch_size: usize,
+        _batch_size: usize,
     ) -> WSResult<()> {
-        let total_size = data.data_sz_bytes();
-        let total_batches = (total_size + batch_size - 1) / batch_size;
+        let block_type = proto::BatchDataBlockType::Memory;
         
-        // 克隆整个 view
-        let view = self.view.clone();
+        // 创建 channel 接收数据块
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
         
-        // Initialize batch transfer
-        let init_req = proto::BatchDataRequest {
-            unique_id: unique_id.to_vec(),
+        // 创建传输任务
+        let request_id = self.batch_manager.create_transfer(
+            unique_id.to_vec(),
             version,
-            request_id: Some(proto::BatchRequestId {
-                node_id: 0,
-                sequence: 0,
-            }),  // 使用 0 作为初始化标记
-            block_type: proto::BatchDataBlockType::Memory as i32,
-            block_index: data_item_idx as u32,
-            operation: proto::DataOpeType::Write as i32,
-            data: vec![]
-        };
-
-        let init_resp = self
-            .rpc_call_batch_data
-            .call(
-                view.p2p(),
-                node_id,
-                init_req,
-                Some(Duration::from_secs(60)),
-            )
-            .await?;
-
-        if !init_resp.success {
+            block_type,
+            data.data_sz_bytes() as u32,
+            tx,
+        ).await?;
+        
+        // 使用现有的 call_batch_data 函数发送数据
+        let response = self.rpc_call_batch_data.call(
+            self.view.p2p(),
+            node_id,
+            proto::BatchDataRequest {
+                unique_id: unique_id.to_vec(),
+                version,
+                request_id: Some(request_id.clone()),
+                block_type: block_type as i32,
+                block_index: data_item_idx as u32,
+                operation: proto::DataOpeType::Write as i32,
+                data: data.encode_persist(),
+            },
+            Some(Duration::from_secs(60)),
+        ).await?;
+        
+        if !response.success {
             return Err(WsDataError::BatchTransferFailed {
                 node: node_id,
                 batch: 0,
-                reason: init_resp.error_message,
-            }
-            .into());
+                reason: response.error_message,
+            }.into());
         }
-
-        let request_id = init_resp.request_id;
-
-        // Send data in batches
-        for batch_idx in 0..total_batches {
-            let start = batch_idx * batch_size;
-            let end = (start + batch_size).min(total_size);
-
-            let batch_data = data.clone_split_range(start..end);
-            let batch_req = proto::BatchDataRequest {
-                unique_id: unique_id.to_vec(),
-                version,
-                request_id: request_id.clone(),
-                block_type: proto::BatchDataBlockType::Memory as i32,
-                data: batch_data.encode_persist(),
-                block_index: data_item_idx as u32,
-                operation: proto::DataOpeType::Write as i32,
-            };
-
-            let batch_resp = self
-                .rpc_call_batch_data
-                .call(
-                    view.p2p(),
-                    node_id,
-                    batch_req,
-                    Some(Duration::from_secs(60)),
-                )
-                .await?;
-
-            if !batch_resp.success {
-                return Err(WsDataError::BatchTransferFailed {
-                    node: node_id,
-                    batch: batch_idx as u32,
-                    reason: batch_resp.error_message,
-                }
-                .into());
-            }
-        }
-
+        
         Ok(())
     }
 
@@ -305,7 +267,7 @@ impl DataGeneral {
                     .into());
                 }
 
-                    data_map.insert(idx, resp.data[0].clone());
+                    let _ = data_map.insert(idx, resp.data[0].clone());
                 }
             }
             GetOrDelDataArgType::Delete => {
@@ -334,7 +296,7 @@ impl DataGeneral {
                     .into());
                 }
 
-                    data_map.insert(idx, resp.data[0].clone());
+                    let _ = data_map.insert(idx, resp.data[0].clone());
                 }
             }
             GetOrDelDataArgType::PartialOne { idx } => {
@@ -361,7 +323,7 @@ impl DataGeneral {
                     .into());
                 }
 
-                data_map.insert(idx, resp.data[0].clone());
+                let _ = data_map.insert(idx, resp.data[0].clone());
             }
             GetOrDelDataArgType::PartialMany { idxs } => {
                 for idx in idxs {
@@ -388,7 +350,7 @@ impl DataGeneral {
                     .into());
                 }
 
-                    data_map.insert(idx, resp.data[0].clone());
+                    let _ = data_map.insert(idx, resp.data[0].clone());
                 }
             }
         }
@@ -440,111 +402,74 @@ impl DataGeneral {
         let splits = version_schedule_resp.split.clone();
 
         // 处理每个数据项
-        for (data_item_idx, (data_item, split)) in datas
-            .iter()
-            .zip(splits.iter())
-            .enumerate()
-        {
-            let mut tasks = Vec::new();
-            tracing::debug!(
-                "{} processing data item {}/{}",
-                log_tag,
-                data_item_idx + 1,
-                datas.len()
-            );
-
+        let mut iter = WantIdxIter::new(&GetOrDelDataArgType::All, datas.len() as u8);
+        while let Some(data_item_idx) = iter.next() {
+            let data_item = &datas[data_item_idx as usize];
+            let split = &splits[data_item_idx as usize];
+            let mut primary_tasks = Vec::new();
+            
             // 1. 并行写入所有主数据分片
-            for (split_idx, split_info) in split.splits.iter().enumerate() {
-                tracing::debug!(
-                    "{} creating split write task {}/{} for node {}, offset={}, size={}",
-                    log_tag,
-                    split_idx + 1,
-                    split.splits.len(),
-                    split_info.node_id,
-                    split_info.data_offset,
-                    split_info.data_size
-                );
-
-                // 克隆必要的数据
-                let split_info = split_info.clone();  // 必须克隆，来自临时变量
-                let unique_id = unique_id.clone();    // 必须克隆，多个任务需要
-                let data_item = data_item.clone_split_range(  // 克隆必要的数据范围
+            let mut split_iter = WantIdxIter::new(&GetOrDelDataArgType::All, split.splits.len() as u8);
+            while let Some(split_idx) = split_iter.next() {
+                let split_info = &split.splits[split_idx as usize];
+                tracing::debug!("{} creating split write task {}/{} for node {}, offset={}, size={}",
+                    log_tag, split_idx + 1, split.splits.len(), split_info.node_id, split_info.data_offset, split_info.data_size);
+                let split_info = split_info.clone();
+                let unique_id_clone = unique_id.clone();
+                let data_item_primary = data_item.clone_split_range(
                     split_info.data_offset as usize
-                        ..(split_info.data_offset + split_info.data_size) as usize,
+                        ..(split_info.data_offset + split_info.data_size) as usize
                 );
-                let view = self.view.clone();  // 克隆 view，包含所有模块引用
-                let version = version;    // 复制值类型
-
+                let view = self.view.clone();
+                let version_copy = version;
                 let task = tokio::spawn(async move {
-                    let resp = view.data_general()
+                    view.data_general()
                         .rpc_call_write_once_data
                         .call(
                             view.p2p(),
                             split_info.node_id,
                             proto::WriteOneDataRequest {
-                                unique_id,
-                                version,
+                                unique_id: unique_id_clone,
+                                version: version_copy,
                                 data: vec![proto::DataItemWithIdx {
                                     idx: data_item_idx as u32,
-                                    data: Some(data_item),
+                                    data: Some(data_item_primary),
                                 }],
                             },
                             Some(Duration::from_secs(60)),
                         )
-                        .await?;
-                    Ok::<proto::WriteOneDataResponse, WSError>(resp)
+                        .await
                 });
-                tasks.push(task);
+                primary_tasks.push(task);
             }
 
             // 2. 并行写入缓存数据（完整数据）
-            let visitor = CacheModeVisitor(version_schedule_resp.cache_mode[data_item_idx] as u16);
+            let visitor = CacheModeVisitor(version_schedule_resp.cache_mode[data_item_idx as usize] as u16);
             let need_cache = visitor.is_map_common_kv() || visitor.is_map_file();
-            
             let cache_nodes: Vec<NodeID> = if need_cache {
                 split.splits.iter().map(|s| s.node_id).collect()
             } else {
                 vec![]
             };
 
+            let mut cache_tasks = Vec::new();
             if !cache_nodes.is_empty() {
-                tracing::debug!(
-                    "{} found {} cache nodes: {:?}",
-                    log_tag,
-                    cache_nodes.len(),
-                    cache_nodes
-                );
-
-                // 使用信号量限制并发的批量传输数量
+                tracing::debug!("{} found {} cache nodes: {:?}", log_tag, cache_nodes.len(), cache_nodes);
                 const MAX_CONCURRENT_TRANSFERS: usize = 3;
                 let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFERS));
-
-                for (cache_idx, &node_id) in cache_nodes.iter().enumerate() {
+                
+                let mut cache_iter = WantIdxIter::new(&GetOrDelDataArgType::All, cache_nodes.len() as u8);
+                while let Some(cache_idx) = cache_iter.next() {
+                    let node_id = cache_nodes[cache_idx as usize];
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    tracing::debug!(
-                        "{} creating cache write task {}/{} for node {}",
-                        log_tag,
-                        cache_idx + 1,
-                        cache_nodes.len(),
-                        node_id
-                    );
-
-                    // 创建批量传输任务
-                    let unique_id = unique_id.clone();
-                    let data_item = data_item.clone();
+                    tracing::debug!("{} creating cache write task {}/{} for node {}", log_tag, cache_idx + 1, cache_nodes.len(), node_id);
+                    let unique_id_clone = unique_id.clone();
+                    let data_item_cache = data_item.clone();
                     let view = self.view.clone();
-
                     let task = tokio::spawn(async move {
                         let _permit = permit;
                         view.data_general()
-                            .write_data_batch(
-                                &unique_id,
-                                version,
-                                data_item.clone(),
-                                data_item_idx,
-                                node_id,
-                                1024 * 1024, // 1MB batch size
-                            )
+                            .write_data_batch(&unique_id_clone, version, data_item_cache, data_item_idx as usize, node_id, 1024 * 1024)
                             .await?;
                         Ok::<proto::WriteOneDataResponse, WSError>(proto::WriteOneDataResponse {
                             remote_version: version,
@@ -552,13 +477,20 @@ impl DataGeneral {
                             message: String::new(),
                         })
                     });
-                    tasks.push(task);
+                    cache_tasks.push(task);
                 }
             }
 
-            // 等待所有写入任务完成
-            for task in tasks {
-                task.await??;
+            let primary_results = futures::future::join_all(primary_tasks).await;
+            let cache_results = futures::future::join_all(cache_tasks).await;
+
+            if primary_results.iter().any(|res| res.is_err()) || cache_results.iter().any(|res| res.is_err()) {
+                let error_msg = format!("主节点或缓存节点数据写入失败");
+                tracing::error!("{}", error_msg);
+                return Err(WSError::WsDataError(WsDataError::WriteDataFailed {
+                    unique_id: unique_id.clone(),
+                    message: error_msg,
+                }));
             }
         }
 
@@ -1411,8 +1343,6 @@ impl LogicalModule for DataGeneral {
             rpc_handler_data_meta_update: RPCHandler::new(),
             rpc_handler_get_data_meta: RPCHandler::new(),
             rpc_handler_get_data: RPCHandler::new(),
-
-            batch_transfers: DashMap::new(),
         }
     }
 
@@ -1448,7 +1378,7 @@ impl LogicalModule for DataGeneral {
                       req: proto::BatchDataRequest| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        view.data_general().rpc_handle_batch_data(responsor, req).await;
+                        let _ = view.data_general().rpc_handle_batch_data(responsor, req).await;
                     });
                     Ok(())
                 },
@@ -1496,7 +1426,7 @@ impl LogicalModule for DataGeneral {
         Ok(vec![])
     }
 }
-
+#[allow(dead_code)]
 fn flush_the_data(
     log_tag: &str,
     unique_id: &[u8],
@@ -1535,3 +1465,4 @@ fn flush_the_data(
     });
     write_source_data_tasks.push(t);
 }
+
