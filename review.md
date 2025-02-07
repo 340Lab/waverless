@@ -1,5 +1,6 @@
 # 项目分析与修改计划
 
+
 ### 现有
 
 #### DataGeneral
@@ -405,4 +406,277 @@ impl WriteSplitDataManager {
 }
 ```
 
-### 2. BatchTransfer 的 new 方法
+### 2. Batch数据处理流程更新
+
+#### 2.1 WriteSplitDataTaskHandle扩展 等待全部完成的函数
+
+```rust
+impl WriteSplitDataTaskHandle {
+    ...
+
+    /// 等待所有已提交的写入任务完成
+    pub async fn wait_all_tasks(self) -> WSResult<()> {
+    }
+}
+```
+
+#### 2.2 BatchTransfer 实现
+
+```rust
+pub struct BatchTransfer {
+    unique_id: Vec<u8>,
+    version: u64,
+    block_type: BatchDataBlockType,
+    total_blocks: u32,
+    block_size: usize,
+    data: Arc<DataSource>,  // 文件或内存数据源
+    write_task: JoinHandle<WSResult<proto::DataItem>>,
+}
+
+impl BatchTransfer {
+    /// 创建新的批量传输任务
+    pub async fn new(
+        unique_id: Vec<u8>,
+        version: u64,
+        data: Arc<DataSource>,
+        block_size: usize,
+        manager: Arc<WriteSplitDataManager>,
+    ) -> WSResult<Self> {
+        // 计算分片信息
+        let total_size = data.size().await?;
+        let total_blocks = (total_size + block_size - 1) / block_size;
+        let block_type = data.block_type();
+
+        // 创建写入任务组和handle
+        let (group, handle) = WriteSplitDataTaskGroup::new(
+            unique_id.clone(),
+            calculate_splits(total_blocks as u32, block_size),
+            block_type,
+            manager,
+        ).await;
+
+        // 启动写入任务
+        let write_task = tokio::spawn(async move {
+            let mut current_block = 0;
+            let mut in_flight_tasks = FuturesUnordered::new();
+            
+            // 循环直到所有数据块都发送完成
+            loop {
+                // 如果还有数据块且未达到最大并发数，则读取并发送新数据块
+                while current_block < total_blocks && in_flight_tasks.len() < 32 {
+                    // 读取数据块
+                    let offset = current_block * block_size;
+                    let size = block_size.min(total_size - offset);
+                    let block_data = data.read_chunk(offset, size).await?;
+
+                    // 提交数据到写入任务组
+                    let submit_future = handle.submit_split(
+                        current_block as usize * block_size,
+                        block_data,
+                    );
+                    in_flight_tasks.push(submit_future);
+                    current_block += 1;
+                }
+
+                // 等待任意一个任务完成
+                match in_flight_tasks.next().await {
+                    Some(result) => {
+                        // 处理任务结果
+                        result?;
+                    }
+                    None if current_block >= total_blocks => {
+                        // 所有数据块都已发送且完成
+                        break;
+                    }
+                    None => {
+                        // 不应该发生：还有数据块但没有运行中的任务
+                        return Err(WSError::BatchError(WsBatchErr::InternalError {
+                            message: "No in-flight tasks but blocks remaining".into()
+                        }));
+                    }
+                }
+            }
+
+            // 等待所有任务完成
+            while let Some(result) = in_flight_tasks.next().await {
+                result?;
+            }
+
+            // 等待写入任务组处理完所有数据
+            handle.wait_all_tasks().await?;
+            group.process_tasks().await
+        });
+
+        Ok(Self {
+            unique_id,
+            version,
+            block_type,
+            total_blocks: total_blocks as u32,
+            block_size,
+            data,
+            write_task,
+        })
+    }
+
+    /// 等待传输完成
+    pub async fn wait_complete(self) -> WSResult<proto::DataItem> {
+        self.write_task.await?
+    }
+}
+
+/// 数据源trait
+#[async_trait]
+pub trait DataSource: Send + Sync + 'static {
+    /// 获取数据总大小
+    async fn size(&self) -> WSResult<usize>;
+    
+    /// 读取指定范围的数据
+    async fn read_chunk(&self, offset: usize, size: usize) -> WSResult<Vec<u8>>;
+    
+    /// 获取数据块类型
+    fn block_type(&self) -> BatchDataBlockType;
+}
+
+/// 文件数据源实现
+pub struct FileDataSource {
+    path: PathBuf,
+}
+
+#[async_trait]
+impl DataSource for FileDataSource {
+    async fn size(&self) -> WSResult<usize> {
+        tokio::fs::metadata(&self.path)
+            .await
+            .map(|m| m.len() as usize)
+            .map_err(|e| WSError::BatchError(WsBatchErr::ReadSourceFailed {
+                source: format!("{}", self.path.display()),
+                error: e.to_string(),
+            }))
+    }
+
+    async fn read_chunk(&self, offset: usize, size: usize) -> WSResult<Vec<u8>> {
+        let mut file = tokio::fs::File::open(&self.path).await?;
+        let mut buf = vec![0; size];
+        file.seek(SeekFrom::Start(offset as u64)).await?;
+        file.read_exact(&mut buf).await?;
+        Ok(buf)
+    }
+
+    fn block_type(&self) -> BatchDataBlockType {
+        BatchDataBlockType::File
+    }
+}
+
+/// 内存数据源实现
+pub struct MemDataSource {
+    data: Arc<[u8]>,
+}
+
+#[async_trait]
+impl DataSource for MemDataSource {
+    async fn size(&self) -> WSResult<usize> {
+        Ok(self.data.len())
+    }
+
+    async fn read_chunk(&self, offset: usize, size: usize) -> WSResult<Vec<u8>> {
+        Ok(self.data[offset..offset+size].to_vec())
+    }
+
+    fn block_type(&self) -> BatchDataBlockType {
+        BatchDataBlockType::Mem
+    }
+}
+
+#### 2.3 DataGeneral RPC处理实现
+
+```rust
+/// 默认数据块大小 (4MB)
+const DEFAULT_BLOCK_SIZE: usize = 4 * 1024 * 1024;
+
+impl DataGeneral {
+    /// 处理批量数据写入请求
+    /// 
+    /// # 处理流程
+    /// 1. 使用WriteSplitDataTaskManager查询handle
+    /// 2. 使用WriteSplitDataTaskHandle提交写入任务
+    /// 3. 等待写入完成并返回结果
+    pub async fn rpc_handle_batch_data(
+        &self,
+        request: BatchDataRequest,
+    ) -> WSResult<()> {
+        // 1. 使用WriteSplitDataTaskManager查询handle
+        let handle = match self.write_manager.get_handle(&request.unique_id) {
+            Some(handle) => {
+                // 验证版本号
+                if handle.version() != request.version {
+                    tracing::error!(
+                        "Version mismatch for transfer {}, expected {}, got {}",
+                        hex::encode(&request.unique_id),
+                        handle.version(),
+                        request.version
+                    );
+                    return Err(WSError::BatchError(WsBatchErr::VersionMismatch {
+                        expected: handle.version(),
+                        actual: request.version,
+                    }));
+                }
+                handle
+            }
+            None => {
+                // 创建新的写入任务组
+                let (group, handle) = WriteSplitDataTaskGroup::new(
+                    request.unique_id.clone(),
+                    calculate_splits(request.total_blocks),
+                    request.block_type,
+                ).await?;
+
+                // 注册handle
+                self.write_manager.register_handle(
+                    request.unique_id.clone(),
+                    handle.clone(),
+                    group,
+                );
+
+                handle
+            }
+        };
+
+        // 2. 使用WriteSplitDataTaskHandle提交写入任务
+        let offset = request.block_idx as usize * DEFAULT_BLOCK_SIZE;
+
+        if let Err(e) = handle.submit_split(offset, request.data).await {
+            tracing::error!(
+                "Failed to submit split for transfer {}, block {}: {}",
+                hex::encode(&request.unique_id),
+                request.block_idx,
+                e
+            );
+            return Err(e);
+        }
+
+        tracing::debug!(
+            "Successfully submitted block {} for transfer {}",
+            request.block_idx,
+            hex::encode(&request.unique_id)
+        );
+
+        Ok(())
+    }
+}
+
+/// 数据分片索引
+#[derive(Debug, Clone, Copy)]
+pub struct DataSplitIdx {
+    pub offset: usize,
+}
+
+/// 计算数据分片范围
+fn calculate_splits(total_blocks: u32) -> Vec<Range<usize>> {
+    let mut splits = Vec::with_capacity(total_blocks as usize);
+    for i in 0..total_blocks {
+        let start = i as usize * DEFAULT_BLOCK_SIZE;
+        let end = start + DEFAULT_BLOCK_SIZE;
+        splits.push(start..end);
+    }
+    splits
+}
