@@ -6,7 +6,7 @@ import datetime
 import tarfile
 from pathlib import Path
 
-def backup_files(directory, file_types=('.md', '.canvas')):
+def backup_files(directory, file_types=( '.canvas')):
     # Get current timestamp
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     
@@ -43,7 +43,7 @@ def sync_md_files(source_dir, target_dir):
     # Walk through the source directory
     for root, _, files in os.walk(source_path):
         # Filter for .md and .canvas files
-        target_files = [f for f in files if f.endswith(('.md', '.canvas'))]
+        target_files = [f for f in files if f.endswith(('.canvas'))]
         
         for target_file in target_files:
             # Get the full source path
