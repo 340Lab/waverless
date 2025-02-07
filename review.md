@@ -1,6 +1,5 @@
 # 项目分析与修改计划
 
-
 ### 现有
 
 #### DataGeneral
@@ -318,3 +317,92 @@ impl WriteSplitDataManager {
         self.handles.remove(unique_id);
     }
 }
+
+## 修改 使用情况以适配新接口 计划
+
+### 1. 修改 get_or_del_data 函数
+
+```diff
+ pub async fn get_or_del_data(&self, GetOrDelDataArg { meta, unique_id, ty }: GetOrDelDataArg) 
+     -> WSResult<(DataSetMetaV2, HashMap<DataItemIdx, proto::DataItem>)> 
+ {
+     let want_idxs: Vec<DataItemIdx> = WantIdxIter::new(&ty, meta.data_item_cnt() as DataItemIdx).collect();
+     
+    let mut groups = Vec::new();
+    let mut idxs = Vec::new();
+    let p2p = self.view.p2p();
+    let mut ret = HashMap::new();
+
+    for idx in want_idxs {
+        // 为每个数据项创建独立的任务组
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let splits = vec![0..1];
+        let splits = vec![0..1];
+        let (mut group, handle) = WriteSplitDataTaskGroup::new(
+            unique_id.clone(),
+            splits,
+            match ty {
+                GetOrDelDataArgType::Delete => proto::BatchDataBlockType::Delete,
+                _ => proto::BatchDataBlockType::Memory,
+            },
+            Arc::clone(&self.manager),
+        ).await;
+
+        let p2p = p2p.clone();
+        let unique_id = unique_id.clone();
+        let data_node = meta.get_data_node(idx);
+        let delete = matches!(ty, GetOrDelDataArgType::Delete);
+        let rpc_call = self.rpc_call_get_data.clone();
+
+        let handle_clone = handle.clone();
+        let handle = tokio::spawn(async move {
+            let resp = rpc_call.call(
+                p2p,
+                data_node,
+                proto::GetOneDataRequest {
+                    unique_id: unique_id.to_vec(),
+                    idxs: vec![idx as u32],
+                    delete,
+                    return_data: true,
+                },
+                Some(Duration::from_secs(60)),
+            ).await?;
+
+            if !resp.success {
+                tracing::error!("Failed to get data for idx {}: {}", idx, resp.message);
+                return Err(WsDataError::GetDataFailed {
+                    unique_id: unique_id.to_vec(),
+                    msg: resp.message,
+                }.into());
+            }
+
+            handle_clone.submit_split(0, resp.data[0].clone()).await;
+            Ok::<_, WSError>(())
+        });
+
+        groups.push(group);
+        idxs.push((idx, handle));
+    }
+
+    // 等待所有RPC任务完成
+    for (group, (idx, handle)) in groups.into_iter().zip(idxs.into_iter()) {
+        if let Err(e) = handle.await.map_err(|e| WSError::from(e))?.map_err(|e| e) {
+            tracing::error!("RPC task failed for idx {}: {}", idx, e);
+            continue;
+        }
+
+        match group.join().await {
+            Ok(data_item) => {
+                ret.insert(idx, data_item);
+            }
+            Err(e) => {
+                tracing::error!("Task group join failed for idx {}: {}", idx, e);
+            }
+        }
+    }
+
+    Ok(ret)
+}
+```
+
+### 2. BatchTransfer 的 new 方法
