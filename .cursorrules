@@ -1,8 +1,35 @@
 # Waverless 项目规则列表
 
-阅读一下review里的字符画设计图，细化/mnt/s3fs/waverless/design，主要是流程以及并行结构，数据流向 还有 数据关系
+- 关键概念
+  - 规则
+    即当前文件，需要和记忆保持同步
+  - review
+    项目根目录下的 review.md, 用于描述任务（问题）以及记录设计方案和执行记录
+  - design.canvas
+    提到canvas就是指他，因为目前没有别的canvas
+    项目整体设计图，描述执行流程（数据传递、并行结构），数据结构关系
+  - 流程图 | 流程结构
+    使用细致的图表达并行或顺序结构，条件结构；以及数据流转
+    一个阻塞执行的角色应该强化在块里，如子并行task，rpc caller，rpc handler，任务池
 
-细化的过程使用
+- 更新canvas流程
+  将 /mnt/s3fs/waverless/design.canvas 拷贝成待时间戳的tmp和tmp.bak
+  如 {项目根路径}/design.canvas.1703171246.tmp 
+     和 {项目根路径}/design.canvas.1703171246.tmp.bak
+  然后在 {项目根路径}/design.canvas.1703171246.tmp 中进行修改
+  然后覆盖原来 /mnt/s3fs/waverless/design.canvas  以及{项目根路径}/design.canvas
+
+- 提到“我更新了canvas”的情况，执行下python3 scripts/sync_md_files.py from_s3fs
+  这样项目下的 {项目根路径}/design.canvas 才是最新的
+  然后在理解分析新的设计
+
+- 函数返回 result的情况，如果不想处理，只要要log error
+
+- log使用tracing库
+
+- error的结构是一个 WSError，包含子error结构形如 WsXXXErr，父结构实现Error derive，子结构只需要实现debug
+  子结构尽量实现现有分类
+
 
 ## 1. 任务执行强制等待规则
 - 制定计划后必须等待用户确认：
