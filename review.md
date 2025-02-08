@@ -4,43 +4,43 @@
 ```rust
 // 1. src/main/src/general/data/m_data_general/batch.rs 中删除
 // 1.1 删除 BatchManager
-pub(super) struct BatchManager {
-    transfers: DashMap<proto::BatchRequestId, BatchTransfer>,
-    sequence: AtomicU64,
-}
+// pub(super) struct BatchManager {
+//     transfers: DashMap<proto::BatchRequestId, BatchTransfer>,
+//     sequence: AtomicU64,
+// }
 
-impl BatchManager {
-    pub fn new() -> Self
-    pub fn next_sequence(&self) -> u64
-    pub async fn create_transfer(...)
-    pub async fn handle_block(...)
-}
+// impl BatchManager {
+//     pub fn new() -> Self
+//     pub fn next_sequence(&self) -> u64
+//     pub async fn create_transfer(...)
+//     pub async fn handle_block(...)
+// }
 
 // 1.2 删除 BatchTransfer
-pub(super) struct BatchTransfer {
-    pub unique_id: Vec<u8>,
-    pub version: u64,
-    pub block_type: proto::BatchDataBlockType,
-    pub total_blocks: u32,
-    data_sender: mpsc::Sender<WSResult<(DataSplitIdx, proto::DataItem)>>,
-    write_task: JoinHandle<WSResult<proto::DataItem>>,
-    pub tx: Option<mpsc::Sender<WSResult<proto::DataItem>>>,
-}
+// pub(super) struct BatchTransfer {
+//     pub unique_id: Vec<u8>,
+//     pub version: u64,
+//     pub block_type: proto::BatchDataBlockType,
+//     pub total_blocks: u32,
+//     data_sender: mpsc::Sender<WSResult<(DataSplitIdx, proto::DataItem)>>,
+//     write_task: JoinHandle<WSResult<proto::DataItem>>,
+//     pub tx: Option<mpsc::Sender<WSResult<proto::DataItem>>>,
+// }
 
-impl BatchTransfer {
-    pub async fn new(...)
-    pub async fn add_block(...)
-    pub async fn complete(...)
-    fn calculate_splits(...)
-}
+// impl BatchTransfer {
+//     pub async fn new(...)
+//     pub async fn add_block(...)
+//     pub async fn complete(...)
+//     fn calculate_splits(...)
+// }
 
 // 2. src/main/src/general/data/m_data_general/mod.rs 中删除
-struct DataGeneral {
-    batch_manager: Arc<BatchManager>,  // 删除此字段
-}
+// struct DataGeneral {
+//     batch_manager: Arc<BatchManager>,  // 删除此字段
+// }
 
 // DataGeneral::new() 中删除
-batch_manager: Arc::new(BatchManager::new()),
+// batch_manager: Arc::new(BatchManager::new()),
 ```
 
 ## 2. 新增代码
@@ -325,6 +325,27 @@ impl WriteSplitDataTaskGroup {
         }
     }
 }
+
+/// DataItem 数据源
+pub enum DataItemSource {
+    Memory {
+        data: Arc<Vec<u8>>,
+    },
+    File {
+        path: String,
+    },
+}
+
+DataItemSource 采用枚举设计，优点：
+1. 类型安全：使用枚举确保数据源类型的互斥性
+2. 内存效率：文件类型只存储路径，避免一次性加载
+3. 延迟读取：只在实际需要时才读取文件数据
+4. 符合分层：配合 WriteSplitDataTaskGroup 的文件/内存写入流程
+
+实现了 DataSource trait：
+- size(): 获取数据总大小
+- read_chunk(): 读取指定范围的数据
+- block_type(): 返回对应的 BlockType
 ```
 
 ### src/main/src/general/data/m_data_general/mod.rs
