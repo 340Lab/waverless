@@ -41,3 +41,7 @@ if __name__ == "__main__":
     
     print(f"Starting sync from {source_dir} to {target_dir}")
     sync_md_files(source_dir, target_dir)
+    if args.direction == 'from_s3fs':
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        os.system(f"cp {target_dir}/design.canvas {target_dir}/design.canvas.{timestamp}.bak")
+        print(f"Backup design.canvas to design.canvas.{timestamp}.bak")
