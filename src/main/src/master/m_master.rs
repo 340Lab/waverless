@@ -13,7 +13,7 @@ use ws_derive::LogicalModule;
 use crate::{
     config::NodesConfig,
     general::{
-        app::{AffinityPattern, AffinityRule, AppMetaManager, AppType, DataEventTrigger, FnMeta},
+        app::{AppMetaManager, DataEventTrigger},
         network::{
             m_p2p::{P2PModule, RPCCaller},
             proto::{
