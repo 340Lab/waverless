@@ -183,12 +183,14 @@ message BatchRequestId {
 
 message BatchDataRequest {
     BatchRequestId request_id = 1;        // 请求唯一标识（节点ID + 序列号）
-    BatchDataBlockType block_type = 2;    // 数据块类型（文件/内存）
-    uint32 block_index = 3;              // 数据块索引
-    bytes data = 4;                      // 数据块内容
-    DataOpeType operation = 5;          // 操作类型
-    bytes unique_id = 6;                 // 数据唯一标识
-    uint64 version = 7;                  // 数据版本
+    bytes dataset_unique_id = 2;          // 数据集唯一标识
+    uint32 data_item_idx = 3;            // 数据项索引
+    BatchDataBlockType block_type = 4;    // 数据块类型（文件/内存）
+    uint32 block_index = 5;              // 数据块索引
+    bytes data = 6;                      // 数据块内容
+    DataOpeType operation = 7;           // 操作类型
+    bytes unique_id = 8;                 // 数据唯一标识
+    uint64 version = 9;                  // 数据版本
 }
 
 message BatchDataResponse {
