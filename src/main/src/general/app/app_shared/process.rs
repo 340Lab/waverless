@@ -8,7 +8,7 @@ use crate::general::{
     app::AppType,
     network::rpc_model::{self, HashValue},
 };
-use crate::result::{WSError, WsFuncError};
+use crate::result::{WsFuncError};
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use parking_lot::RwLock;
