@@ -1,4 +1,5 @@
 use crate::general::app::DataEventTrigger;
+use crate::general::data::m_data_general::dataitem::DataItemSource;
 use crate::general::data::m_dist_lock::DistLockOpe;
 use crate::general::network::proto::sche::distribute_task_req::{
     DataEventTriggerNew, DataEventTriggerWrite, Trigger,
@@ -7,6 +8,7 @@ use crate::general::network::proto::sche::distribute_task_req::{
 use super::proto::{self, kv::KvResponse, FileData};
 
 use std::{ops::Range, path::Path};
+use crate::result::{WSResult, WSError, WsDataError};
 
 pub trait ProtoExtDataItem {
     fn data_sz_bytes(&self) -> usize;
@@ -16,6 +18,7 @@ pub trait ProtoExtDataItem {
     fn as_raw_bytes<'a>(&'a self) -> Option<&'a [u8]>;
     fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self;
     fn as_file_data(&self) -> Option<&proto::FileData>;
+    fn to_data_item_source(&self) -> DataItemSource;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
@@ -93,6 +96,20 @@ impl ProtoExtDataItem for proto::DataItem {
         match &self.data_item_dispatch {
             Some(proto::data_item::DataItemDispatch::File(file_data)) => Some(file_data),
             _ => None,
+        }
+    }
+
+    fn to_data_item_source(&self) -> DataItemSource {
+        match &self.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => DataItemSource::Memory {
+                data: bytes.clone(),
+            },
+            Some(proto::data_item::DataItemDispatch::File(file_data)) => DataItemSource::File {
+                path: file_data.file_name_opt.clone().into(),
+            },
+            _ => DataItemSource::Memory {
+                data: Vec::new(),
+            },
         }
     }
 }
@@ -200,26 +217,43 @@ impl KvRequestExt for proto::kv::KvRequest {
 }
 
 pub trait DataItemExt {
-    fn decode_persist(data: Vec<u8>) -> Self;
+    fn decode_persist(data: Vec<u8>) -> WSResult<Self> where Self: Sized;
     fn encode_persist<'a>(&'a self) -> Vec<u8>;
 }
 
 impl DataItemExt for proto::DataItem {
-    fn decode_persist(data: Vec<u8>) -> Self {
+    fn decode_persist(data: Vec<u8>) -> WSResult<Self> where Self: Sized {
+        if data.is_empty() {
+            return Err(WSError::WsDataError(WsDataError::DataDecodeError {
+                reason: "Empty data".to_string(),
+                data_type: "proto::DataItem".to_string(),
+            }));
+        }
         let data_item_dispatch = match data[0] {
-            0 => proto::data_item::DataItemDispatch::File(FileData {
-                file_name_opt: String::new(),
-                is_dir_opt: false,
-                file_content: data[1..].to_owned(),
-            }),
-            1 => proto::data_item::DataItemDispatch::RawBytes(data[1..].to_owned()),
+            0 => {
+                let path_str = String::from_utf8(data[1..].to_vec()).map_err(|e| {
+                    WSError::WsDataError(WsDataError::DataDecodeError {
+                        reason: format!("Failed to decode path string: {}", e),
+                        data_type: "proto::DataItem::File".to_string(),
+                    })
+                })?;
+                proto::data_item::DataItemDispatch::File(FileData {
+                    file_name_opt: path_str,
+                    is_dir_opt: false,
+                    file_content: Vec::new(),
+                })
+            },
+            1 => proto::data_item::DataItemDispatch::RawBytes(data[1..].to_vec()),
             _ => {
-                panic!("unknown data item type id: {}", data[0])
+                return Err(WSError::WsDataError(WsDataError::DataDecodeError {
+                    reason: format!("Unknown data item type id: {}", data[0]),
+                    data_type: "proto::DataItem".to_string(),
+                }));
             }
         };
-        Self {
+        Ok(Self {
             data_item_dispatch: Some(data_item_dispatch),
-        }
+        })
     }
     fn encode_persist<'a>(&'a self) -> Vec<u8> {
         match self.data_item_dispatch.as_ref().unwrap() {
