@@ -4,7 +4,7 @@ pub mod wasm_host_funcs;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::instance::OwnedInstance;
 use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxSync};
-use crate::result::{WSResult, WsFuncError};
+use crate::result::{WSResult};
 use async_trait::async_trait;
 
 #[async_trait]

@@ -5,7 +5,6 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use thiserror::Error;
 
-use crate::result::WSResult;
 
 /// AsyncInitMap 的错误类型
 #[derive(Debug, Error)]

@@ -1,10 +1,6 @@
-use crate::general::app::m_executor::EventCtx;
 use crate::general::app::m_executor::Executor;
-use crate::general::app::m_executor::FnExeCtxAsync;
-use crate::general::app::m_executor::FnExeCtxAsyncAllowedType;
 use crate::general::app::AppMetaManager;
 use crate::general::app::DataEventTrigger;
-use crate::general::app::{AffinityPattern, AffinityRule, NodeTag};
 use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
@@ -16,7 +12,7 @@ use crate::util::JoinHandleWrapper;
 use crate::{
     general::data::{
         m_data_general::{
-            CacheMode, DataGeneral, DataItemIdx, DataSetMeta, DataSetMetaBuilder, DataSplit,
+            CacheMode, DataGeneral, DataSetMetaBuilder, DataSplit,
             EachNodeSplit, CACHE_MODE_MAP_COMMON_KV_MASK, CACHE_MODE_TIME_FOREVER_MASK,
         },
         m_kv_store_engine::{KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine},
