@@ -1,32 +1,33 @@
-use crate::general::data::m_data_general::DataItemIdx;
-use crate::general::data::m_data_general::GetOrDelDataArgType;
+use crate::general::data::m_data_general::UniqueId;
 use crate::general::network::proto;
+use crate::general::data::m_data_general::{DataItemIdx, DataSplitIdx, GetOrDelDataArgType};
 use crate::general::network::proto_ext::ProtoExtDataItem;
-use crate::result::WSError;
-use crate::result::WSResult;
-use crate::result::WsDataError;
-use crate::result::WsIoErr;
-use crate::result::WsRuntimeErr;
-use base64::Engine;
-use futures::future::join_all;
+use crate::result::{WSError, WSResult, WsDataError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::collections::btree_set;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::broadcast;
+use tracing;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use super::CacheModeVisitor;
-use super::DataSplitIdx;
+const DEFAULT_BLOCK_SIZE: usize = 4096;
 
-// iterator for wanted dataitem idxs
+/// 用于遍历数据项索引的迭代器
+#[derive(Debug)]
 pub(super) enum WantIdxIter<'a> {
+    /// 遍历多个指定索引
     PartialMany {
         iter: btree_set::Iter<'a, DataItemIdx>,
     },
+    /// 遍历单个索引
     PartialOne {
         idx: DataItemIdx,
         itercnt: u8,
     },
+    /// 遍历所有或删除操作的索引
     Other {
         ty: GetOrDelDataArgType,
         itercnt: u8,
@@ -35,6 +36,12 @@ pub(super) enum WantIdxIter<'a> {
 }
 
 impl<'a> WantIdxIter<'a> {
+    /// 创建新的索引迭代器
+    /// 
+    /// # 参数
+    /// * `ty` - 迭代类型
+    /// * `itemcnt` - 数据项总数
+    #[must_use]
     pub(super) fn new(ty: &'a GetOrDelDataArgType, itemcnt: DataItemIdx) -> Self {
         match ty {
             GetOrDelDataArgType::PartialMany { idxs } => Self::PartialMany { iter: idxs.iter() },
@@ -72,18 +79,22 @@ impl<'a> Iterator for WantIdxIter<'a> {
                         let ret = *itercnt;
                         *itercnt += 1;
                         Some(ret)
-        }
-    }
+                    }
+                }
                 GetOrDelDataArgType::PartialMany { .. }
                 | GetOrDelDataArgType::PartialOne { .. } => {
                     panic!("PartialMany should be handled by iter")
-}
+                }
             },
         }
     }
 }
 
+/// 共享内存区域的持有者
+/// 负责管理共享内存的所有权和生命周期
+#[derive(Debug, Clone)]
 pub struct SharedMemHolder {
+    /// 共享内存数据
     data: Arc<Vec<u8>>,
 }
 
@@ -101,15 +112,34 @@ impl SharedMemHolder {
             None
         }
     }
-    // }
+
+    pub fn as_raw_bytes(&self) -> Option<&[u8]> {
+        Some(self.data.as_ref())
+    }
 }
 
+impl From<SharedMemHolder> for Vec<u8> {
+    fn from(holder: SharedMemHolder) -> Self {
+        holder.as_raw_bytes().expect("Failed to get raw bytes").to_vec()
+    }
+}
+
+/// 共享内存区域的访问者
+/// 提供对特定范围内存的安全访问
 pub struct SharedMemOwnedAccess {
+    /// 共享内存数据
     data: Arc<Vec<u8>>,
+    /// 访问范围
     range: Range<usize>,
 }
 
 impl SharedMemOwnedAccess {
+    /// 获取可变字节切片
+    /// 
+    /// # Safety
+    /// 调用者必须确保:
+    /// 1. 没有其他线程同时访问这块内存
+    /// 2. 访问范围不超过内存边界
     pub unsafe fn as_bytes_mut(&self) -> &mut [u8] {
         // SAFETY:
         // 1. We have &mut self, so we have exclusive access to this data
@@ -121,7 +151,12 @@ impl SharedMemOwnedAccess {
     }
 }
 
-pub fn new_shared_mem(splits: &Vec<Range<usize>>) -> (SharedMemHolder, Vec<SharedMemOwnedAccess>) {
+/// 创建新的共享内存和访问者
+/// 
+/// # 参数
+/// * `splits` - 内存分片范围列表
+#[must_use]
+pub fn new_shared_mem(splits: &[Range<usize>]) -> (SharedMemHolder, Vec<SharedMemOwnedAccess>) {
     let len = splits.iter().map(|range| range.len()).sum();
     let data = Arc::new(vec![0; len]);
     let owned_accesses = splits
@@ -135,39 +170,97 @@ pub fn new_shared_mem(splits: &Vec<Range<usize>>) -> (SharedMemHolder, Vec<Share
     (SharedMemHolder { data }, owned_accesses)
 }
 
-pub enum WriteSplitDataTaskGroup {
-    ToFile {
-        unique_id: UniqueId,
-        file_path: PathBuf,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
-        expected_size: usize,
-        current_size: usize,
+/// 计算数据分片范围
+/// 
+/// # 参数
+/// * `total_blocks` - 总块数
+/// 
+/// # 返回
+/// * `Vec<Range<usize>>` - 分片范围列表
+#[must_use]
+pub fn calculate_splits(total_blocks: u32) -> Vec<Range<usize>> {
+    let mut splits = Vec::with_capacity(total_blocks as usize);
+    for i in 0..total_blocks {
+        let start = i as usize * DEFAULT_BLOCK_SIZE;
+        let end = start + DEFAULT_BLOCK_SIZE;
+        splits.push(start..end);
+    }
+    splits
+}
+
+/// 写入类型
+/// 支持写入文件或内存两种模式
+#[derive(Debug, Clone)]
+pub enum WriteSplitDataType {
+    /// 文件写入模式
+    File {
+        /// 目标文件路径
+        path: PathBuf,
     },
-    ToMem {
-        unique_id: UniqueId,
+    /// 内存写入模式
+    Mem {
+        /// 共享内存区域
         shared_mem: SharedMemHolder,
+    },
+}
+
+/// 写入分片任务组
+/// 管理一组相关的写入任务
+#[derive(Debug)]
+pub enum WriteSplitDataTaskGroup {
+    /// 文件写入模式
+    ToFile {
+        /// 任务唯一标识
+        unique_id: UniqueId,
+        /// 目标文件路径
+        file_path: PathBuf,
+        /// 任务列表
         tasks: Vec<tokio::task::JoinHandle<()>>,
+        /// 接收新任务的通道
         rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
+        /// 预期总大小
         expected_size: usize,
+        /// 当前已写入大小
         current_size: usize,
+        /// 广播通道发送端，用于通知任务完成
+        broadcast_tx: Arc<broadcast::Sender<()>>,
+    },
+    /// 内存写入模式
+    ToMem {
+        /// 任务唯一标识
+        unique_id: UniqueId,
+        /// 共享内存区域
+        shared_mem: SharedMemHolder,
+        /// 任务列表
+        tasks: Vec<tokio::task::JoinHandle<()>>,
+        /// 接收新任务的通道
+        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
+        /// 预期总大小
+        expected_size: usize,
+        /// 当前已写入大小
+        current_size: usize,
+        /// 广播通道发送端，用于通知任务完成
+        broadcast_tx: Arc<broadcast::Sender<()>>,
     },
 }
 
 impl WriteSplitDataTaskGroup {
+    /// 创建新的任务组
     pub async fn new(
         unique_id: UniqueId,
-        splits: Vec<Range<usize>>,
+        splits: Vec<std::ops::Range<usize>>,
         block_type: proto::BatchDataBlockType,
         version: u64,
-    ) -> (Self, WriteSplitDataTaskHandle) {
+    ) -> WSResult<(Self, WriteSplitDataTaskHandle)> {
         let expected_size = splits.iter().map(|range| range.len()).sum();
         let (tx, rx) = mpsc::channel(32);
+        let (broadcast_tx, _) = broadcast::channel::<()>(32);
+        let broadcast_tx = Arc::new(broadcast_tx);
 
         match block_type {
             proto::BatchDataBlockType::File => {
                 let file_path = PathBuf::from(format!("{}.data", 
-                    base64::engine::general_purpose::STANDARD.encode(&unique_id)));
+                    STANDARD.encode(&unique_id)));
                 
                 let handle = WriteSplitDataTaskHandle {
                     tx,
@@ -175,6 +268,7 @@ impl WriteSplitDataTaskGroup {
                         path: file_path.clone(),
                     },
                     version,
+                    broadcast_tx: broadcast_tx.clone(),
                 };
                 
                 let group = Self::ToFile {
@@ -184,12 +278,15 @@ impl WriteSplitDataTaskGroup {
                     rx,
                     expected_size,
                     current_size: 0,
+                    broadcast_tx: broadcast_tx.clone(),
                 };
                 
-                (group, handle)
+                Ok((group, handle))
             }
-            _ => {
-                let shared_mem = new_shared_mem(&splits).unwrap_or_default();
+            proto::BatchDataBlockType::Memory => {
+                let shared_mem = SharedMemHolder {
+                    data: Arc::new(vec![0; expected_size]),
+                };
                 
                 let handle = WriteSplitDataTaskHandle {
                     tx,
@@ -197,6 +294,7 @@ impl WriteSplitDataTaskGroup {
                         shared_mem: shared_mem.clone(),
                     },
                     version,
+                    broadcast_tx: broadcast_tx.clone(),
                 };
                 
                 let group = Self::ToMem {
@@ -206,15 +304,21 @@ impl WriteSplitDataTaskGroup {
                     rx,
                     expected_size,
                     current_size: 0,
+                    broadcast_tx: broadcast_tx.clone(),
                 };
                 
-                (group, handle)
+                Ok((group, handle))
             }
         }
     }
 
-    async fn process_tasks(&mut self) -> WSResult<proto::DataItem> {
-        let mut pending_tasks = FuturesUnordered::new();
+    /// 处理所有写入任务
+    /// 
+    /// # 返回
+    /// * `Ok(item)` - 所有数据写入完成,返回数据项
+    /// * `Err(e)` - 写入过程中出错
+    pub async fn process_tasks(&mut self) -> WSResult<proto::DataItem> {
+        let mut pending_tasks: FuturesUnordered<tokio::task::JoinHandle<()>> = FuturesUnordered::new();
         
         match self {
             Self::ToFile { tasks, .. } |
@@ -243,11 +347,7 @@ impl WriteSplitDataTaskGroup {
                 Some(completed_result) = pending_tasks.next() => {
                     if let Err(e) = completed_result {
                         tracing::error!("Task failed: {}", e);
-                        return Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-                            request_id: match self {
-                                Self::ToFile { unique_id, .. } |
-                                Self::ToMem { unique_id, .. } => unique_id.clone()
-                            },
+                        return Err(WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
                             reason: format!("Task failed: {}", e)
                         }));
                     }
@@ -258,38 +358,10 @@ impl WriteSplitDataTaskGroup {
                         }
                     }
                 }
-                None = match self {
-                    Self::ToFile { rx, .. } |
-                    Self::ToMem { rx, .. } => rx.recv()
-                } => {
-                    while let Some(completed_result) = pending_tasks.next().await {
-                        if let Err(e) = completed_result {
-                            tracing::error!("Task failed during cleanup: {}", e);
-                            return Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-                                request_id: match self {
-                                    Self::ToFile { unique_id, .. } |
-                                    Self::ToMem { unique_id, .. } => unique_id.clone()
-                                },
-                                reason: format!("Task failed during cleanup: {}", e)
-                            }));
-                        }
-                        match self {
-                            Self::ToFile { current_size, .. } |
-                            Self::ToMem { current_size, .. } => {
-                                *current_size += DEFAULT_BLOCK_SIZE;
-                            }
-                        }
-                    }
-                    break;
-                }
             }
         }
 
-        Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-            request_id: match self {
-                Self::ToFile { unique_id, .. } |
-                Self::ToMem { unique_id, .. } => unique_id.clone()
-            },
+        Err(WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
             reason: "Channel closed".to_string()
         }))
     }
@@ -305,11 +377,15 @@ impl WriteSplitDataTaskGroup {
             Self::ToFile { current_size, expected_size, file_path, unique_id, .. } => {
                 if *current_size > *expected_size {
                     Err(WSError::WsDataError(WsDataError::BatchTransferError {
-                        request_id: unique_id.clone(),
-                        msg: format!("Written size {} exceeds expected size {}", current_size, expected_size)
+                        request_id: proto::BatchRequestId {
+                            node_id: 0,  // 这里需要传入正确的node_id
+                            sequence: 0,
+                        },
+                        msg: format!("Written size {} exceeds expected size {} for unique_id {:?}", 
+                            current_size, expected_size, unique_id)
                     }))
                 } else if *current_size == *expected_size {
-                    Ok(Some(proto::DataItem::new_file_data(file_path.clone())))
+                    Ok(Some(proto::DataItem::new_file_data(file_path.clone(), false)))
                 } else {
                     Ok(None)
                 }
@@ -317,11 +393,15 @@ impl WriteSplitDataTaskGroup {
             Self::ToMem { current_size, expected_size, shared_mem, unique_id, .. } => {
                 if *current_size > *expected_size {
                     Err(WSError::WsDataError(WsDataError::BatchTransferError {
-                        request_id: unique_id.clone(),
-                        msg: format!("Written size {} exceeds expected size {}", current_size, expected_size)
+                        request_id: proto::BatchRequestId {
+                            node_id: 0,  // 这里需要传入正确的node_id
+                            sequence: 0,
+                        },
+                        msg: format!("Written size {} exceeds expected size {} for unique_id {:?}", 
+                            current_size, expected_size, unique_id)
                     }))
                 } else if *current_size == *expected_size {
-                    Ok(Some(proto::DataItem::new_mem_data(shared_mem.clone())))
+                    Ok(Some(proto::DataItem::new_raw_bytes(shared_mem.clone())))
                 } else {
                     Ok(None)
                 }
@@ -332,6 +412,7 @@ impl WriteSplitDataTaskGroup {
 
 /// 写入分片任务的句柄
 /// 用于提交新的分片任务和等待任务完成
+#[derive(Clone)]
 pub struct WriteSplitDataTaskHandle {
     /// 发送任务的通道
     tx: mpsc::Sender<tokio::task::JoinHandle<()>>,
@@ -342,6 +423,8 @@ pub struct WriteSplitDataTaskHandle {
     /// 1. 防止旧版本数据覆盖新版本数据
     /// 2. 客户端可以通过比较版本号确认数据是否最新
     version: u64,
+    /// 广播通道发送端，用于通知任务完成
+    broadcast_tx: Arc<broadcast::Sender<()>>,
 }
 
 impl WriteSplitDataTaskHandle {
@@ -364,33 +447,43 @@ impl WriteSplitDataTaskHandle {
             WriteSplitDataType::File { path } => {
                 let path = path.clone();
                 let offset = idx;
-                let data = data.as_bytes().to_vec();
-                // 启动异步任务写入文件
-                // 使用 spawn 是因为文件 IO 可能比较慢,不应该阻塞当前任务
+                let data = data.as_raw_bytes().unwrap_or(&[]).to_vec();
                 tokio::spawn(async move {
-                    if let Err(e) = tokio::fs::OpenOptions::new()
+                    let result = tokio::fs::OpenOptions::new()
                         .create(true)
                         .write(true)
                         .open(&path)
-                        .await
-                        .and_then(|mut file| async move {
+                        .await;
+                    
+                    match result {
+                        Ok(mut file) => {
                             use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-                            file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
-                            file.write_all(&data).await
-                        })
-                        .await
-                    {
-                        tracing::error!("Failed to write file data at offset {}: {}", offset, e);
+                            if let Err(e) = async move {
+                                // 验证seek结果
+                                let seek_pos = file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
+                                if seek_pos != offset as u64 {
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        format!("Seek position mismatch: expected {}, got {}", offset, seek_pos)
+                                    ));
+                                }
+                                // write_all保证写入所有数据或返回错误
+                                file.write_all(&data).await?;
+                                Ok::<_, std::io::Error>(())
+                            }.await {
+                                tracing::error!("Failed to write file data at offset {}: {}", offset, e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to open file at offset {}: {}", offset, e);
+                        }
                     }
                 })
             }
             WriteSplitDataType::Mem { shared_mem } => {
                 let mem = shared_mem.clone();
                 let offset = idx;
-                let data = data.as_bytes().to_vec();
-                // 启动异步任务写入内存
-                // 使用 spawn 是因为需要保证所有写入操作都在同一个线程上执行
-                // 避免多线程并发写入同一块内存导致的数据竞争
+                let data = data.as_raw_bytes().unwrap_or(&[]).to_vec();
                 tokio::spawn(async move {
                     unsafe {
                         let slice = std::slice::from_raw_parts_mut(
@@ -403,34 +496,149 @@ impl WriteSplitDataTaskHandle {
             }
         };
 
+        // 发送到通道
+        let _ = self.broadcast_tx.send(());
         self.tx.send(task).await.map_err(|e| {
-            tracing::error!("Failed to submit task: channel closed, idx: {:?}", idx);
-            WSError::WsDataError(WsDataError::BatchTransferFailed {
-                request_id: idx.into(),
-                reason: "Failed to submit task: channel closed".to_string()
+            tracing::error!("Failed to submit task: channel closed, idx: {:?}, error: {}", idx, e);
+            WSError::WsDataError(WsDataError::DataSplitTaskError {
+                msg: format!("Failed to submit task: channel closed, error: {}", e)
             })
         })
     }
 
     /// 等待所有已提交的写入任务完成
     /// 关闭发送端,不再接收新任务
-    pub async fn wait_all_tasks(self) -> WSResult<()> {
-        drop(self.tx);
+    pub async fn wait_all_tasks(&self) -> WSResult<()> {
+        // 等待广播通知
+        let mut rx = self.broadcast_tx.subscribe();
+        rx.recv().await.map_err(|e| {
+            tracing::error!("Failed to wait for tasks: {}", e);
+            WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
+                reason: format!("Failed to wait for tasks: {}", e)
+            })
+        })?;
+        
         Ok(())
     }
 }
 
-/// 写入类型
-/// 支持写入文件或内存两种模式
-pub enum WriteSplitDataType {
-    /// 文件写入模式
+#[derive(Debug)]
+pub enum DataItemSource {
+    Memory {
+        data: Vec<u8>,
+    },
     File {
-        /// 目标文件路径
         path: PathBuf,
     },
-    /// 内存写入模式
-    Mem {
-        /// 共享内存区域
-        shared_mem: SharedMemHolder,
-    },
+}
+
+impl DataItemSource {
+    pub fn to_debug_string(&self) -> String {
+        match self {
+            Self::Memory { data } => {
+                //limit range vec
+                format!("Memory({:?})", data[0..10.min(data.len())].to_vec())
+            }
+            Self::File { path } => format!("File({})", path.to_string_lossy()),
+        }
+    }
+
+    pub fn new(data: proto::DataItem) -> Self {
+        match &data.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => Self::Memory {
+                data: bytes.clone(),
+            },
+            Some(proto::data_item::DataItemDispatch::File(file_data)) => Self::File {
+                path: file_data.file_name_opt.clone().into(),
+            },
+            _ => Self::Memory {
+                data: Vec::new(),
+            },
+        }
+    }
+
+    pub fn block_type(&self) -> proto::BatchDataBlockType {
+        match self {
+            DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory,
+            DataItemSource::File { .. } => proto::BatchDataBlockType::File,
+        }
+    }
+
+    pub async fn get_block(&self, block_idx: usize) -> WSResult<Vec<u8>> {
+        match self {
+            DataItemSource::Memory { data } => {
+                if block_idx == 0 {
+                    Ok(data.clone())
+                } else {
+                    Err(WSError::WsDataError(WsDataError::SizeMismatch {
+                        expected: data.len(),
+                        actual: 0,
+                    }))
+                }
+            },
+            DataItemSource::File { path } => {
+                let content = tokio::fs::read(path).await.map_err(|_e| {
+                    WSError::WsDataError(WsDataError::ReadDataFailed {
+                        path: path.clone(),
+                    })
+                })?;
+                if block_idx == 0 {
+                    Ok(content)
+                } else {
+                    Err(WSError::WsDataError(WsDataError::SizeMismatch {
+                        expected: content.len(),
+                        actual: 0,
+                    }))
+                }
+            },
+        }
+    }
+}
+
+use crate::general::network::proto_ext::DataItemExt;
+
+impl DataItemExt for DataItemSource {
+    fn decode_persist(data: Vec<u8>) -> WSResult<Self> {
+        if data.is_empty() {
+            return Err(WSError::WsDataError(WsDataError::DataDecodeError {
+                reason: "Empty data".to_string(),
+                data_type: "DataItemSource".to_string(),
+            }));
+        }
+        match data[0] {
+            0 => {
+                let path_str = String::from_utf8(data[1..].to_vec()).map_err(|e| {
+                    WSError::WsDataError(WsDataError::DataDecodeError {
+                        reason: format!("Failed to decode path string: {}", e),
+                        data_type: "DataItemSource::File".to_string(),
+                    })
+                })?;
+                Ok(DataItemSource::File {
+                    path: PathBuf::from(path_str),
+                })
+            },
+            1 => Ok(DataItemSource::Memory {
+                data: data[1..].to_owned(),
+            }),
+            _ => Err(WSError::WsDataError(WsDataError::DataDecodeError {
+                reason: format!("Unknown data item type id: {}", data[0]),
+                data_type: "DataItemSource".to_string(),
+            }))
+        }
+    }
+
+    fn encode_persist(&self) -> Vec<u8> {
+        match self {
+            DataItemSource::File { path } => {
+                let mut ret = vec![0];
+                ret.extend_from_slice(path.to_string_lossy().as_bytes());
+                ret
+            }
+            DataItemSource::Memory { data } => {
+                let mut ret = vec![1];
+                ret.extend_from_slice(data);
+                ret
+            }
+        }
+    }
 }
