@@ -105,6 +105,7 @@ impl DataGeneral {
                     operation: proto::DataOpeType::Write as i32,
                     unique_id: unique_id.clone(),
                     version,
+                    total_size: total_size as u64,
                 };
 
                 // 发送请求

@@ -99,6 +99,10 @@ pub struct SharedMemHolder {
 }
 
 impl SharedMemHolder {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
     pub fn try_take_data(self) -> Option<Vec<u8>> {
         // SAFETY:
         // 1. We're only replacing the Arc with an empty Vec
@@ -173,16 +177,17 @@ pub fn new_shared_mem(splits: &[Range<usize>]) -> (SharedMemHolder, Vec<SharedMe
 /// 计算数据分片范围
 /// 
 /// # 参数
-/// * `total_blocks` - 总块数
+/// * `total_size` - 总大小
 /// 
 /// # 返回
 /// * `Vec<Range<usize>>` - 分片范围列表
 #[must_use]
-pub fn calculate_splits(total_blocks: u32) -> Vec<Range<usize>> {
-    let mut splits = Vec::with_capacity(total_blocks as usize);
+pub fn calculate_splits(total_size: usize) -> Vec<Range<usize>> {
+    let total_blocks = (total_size + DEFAULT_BLOCK_SIZE - 1) / DEFAULT_BLOCK_SIZE;
+    let mut splits = Vec::with_capacity(total_blocks);
     for i in 0..total_blocks {
-        let start = i as usize * DEFAULT_BLOCK_SIZE;
-        let end = start + DEFAULT_BLOCK_SIZE;
+        let start = i * DEFAULT_BLOCK_SIZE;
+        let end = (start + DEFAULT_BLOCK_SIZE).min(total_size);
         splits.push(start..end);
     }
     splits
@@ -204,6 +209,13 @@ pub enum WriteSplitDataType {
     },
 }
 
+/// 写入分片任务的结果
+#[derive(Debug)]
+pub struct WriteSplitTaskResult {
+    /// 写入的数据大小
+    pub written_size: usize,
+}
+
 /// 写入分片任务组
 /// 管理一组相关的写入任务
 #[derive(Debug)]
@@ -215,9 +227,9 @@ pub enum WriteSplitDataTaskGroup {
         /// 目标文件路径
         file_path: PathBuf,
         /// 任务列表
-        tasks: Vec<tokio::task::JoinHandle<()>>,
+        tasks: Vec<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 接收新任务的通道
-        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
+        rx: mpsc::Receiver<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 预期总大小
         expected_size: usize,
         /// 当前已写入大小
@@ -232,9 +244,9 @@ pub enum WriteSplitDataTaskGroup {
         /// 共享内存区域
         shared_mem: SharedMemHolder,
         /// 任务列表
-        tasks: Vec<tokio::task::JoinHandle<()>>,
+        tasks: Vec<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 接收新任务的通道
-        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
+        rx: mpsc::Receiver<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 预期总大小
         expected_size: usize,
         /// 当前已写入大小
@@ -248,11 +260,10 @@ impl WriteSplitDataTaskGroup {
     /// 创建新的任务组
     pub async fn new(
         unique_id: UniqueId,
-        splits: Vec<std::ops::Range<usize>>,
+        total_size: usize,
         block_type: proto::BatchDataBlockType,
         version: u64,
     ) -> WSResult<(Self, WriteSplitDataTaskHandle)> {
-        let expected_size = splits.iter().map(|range| range.len()).sum();
         let (tx, rx) = mpsc::channel(32);
         let (broadcast_tx, _) = broadcast::channel::<()>(32);
         let broadcast_tx = Arc::new(broadcast_tx);
@@ -276,7 +287,7 @@ impl WriteSplitDataTaskGroup {
                     file_path,
                     tasks: Vec::new(),
                     rx,
-                    expected_size,
+                    expected_size: total_size,
                     current_size: 0,
                     broadcast_tx: broadcast_tx.clone(),
                 };
@@ -285,7 +296,7 @@ impl WriteSplitDataTaskGroup {
             }
             proto::BatchDataBlockType::Memory => {
                 let shared_mem = SharedMemHolder {
-                    data: Arc::new(vec![0; expected_size]),
+                    data: Arc::new(vec![0; total_size]),
                 };
                 
                 let handle = WriteSplitDataTaskHandle {
@@ -302,7 +313,7 @@ impl WriteSplitDataTaskGroup {
                     shared_mem,
                     tasks: Vec::new(),
                     rx,
-                    expected_size,
+                    expected_size: total_size,
                     current_size: 0,
                     broadcast_tx: broadcast_tx.clone(),
                 };
@@ -318,7 +329,7 @@ impl WriteSplitDataTaskGroup {
     /// * `Ok(item)` - 所有数据写入完成,返回数据项
     /// * `Err(e)` - 写入过程中出错
     pub async fn process_tasks(&mut self) -> WSResult<proto::DataItem> {
-        let mut pending_tasks: FuturesUnordered<tokio::task::JoinHandle<()>> = FuturesUnordered::new();
+        let mut pending_tasks: FuturesUnordered<tokio::task::JoinHandle<WriteSplitTaskResult>> = FuturesUnordered::new();
         
         match self {
             Self::ToFile { tasks, .. } |
@@ -345,25 +356,25 @@ impl WriteSplitDataTaskGroup {
                     pending_tasks.push(new_task);
                 }
                 Some(completed_result) = pending_tasks.next() => {
-                    if let Err(e) = completed_result {
-                        tracing::error!("Task failed: {}", e);
-                        return Err(WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
-                            reason: format!("Task failed: {}", e)
-                        }));
-                    }
-                    match self {
-                        Self::ToFile { current_size, .. } |
-                        Self::ToMem { current_size, .. } => {
-                            *current_size += DEFAULT_BLOCK_SIZE;  // 每个任务写入一个块
+                    match completed_result {
+                        Ok(result) => {
+                            match self {
+                                Self::ToFile { current_size, .. } |
+                                Self::ToMem { current_size, .. } => {
+                                    *current_size += result.written_size;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Task failed: {}", e);
+                            return Err(WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
+                                reason: format!("Task failed: {}", e)
+                            }));
                         }
                     }
                 }
             }
         }
-
-        Err(WSError::WsDataError(WsDataError::BatchTransferTaskFailed {
-            reason: "Channel closed".to_string()
-        }))
     }
 
     /// 检查写入完成状态
@@ -415,7 +426,7 @@ impl WriteSplitDataTaskGroup {
 #[derive(Clone)]
 pub struct WriteSplitDataTaskHandle {
     /// 发送任务的通道
-    tx: mpsc::Sender<tokio::task::JoinHandle<()>>,
+    tx: mpsc::Sender<tokio::task::JoinHandle<WriteSplitTaskResult>>,
     /// 写入类型(文件或内存)
     write_type: WriteSplitDataType,
     /// 数据版本号
@@ -448,6 +459,7 @@ impl WriteSplitDataTaskHandle {
                 let path = path.clone();
                 let offset = idx;
                 let data = data.as_raw_bytes().unwrap_or(&[]).to_vec();
+                let written_size = data.len();
                 tokio::spawn(async move {
                     let result = tokio::fs::OpenOptions::new()
                         .create(true)
@@ -472,10 +484,13 @@ impl WriteSplitDataTaskHandle {
                                 Ok::<_, std::io::Error>(())
                             }.await {
                                 tracing::error!("Failed to write file data at offset {}: {}", offset, e);
+                                panic!("Failed to write file: {}", e);
                             }
+                            WriteSplitTaskResult { written_size }
                         }
                         Err(e) => {
                             tracing::error!("Failed to open file at offset {}: {}", offset, e);
+                            panic!("Failed to open file: {}", e);
                         }
                     }
                 })
@@ -483,7 +498,18 @@ impl WriteSplitDataTaskHandle {
             WriteSplitDataType::Mem { shared_mem } => {
                 let mem = shared_mem.clone();
                 let offset = idx;
-                let data = data.as_raw_bytes().unwrap_or(&[]).to_vec();
+                let Some(data) = data.as_raw_bytes().map(|data| data.to_vec()) else {
+                    return Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
+                        request_id: proto::BatchRequestId {
+                            node_id: 0,
+                            sequence: 0,
+                        },
+                        reason: format!("mem data expected"),
+                    }));
+                };
+                let written_size = data.len();
+                tracing::debug!("submit_split: Mem, len:{}, target len:{}", data.len(), shared_mem.len());
+
                 tokio::spawn(async move {
                     unsafe {
                         let slice = std::slice::from_raw_parts_mut(
@@ -492,6 +518,7 @@ impl WriteSplitDataTaskHandle {
                         );
                         slice[offset..offset + data.len()].copy_from_slice(&data);
                     }
+                    WriteSplitTaskResult { written_size }
                 })
             }
         };
@@ -554,6 +581,24 @@ impl DataItemSource {
             _ => Self::Memory {
                 data: Vec::new(),
             },
+        }
+    }
+
+    pub async fn size(&self) -> WSResult<usize> {
+        match self {
+            DataItemSource::Memory { data } => Ok(data.len()),
+            DataItemSource::File { path } => {
+                let metadata = tokio::fs::metadata(path).await.map_err(|e| 
+                    WSError::WsDataError(WsDataError::BatchTransferFailed {
+                        request_id: proto::BatchRequestId {
+                            node_id: 0,  // 这里需要传入正确的node_id
+                            sequence: 0,
+                        },
+                        reason: format!("Failed to get file size: {}", e),
+                    })
+                )?;
+                Ok(metadata.len() as usize)
+            }
         }
     }
 
