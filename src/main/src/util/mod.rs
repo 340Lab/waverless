@@ -1,4 +1,5 @@
 pub mod container;
+pub mod zip;
 
 use std::{
     fmt::Debug,
