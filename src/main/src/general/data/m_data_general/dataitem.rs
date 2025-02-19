@@ -1,12 +1,13 @@
 use crate::general::data::m_data_general::UniqueId;
 use crate::general::network::proto;
 use crate::general::data::m_data_general::{DataItemIdx, DataSplitIdx, GetOrDelDataArgType};
-use crate::general::network::proto_ext::ProtoExtDataItem;
+use crate::general::network::proto_ext::{NewPartialFileDataArg, ProtoExtDataItem};
 use crate::result::{WSError, WSResult, WsDataError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::collections::btree_set;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::broadcast;
@@ -197,6 +198,12 @@ pub fn calculate_splits(total_size: usize) -> Vec<Range<usize>> {
 /// 支持写入文件或内存两种模式
 #[derive(Debug, Clone)]
 pub enum WriteSplitDataType {
+    Dir{
+        /// 接受的压缩文件形式
+        zip_file: PathBuf,
+        /// 解压后的文件路径
+        path: PathBuf,
+    },
     /// 文件写入模式
     File {
         /// 目标文件路径
@@ -684,6 +691,187 @@ impl DataItemExt for DataItemSource {
                 ret.extend_from_slice(data);
                 ret
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum DataItemZip {
+    /// 未初始化状态
+    Uninitialized,
+    /// 不需要压缩（非目录）
+    NoNeed,
+    /// 已压缩的目录
+    Directory {
+        zipped_file: PathBuf,
+    }
+}
+
+pub struct DataItemArgWrapper {
+    pub dataitem: proto::DataItem,
+    /// 目录压缩状态
+    tmpzipfile: DataItemZip,
+}
+
+impl DataItemArgWrapper {
+    pub fn from_file(filepath: PathBuf) -> Self {
+        Self { 
+            dataitem: proto::DataItem{
+                data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData{
+                    is_dir_opt: filepath.is_dir(),
+                    file_name_opt: filepath.to_str().unwrap().to_string(),
+                    file_content: vec![],
+                })),
+            },
+            tmpzipfile: DataItemZip::Uninitialized,
+        }
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { 
+            dataitem: proto::DataItem::new_raw_bytes(bytes),
+            tmpzipfile: DataItemZip::Uninitialized,
+        }
+    }
+
+    pub async fn get_tmpzipfile(&mut self) -> WSResult<Option<&PathBuf>> {
+        match &self.tmpzipfile {
+            DataItemZip::Uninitialized => {
+                self.init_tmpzipfile().await?;
+            }
+            _ => {}
+        }
+
+        match &self.tmpzipfile {
+            DataItemZip::Directory { zipped_file } => Ok(Some(zipped_file)),
+            DataItemZip::NoNeed => Ok(None),
+            DataItemZip::Uninitialized => unreachable!(),
+        }
+    }
+
+    async fn init_tmpzipfile(&mut self) -> WSResult<()> {
+        // 确保只初始化一次
+        if !matches!(self.tmpzipfile, DataItemZip::Uninitialized) {
+            return Ok(());
+        }
+
+        let filedata = match self.dataitem.data_item_dispatch.as_ref().unwrap() {
+            proto::data_item::DataItemDispatch::File(file_data) => file_data,
+            proto::data_item::DataItemDispatch::RawBytes(_) => {
+                self.tmpzipfile = DataItemZip::NoNeed;
+                return Ok(());
+            },
+        };
+
+        // 检查目录元数据
+        let metadata = tokio::fs::metadata(&filedata.file_name_opt).await.map_err(|e| {
+            WSError::WsDataError(WsDataError::FileMetadataErr {
+                path: PathBuf::from(&filedata.file_name_opt),
+                err: e,
+            })
+        })?;
+
+        if metadata.is_dir() {
+            let tmp_file = tempfile::NamedTempFile::new().map_err(|e| {
+                WSError::WsDataError(WsDataError::FileMetadataErr {
+                    path: PathBuf::from(&filedata.file_name_opt),
+                    err: e,
+                })
+            })?;
+            let tmp_path = tmp_file.path().to_path_buf();
+            
+            // 压缩目录到临时文件
+            crate::util::zip::zip_dir_2_file(
+                &filedata.file_name_opt,
+                zip::CompressionMethod::Stored,
+                tmp_file.into_file(),
+            ).await?;
+
+            self.tmpzipfile = DataItemZip::Directory {
+                zipped_file: tmp_path,
+            };
+        } else {
+            self.tmpzipfile = DataItemZip::NoNeed;
+        }
+
+        Ok(())
+    }
+
+    pub async fn transfer_size(&mut self) -> WSResult<usize> {
+        match &self.dataitem.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => return Ok(bytes.len()),
+            Some(proto::data_item::DataItemDispatch::File(_)) => {
+                // handle in following
+            }
+            None => return Ok(0),
+        }
+
+        if let Some(tmp_path) = self.get_tmpzipfile().await? {
+            let metadata = tokio::fs::metadata(tmp_path).await?;
+            Ok(metadata.len() as usize)
+        } else {
+            let file_data=match &self.dataitem.data_item_dispatch {
+                Some(proto::data_item::DataItemDispatch::File(file_data)) => {
+                    // handle in following
+                    file_data
+                }
+                Some(proto::data_item::DataItemDispatch::RawBytes(_)) | None=>{panic!("these case should be handled in previous match")}
+            };
+            let metadata = tokio::fs::metadata(&file_data.file_name_opt).await?;
+            Ok(metadata.len() as usize)
+        }
+    }
+
+    pub async fn clone_split_range(&mut self, range: Range<usize>) -> WSResult<proto::DataItem> {
+        match &self.dataitem.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => {
+                return Ok(proto::DataItem::new_partial_raw_bytes(bytes.to_owned(), range).map_err(|err|{
+                    tracing::error!("Failed to clone split range: {}", err);
+                    err
+                })?)
+            }
+            Some(proto::data_item::DataItemDispatch::File(_)) => {
+                
+                // handle in following
+            }
+            None => panic!("proto dataitem must be Some"),
+        }
+        
+        fn get_filedata(dataitem:&DataItemArgWrapper)->&proto::FileData{
+            match &dataitem.dataitem.data_item_dispatch {
+                Some(proto::data_item::DataItemDispatch::File(file_data)) => file_data,
+                Some(proto::data_item::DataItemDispatch::RawBytes(_)) | None=>{panic!("these case should be handled in previous match")}
+            }
+        }
+
+        // if zipped, use zipped file
+        // else use file_data.file_name_opt
+        if let Some(tmp_path) = self.get_tmpzipfile().await?.cloned() {
+            let file_data=get_filedata(self);
+            Ok(proto::DataItem::new_partial_file_data(NewPartialFileDataArg::FilePath { path: PathBuf::from_str(&file_data.file_name_opt).map_err(|err|{
+                let err=WsDataError::FilePathParseErr {
+                    path: file_data.file_name_opt.clone(),
+                    err: err,
+                };
+                tracing::error!("Failed to clone split range: {:?}", err);
+                err
+            })? , zip_path: Some(tmp_path.clone()) }, range).await.map_err(|err|{
+                tracing::error!("Failed to clone split range: {}", err);
+                err
+            })?)
+        } else {
+            let file_data=get_filedata(self);
+            Ok(proto::DataItem::new_partial_file_data(NewPartialFileDataArg::FilePath { path: PathBuf::from_str(&file_data.file_name_opt).map_err(|err|{
+                let err=WsDataError::FilePathParseErr {
+                    path: file_data.file_name_opt.clone(),
+                    err: err,
+                };
+                tracing::error!("Failed to clone split range: {:?}", err);
+                err
+            })? , zip_path: None }, range).await.map_err(|err|{
+                tracing::error!("Failed to clone split range: {}", err);
+                err
+            })?)
         }
     }
 }

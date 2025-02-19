@@ -7,11 +7,13 @@ pub mod m_executor;
 pub mod v_os;
 
 use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType};
+use super::m_os::APPS_REL_DIR;
 use crate::general::app::app_native::native_apps;
 use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::m_executor::Executor;
 use crate::general::app::m_executor::FnExeCtxAsyncAllowedType;
 use crate::general::app::v_os::AppMetaVisitOs;
+use crate::general::data::m_data_general::dataitem::DataItemArgWrapper;
 use crate::general::network::proto_ext::ProtoExtDataItem;
 use crate::util::VecExt;
 use crate::{general::network::proto, result::WSResultExt};
@@ -778,36 +780,36 @@ impl AppMetaManager {
         // let appdir = self.fs_layer.concat_app_dir(app);
         let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
 
-        // TODO: 2.check project dir
-        // 3. if java, take snapshot
-        if let AppType::Jar = appmeta.app_type {
-            let _ = self
-                .meta
-                .write()
-                .await
-                .tmp_app_metas
-                .insert(tmpapp.to_owned(), appmeta.clone());
-            tracing::debug!("record app meta to make checkpoint {}", tmpapp);
-            self.view
-                .instance_manager()
-                .make_checkpoint_for_app(tmpapp)
-                .await?;
-            self.view
-                .instance_manager()
-                .drap_app_instances(tmpapp)
-                .await;
-            // remove app_meta
-            tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
-            let _ = self
-                .meta
-                .write()
-                .await
-                .tmp_app_metas
-                .remove(tmpapp)
-                .unwrap_or_else(|| {
-                    panic!("remove app meta failed, app: {}", tmpapp);
-                });
-        }
+        // // TODO: 2.check project dir
+        // // 3. if java, take snapshot
+        // if let AppType::Jar = appmeta.app_type {
+        //     let _ = self
+        //         .meta
+        //         .write()
+        //         .await
+        //         .tmp_app_metas
+        //         .insert(tmpapp.to_owned(), appmeta.clone());
+        //     tracing::debug!("record app meta to make checkpoint {}", tmpapp);
+        //     self.view
+        //         .instance_manager()
+        //         .make_checkpoint_for_app(tmpapp)
+        //         .await?;
+        //     self.view
+        //         .instance_manager()
+        //         .drap_app_instances(tmpapp)
+        //         .await;
+        //     // remove app_meta
+        //     tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
+        //     let _ = self
+        //         .meta
+        //         .write()
+        //         .await
+        //         .tmp_app_metas
+        //         .remove(tmpapp)
+        //         .unwrap_or_else(|| {
+        //             panic!("remove app meta failed, app: {}", tmpapp);
+        //         });
+        // }
 
         Ok(appmeta)
     }
@@ -1010,46 +1012,19 @@ impl AppMetaManager {
             Ok(appmeta) => appmeta,
         };
 
-        // 4. zip tmp dir to memory
-        let zipfiledata = {
-            tracing::debug!("zip tmp dir to memory");
-            // if let Ok(direntries) = fs::read_dir(tmpappdir.join("checkpoint-dir")) {
-            //     for f in direntries {
-            //         tracing::debug!(
-            //             "file in checkpoint-dir: {:?}",
-            //             f.map(|v| v.file_name().to_str().unwrap().to_owned())
-            //         );
-            //     }
-            // }
-            let view = self.view.clone();
-            tokio::task::spawn_blocking(move || {
-                view.os()
-                    .zip_dir_2_data(&tmpappdir, zip::CompressionMethod::Deflated)
-            })
-            .await
-            .unwrap()
-        }?;
-
         // remove temp dir
         // let _ = fs::remove_dir_all(&tmpappdir).map_err(|e| WSError::from(WsIoErr::Io(e)))?;
+
+        // mv temp app to formal app dir
+        let rel_app_dir = format!("{}/{}", APPS_REL_DIR, appname);
+        let formal_app_dir = self.view.os().file_path.join(rel_app_dir);
+        let _ = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| WSError::from(WsDataError::FileOpenErr { path: (), err: () }));
 
         // 3. broadcast meta and appfile
         let write_data_id = format!("{}{}", DATA_UID_PREFIX_APP_META, appname);
         let write_datas = vec![
-            proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
-                    bincode::serialize(&appmeta).unwrap(),
-                )),
-            },
-            proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(
-                    proto::FileData {
-                        file_name_opt: format!("apps/{}", appname),
-                        is_dir_opt: true,
-                        file_content: zipfiledata,
-                    },
-                )),
-            },
+            DataItemArgWrapper::from_bytes(bincode::serialize(&appmeta).unwrap()),
+            DataItemArgWrapper::from_file(rel_app_dir),
         ];
         tracing::debug!(
             "app data size: {:?}",
