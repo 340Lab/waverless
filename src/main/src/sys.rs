@@ -37,12 +37,21 @@ impl Drop for Sys {
 
 impl Sys {
     pub fn new(config: NodesConfig) -> Sys {
+        
+        // chdir to file_path
+        std::env::set_current_dir(&config.file_dir).unwrap();
+        tracing::info!("Running at dir: {:?}", std::env::current_dir());
+        
         Sys {
             logical_modules: LogicalModules::new(config),
             sub_tasks: Vec::new().into(),
         }
     }
 
+    pub fn new_logical_modules_ref(&self) -> LogicalModulesRef {
+        LogicalModulesRef::new(self.logical_modules.clone())
+    }
+    
     pub async fn wait_for_end(&mut self) {
         if let Err(err) = (*self.logical_modules).as_ref().unwrap().start(self).await {
             panic!("start logical nodes error: {:?}", err);

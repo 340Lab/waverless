@@ -10,56 +10,129 @@ use super::proto::{self, kv::KvResponse, FileData};
 
 use std::{ops::Range, path::Path};
 use crate::result::{WSResult, WSError, WsDataError};
+use std::path::PathBuf;
+use std::fs::File;
+use tokio;
+use tokio::io::{AsyncSeekExt, AsyncReadExt};
 
-pub trait ProtoExtDataItem {
+pub enum NewPartialFileDataArg {
+    FilePath{path: PathBuf, zip_path:Option<PathBuf>},
+    FileContent{path:PathBuf,content:Vec<u8>},
+    File{path:PathBuf,file:File},
+}
+
+pub trait ProtoExtDataItem: Sized {
     fn data_sz_bytes(&self) -> usize;
     fn clone_split_range(&self, range: Range<usize>) -> Self;
     fn to_string(&self) -> String;
-    fn new_raw_bytes(rawbytes: impl Into<Vec<u8>>) -> Self;
     fn as_raw_bytes<'a>(&'a self) -> Option<&'a [u8]>;
-    fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self;
     fn as_file_data(&self) -> Option<&proto::FileData>;
     fn to_data_item_source(&self) -> DataItemSource;
+    async fn new_partial_file_data(arg: NewPartialFileDataArg, range: Range<usize>) -> WSResult<Self>;
+    fn new_partial_raw_bytes(rawbytes: impl Into<Vec<u8>>, range: Range<usize>) -> WSResult<Self>;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
-    fn new_raw_bytes(rawbytes: impl Into<Vec<u8>>) -> Self {
-        proto::DataItem {
+    fn new_partial_raw_bytes(rawbytes: impl Into<Vec<u8>>, range: Range<usize>) -> WSResult<Self> {
+        let bytes = rawbytes.into();
+        if range.end > bytes.len() {
+            return Err(WSError::WsDataError(WsDataError::SizeMismatch {
+                expected: range.end,
+                actual: bytes.len(),
+            }));
+        }
+        
+        Ok(Self {
             data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
-                rawbytes.into(),
+                bytes[range].to_vec()
             )),
-        }
+        })
     }
-    fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self {
-        let file_content = std::fs::read(filepath.as_ref()).unwrap();
-        Self {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(FileData {
-                file_name_opt: filepath.as_ref().to_string_lossy().to_string(),
-                is_dir_opt: is_dir,
-                file_content,
-            })),
+
+    async fn new_partial_file_data(arg: NewPartialFileDataArg, range: Range<usize>) -> WSResult<Self> {
+        let mut file_data = proto::FileData::default();
+        
+        // 从文件读取指定范围的数据
+        async fn read_file_range(path: &Path, file: tokio::fs::File, range: Range<usize>) -> WSResult<Vec<u8>> {
+            let mut file = tokio::io::BufReader::new(file);
+            file.seek(std::io::SeekFrom::Start(range.start as u64))
+                .await
+                .map_err(|e| WSError::WsDataError(WsDataError::FileSeekErr {
+                    path: path.to_path_buf(),
+                    err: e,
+                }))?;
+            
+            let mut buffer = vec![0; range.end - range.start];
+            file.read_exact(&mut buffer)
+                .await
+                .map_err(|e| WSError::WsDataError(WsDataError::FileReadErr {
+                    path: path.to_path_buf(),
+                    err: e,
+                }))?;
+            
+            Ok(buffer)
         }
+        
+        match arg {
+            NewPartialFileDataArg::FilePath { path, zip_path } => {
+                file_data.file_name_opt = path.to_string_lossy().to_string();
+                file_data.is_dir_opt = path.is_dir();
+                
+                // 如果是目录，使用zip文件
+                let actual_path = if path.is_dir() {
+                    zip_path.as_ref().ok_or_else(|| WSError::WsDataError(
+                        WsDataError::BatchTransferFailed {
+                            node: 0,
+                            batch: 0,
+                            reason: "Directory must have zip_path".to_string(),
+                        }
+                    ))?
+                } else {
+                    &path
+                };
+                
+                let file = tokio::fs::File::open(actual_path)
+                    .await
+                    .map_err(|e| WSError::WsDataError(WsDataError::FileOpenErr {
+                        path: actual_path.to_path_buf(),
+                        err: e,
+                    }))?;
+                    
+                file_data.file_content = read_file_range(actual_path, file, range).await?;
+            },
+            NewPartialFileDataArg::FileContent { path, content } => {
+                if range.end > content.len() {
+                    return Err(WSError::WsDataError(WsDataError::SizeMismatch {
+                        expected: range.end,
+                        actual: content.len(),
+                    }));
+                }
+                file_data.file_name_opt = path.to_string_lossy().to_string();
+                file_data.is_dir_opt = path.is_dir();
+                file_data.file_content = content[range].to_vec();
+            },
+            NewPartialFileDataArg::File { path, file } => {
+                file_data.file_name_opt = path.to_string_lossy().to_string();
+                file_data.is_dir_opt = path.is_dir();
+                
+                let file = tokio::fs::File::from_std(file);
+                file_data.file_content = read_file_range(&path, file, range).await?;
+            }
+        }
+        
+        Ok(Self {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(file_data)),
+        })
     }
 
     fn data_sz_bytes(&self) -> usize {
         match self.data_item_dispatch.as_ref().unwrap() {
             proto::data_item::DataItemDispatch::File(file_data) => file_data.file_content.len(),
             proto::data_item::DataItemDispatch::RawBytes(vec) => vec.len(),
-            // proto::write_one_data_request::DataItem::Data(d) => d.data.len(),
-            // proto::write_one_data_request::DataItem::DataVersion(d) => d.data.len(),
         }
     }
 
     fn clone_split_range(&self, range: Range<usize>) -> Self {
-        // let data_length = match &self.data_item_dispatch.as_ref().unwrap() {
-        //     proto::data_item::DataItemDispatch::File(file_data) => file_data.file_content.len(),
-        //     proto::data_item::DataItemDispatch::RawBytes(vec) => vec.len(),
-        // };
-
-        // if range.start >= data_length || range.end > data_length {
-        //     panic!("range out of bounds: {:?}", range);
-        // }
-
         Self {
             data_item_dispatch: Some(match &self.data_item_dispatch.as_ref().unwrap() {
                 proto::data_item::DataItemDispatch::File(file_data) => {
@@ -264,8 +337,6 @@ impl DataItemExt for proto::DataItem {
                 ret
             }
             proto::data_item::DataItemDispatch::RawBytes(bytes) => {
-                // tracing::debug!("writing data part{} bytes", idx);
-                // VecOrSlice::from(&bytes)
                 let mut ret = vec![1];
                 ret.extend_from_slice(bytes);
                 ret

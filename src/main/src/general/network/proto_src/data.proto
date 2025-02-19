@@ -122,12 +122,17 @@ message DataMetaGetResponse{
 //   DataItem data = 2;
 // }
 
+
+// 使用proto ext初始化
 message FileData {
   string file_name_opt = 1; // store in the first node
+  // 初始化时为空，只需要指定file_name_opt
   bool is_dir_opt =2;
+  // file_content should be empty except when send the data split
   bytes file_content = 3;
 }
 
+// 使用proto ext初始化
 message DataItem {
   oneof data_item_dispatch {
       FileData file = 1;
@@ -174,6 +179,7 @@ message GetOneDataResponse{
 enum BatchDataBlockType {
     MEMORY = 0;    // 内存数据块
     FILE = 1;      // 文件数据块
+    DIR=2;         // 目录数据块
 }
 
 message BatchRequestId {

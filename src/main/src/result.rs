@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::unix::net::SocketAddr, sync::Arc, path::PathBuf};
+use std::{convert::Infallible, fmt::Debug, os::unix::net::SocketAddr, path::PathBuf, sync::Arc};
 
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
@@ -64,6 +64,7 @@ pub enum WsIoErr {
 #[derive(Debug)]
 pub enum WsRuntimeErr {
     TokioJoin { err: JoinError, context: String },
+    ModulesRefOutofLifetime,
 }
 
 impl From<std::io::Error> for WSError {
@@ -226,6 +227,31 @@ pub enum WsDataError {
         expect: proto::data_item::DataItemDispatch,
         actual: proto::data_item::DataItemDispatch,
         context: String,
+    },
+    FileMetadataErr {
+        path: PathBuf,
+        err: std::io::Error,
+    },
+    FileSeekErr {
+        path: PathBuf,
+        err: std::io::Error,
+    },
+    FileReadErr {
+        path: PathBuf,
+        err: std::io::Error,
+    },
+    FileOpenErr {
+        path: PathBuf,
+        err: std::io::Error,
+    },
+    FileRenameErr {
+        from: PathBuf,
+        to: PathBuf,
+        err: std::io::Error,
+    },
+    FilePathParseErr {
+        path: String,
+        err: Infallible,
     },
     SplitRecoverMissing {
         unique_id: Vec<u8>,
