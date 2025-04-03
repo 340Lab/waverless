@@ -3570,6 +3570,7 @@ dependencies = [
  "slotmap",
  "ssh2",
  "sysinfo",
+ "tempfile",
  "thiserror",
  "tokio",
  "tower",

@@ -8,7 +8,7 @@ pub mod batch_handler;
 use crate::general::data::m_data_general::dataitem::{calculate_splits, WantIdxIter, WriteSplitDataTaskGroup, DataItemSource};
 use crate::general::data::m_data_general::batch_handler::{BatchReceiveState, SharedWithBatchHandler};
 use crate::general::network::proto::DataItem;
-use dataitem::{DataItemArgWrapper, WriteSplitTaskResult};
+use dataitem::DataItemArgWrapper;
 use tokio::io::{AsyncSeekExt, AsyncReadExt};
 
 use crate::general::{
@@ -659,8 +659,7 @@ impl DataGeneral {
             let fail_by_overwrite = || async {
                 let message = "New data version overwrite".to_owned();
                 tracing::warn!("{}", message);
-                
-                responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
@@ -671,7 +670,7 @@ impl DataGeneral {
             };
             let fail_with_msg = |message: String| async {
                 tracing::warn!("{}", message);
-                responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
@@ -779,7 +778,7 @@ impl DataGeneral {
             || check_meta.as_ref().unwrap().0 != required_meta.as_ref().unwrap().0
         {
             drop(guard);
-            responsor                    //返回结果未处理  曾俊
+            responsor
                 .send_resp(WriteOneDataResponse {
                     remote_version: if check_meta.is_none() {
                         0
@@ -820,7 +819,7 @@ impl DataGeneral {
         kv_store_engine.flush();
         drop(guard);
         tracing::debug!("data partial is written");
-        responsor               //返回结果未使用  曾俊
+        responsor
             .send_resp(WriteOneDataResponse {
                 remote_version: req.version,
                 success: true,
@@ -867,7 +866,7 @@ impl DataGeneral {
                 drop(_kv_write_lock_guard);
                 let err_msg = "New data version is smaller, failed update";
                 tracing::warn!("{}", err_msg);
-                responsor                //返回结果未处理  曾俊
+                responsor
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: old_meta.version,
                         message: err_msg.to_owned(),
@@ -878,11 +877,11 @@ impl DataGeneral {
             }
             old_meta.version = req.version;
             if req.serialized_meta.len() > 0 {
-                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                self.view.kv_store_engine()
                     .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
                     .todo_handle("6 err_comment waitting to fill");
             } else {
-                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                self.view.kv_store_engine()
                     .set(key, &old_meta, true)
                     .todo_handle("7 err_comment waitting to fill");
             }
@@ -892,14 +891,14 @@ impl DataGeneral {
                     "set new meta data, {:?}",
                     bincode::deserialize::<DataSetMeta>(&req.serialized_meta)
                 );
-                self.view.kv_store_engine()                       //返回结果未处理  曾俊      
+                self.view.kv_store_engine()
                     .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
                     .todo_handle("8 err_comment waitting to fill");
             } else {
                 drop(_kv_write_lock_guard);
                 let err_msg = "Old meta data not found and missing new meta";
                 tracing::warn!("{}", err_msg);
-                 responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: 0,
                         message: err_msg.to_owned(),
@@ -911,7 +910,7 @@ impl DataGeneral {
         }
         drop(_kv_write_lock_guard);
         tracing::debug!("rpc_handle_data_meta_update success");
-        responsor                          //返回结果未处理  曾俊
+        responsor
             .send_resp(proto::DataMetaUpdateResponse {
                 version: req.version,
                 message: "Update success".to_owned(),
@@ -1035,7 +1034,7 @@ impl DataGeneral {
         Ok(())
     }
 
-    // 处理批量数据写入请求
+    /// 处理批量数据写入请求
     pub async fn rpc_handle_batch_data(
         &self,
         responsor: RPCResponsor<proto::BatchDataRequest>,
@@ -1588,7 +1587,7 @@ impl LogicalModule for DataGeneral {
                 .regist(p2p, move |responsor, req| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        view.data_general().rpc_handle_get_data_meta(req, responsor)             //返回结果未处理    曾俊
+                        view.data_general().rpc_handle_get_data_meta(req, responsor)
                             .await
                             .todo_handle("rpc_handle_get_data_meta err");
                     });

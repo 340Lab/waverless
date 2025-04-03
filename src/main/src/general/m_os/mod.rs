@@ -111,6 +111,13 @@ pub enum OsProcessType {
 }
 
 impl OperatingSystem {
+    pub fn abs_file_path(&self, p: PathBuf) -> PathBuf {
+        if p.is_absolute() {
+            p
+        } else {
+            self.file_path.join(p)
+        }
+    }
     pub fn app_path(&self, app: &str) -> PathBuf {
         self.view.appmeta_manager().fs_layer.concat_app_dir(app)
     }
@@ -247,7 +254,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        responser.send_resp(res).await.todo_handle();
+        responser.send_resp(res).await.todo_handle("This part of the code needs to be implemented.");      //返回结果未处理    曾俊
     }
 
     async fn remote_get_dir_content_handler(
@@ -314,7 +321,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        responser.send_resp(res).await.todo_handle();
+        responser.send_resp(res).await.todo_handle("This part of the code needs to be implemented.");     //返回结果未处理  曾俊
     }
 
     pub fn open_file(&self, fname: &str) -> WSResult<i32> {

@@ -253,6 +253,10 @@ pub enum WsDataError {
         path: String,
         err: Infallible,
     },
+    UnzipErr{
+        path: PathBuf,
+        err: ZipExtractError,
+    },
     SplitRecoverMissing {
         unique_id: Vec<u8>,
         idx: DataItemIdx,
@@ -457,18 +461,28 @@ impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);
 impl_err_convertor!(RaftError, WsRaftErr, RaftError);
 impl_err_convertor!(std::io::Error, WsIoErr, Io);
 
-pub trait WSResultExt {
-    fn todo_handle(&self);
+pub trait WSResultExt :Sized {
+    fn todo_handle(self, err_comment: &str) -> Self;
 }
 
-impl<T: Debug> WSResultExt for WSResult<T> {
+impl<T> WSResultExt for WSResult<T> {
     #[inline]
-    fn todo_handle(&self) {
-        match self {
+    fn todo_handle(self, err_comment: &str) -> Self {
+        match &self {
             Ok(_ok) => {}
             Err(err) => {
-                tracing::warn!("result err: {:?}", err);
+                tracing::error!("{}, err: {:?}", err_comment, err);
             }
         }
+        self
     }
 }
+
+// impl<T: Debug> WSResultExt for WSError {   WSError并没有泛型参数   去除特征约束    曾俊
+impl WSResultExt for WSError {
+    fn todo_handle(self, err_comment: &str) -> Self {
+        tracing::error!("{}, err: {:?}", err_comment, self);
+        self
+    }
+}
+
