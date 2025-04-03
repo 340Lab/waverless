@@ -55,7 +55,8 @@ impl ProtoExtDataItem for proto::DataItem {
         // 从文件读取指定范围的数据
         async fn read_file_range(path: &Path, file: tokio::fs::File, range: Range<usize>) -> WSResult<Vec<u8>> {
             let mut file = tokio::io::BufReader::new(file);
-            file.seek(std::io::SeekFrom::Start(range.start as u64))
+            // file.seek(std::io::SeekFrom::Start(range.start as u64))       曾俊 没对正常返回值做处理
+            let _ = file.seek(std::io::SeekFrom::Start(range.start as u64))
                 .await
                 .map_err(|e| WSError::WsDataError(WsDataError::FileSeekErr {
                     path: path.to_path_buf(),
@@ -63,7 +64,8 @@ impl ProtoExtDataItem for proto::DataItem {
                 }))?;
             
             let mut buffer = vec![0; range.end - range.start];
-            file.read_exact(&mut buffer)
+            // file.read_exact(&mut buffer)
+            let _ = file.read_exact(&mut buffer)
                 .await
                 .map_err(|e| WSError::WsDataError(WsDataError::FileReadErr {
                     path: path.to_path_buf(),
@@ -82,8 +84,12 @@ impl ProtoExtDataItem for proto::DataItem {
                 let actual_path = if path.is_dir() {
                     zip_path.as_ref().ok_or_else(|| WSError::WsDataError(
                         WsDataError::BatchTransferFailed {
-                            node: 0,
-                            batch: 0,
+                            // node: 0,
+                            // batch: 0,
+                            request_id:proto::BatchRequestId {
+                                node_id: 0,
+                                sequence: 0,
+                            },
                             reason: "Directory must have zip_path".to_string(),
                         }
                     ))?
