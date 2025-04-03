@@ -374,7 +374,7 @@ pub trait DataSource: Send + Sync + 'static {
 }
 
 /// 批量传输数据
-pub async fn batch_transfer(
+pub async fn (
     unique_id: Vec<u8>,
     version: u64,
     target_node: NodeID,

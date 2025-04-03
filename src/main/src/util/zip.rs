@@ -1,9 +1,10 @@
 use std::path::Path;
-use std::io::{self, Write, Seek, Cursor};
+use std::io::{self, Write, Seek, Cursor,Read};
 use std::fs;
 use walkdir::WalkDir;
-use zip::{write::FileOptions, ZipWriter, ZipError};
+use zip::{write::FileOptions, ZipWriter, result::ZipError};
 use crate::result::{WSResult, WSError, WsIoErr};
+use std::os::unix::fs::PermissionsExt;      // 添加这一行以引入PermissionsExt trait 针对下方的.mode()报错   曾俊
 
 pub fn unzip_data_2_path(p: impl AsRef<Path>, data: Vec<u8>) -> WSResult<()> {
     // remove old dir
@@ -63,7 +64,7 @@ where
                     .metadata()
                     .map_err(|e| WSError::from(e))?
                     .permissions()
-                    .mode(),
+                    .mode(),         // 修改！！！   在文件上方导入了一个PermissionsExt trait     曾俊
             );
 
         // Write file or directory explicitly
@@ -119,18 +120,25 @@ pub async fn zip_dir_2_file(
     method: zip::CompressionMethod,
     mut dst_file: std::fs::File,
 ) -> WSResult<()> {
+    // // if !src_dir.is_dir() {    //泛型参数不会自动解引用    曾俊
+    // if !src_dir.as_ref().is_dir() {
+    //     return Err(WsIoErr::Zip2(ZipError::FileNotFound).into());
+    // }
+    let src_dir = src_dir.as_ref().to_path_buf(); // 将 src_dir 转换为 PathBuf
+
     if !src_dir.is_dir() {
         return Err(WsIoErr::Zip2(ZipError::FileNotFound).into());
     }
 
-    let walkdir = WalkDir::new(src_dir);
+    let walkdir = WalkDir::new(src_dir.clone());
     let it = walkdir.into_iter();
 
     // 使用阻塞线程执行 zip 操作，因为 zip 库不支持异步 IO
     tokio::task::spawn_blocking(move || {
         zip_dir(
             &mut it.filter_map(|e| e.ok()),
-            src_dir,
+            // src_dir,          //泛型参数不会自动解引用    曾俊    
+            src_dir.as_ref(),
             &mut dst_file,
             method,
         )
@@ -167,7 +175,8 @@ mod tests {
             zip_dir_2_file(
                 src_path,
                 zip::CompressionMethod::Stored,
-                output_file.as_file_mut(),
+                output_file,
+                // output_file.as_file_mut(),
             ).await
         })?;
 

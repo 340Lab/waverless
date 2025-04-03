@@ -421,7 +421,10 @@ impl P2PModule {
                 taskid,
                 DispatchPayload::Local(Box::new(r)),
             )
-            .todo_handle();
+            //.todo_handle();
+            //虞光勇修改，修改原因：在调用 todo_handle 方法时遇到了缺少参数的问题。需要确保在调用 todo_handle 方法时提供所需的字符串参数。
+            //修改内容：加入字符串参数。
+            .todo_handle("This part of the code needs to be implemented.");      //返回结果未处理     曾俊
             let resp = rx.await.unwrap();
             let resp = resp.downcast::<RESP>().unwrap();
 

@@ -5,6 +5,7 @@ use crate::{
             m_data_general::{
                 new_data_unique_id_fn_kv, DataGeneral, DataItemIdx, DataSetMetaV2, GetOrDelDataArg,
                 GetOrDelDataArgType,
+                dataitem::DataItemArgWrapper
             },
             m_dist_lock::DistLock,
         },
@@ -209,12 +210,16 @@ impl KvUserClient {
         tracing::debug!("handle_kv_set: key: {:?}", key);
 
         let data_general = self.view.data_general();
+        //返回结果未处理 曾俊
         data_general
             .write_data(
                 new_data_unique_id_fn_kv(&key),
-                vec![proto::DataItem {
-                    data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
-                }],
+                //原代码：
+                // vec![proto::DataItem {
+                //     data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
+                // }],
+                //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊   
+             vec![DataItemArgWrapper::new(value)],
                 Some((
                     cur_node,
                     proto::DataOpeType::Write,
@@ -225,7 +230,7 @@ impl KvUserClient {
                 )),
             )
             .await
-            .todo_handle();
+            .todo_handle("This part of the code needs to be implemented.");
         KvResponse::new_common(vec![])
     }
 
