@@ -781,36 +781,36 @@ impl AppMetaManager {
         // let appdir = self.fs_layer.concat_app_dir(app);
         let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
 
-        // // TODO: 2.check project dir
-        // // 3. if java, take snapshot
-        // if let AppType::Jar = appmeta.app_type {
-        //     let _ = self
-        //         .meta
-        //         .write()
-        //         .await
-        //         .tmp_app_metas
-        //         .insert(tmpapp.to_owned(), appmeta.clone());
-        //     tracing::debug!("record app meta to make checkpoint {}", tmpapp);
-        //     self.view
-        //         .instance_manager()
-        //         .make_checkpoint_for_app(tmpapp)
-        //         .await?;
-        //     self.view
-        //         .instance_manager()
-        //         .drap_app_instances(tmpapp)
-        //         .await;
-        //     // remove app_meta
-        //     tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
-        //     let _ = self
-        //         .meta
-        //         .write()
-        //         .await
-        //         .tmp_app_metas
-        //         .remove(tmpapp)
-        //         .unwrap_or_else(|| {
-        //             panic!("remove app meta failed, app: {}", tmpapp);
-        //         });
-        // }
+        // TODO: 2.check project dir
+        // 3. if java, take snapshot
+        if let AppType::Jar = appmeta.app_type {
+            let _ = self
+                .meta
+                .write()
+                .await
+                .tmp_app_metas
+                .insert(tmpapp.to_owned(), appmeta.clone());
+            tracing::debug!("record app meta to make checkpoint {}", tmpapp);
+            self.view
+                .instance_manager()
+                .make_checkpoint_for_app(tmpapp)
+                .await?;
+            self.view
+                .instance_manager()
+                .drap_app_instances(tmpapp)
+                .await;
+            // remove app_meta
+            tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
+            let _ = self
+                .meta
+                .write()
+                .await
+                .tmp_app_metas
+                .remove(tmpapp)
+                .unwrap_or_else(|| {
+                    panic!("remove app meta failed, app: {}", tmpapp);
+                });
+        }
 
         Ok(appmeta)
     }
@@ -1072,29 +1072,48 @@ impl AppMetaManager {
 
     pub fn set_app_meta_list(&self, list: Vec<String>) {
         //发送逻辑处理                               曾俊
-        self.view
-                .kv_store_engine()
-                .set(
-                   KeyTypeServiceList,
-                  &serde_json::to_string(&list).unwrap().into(),
-                   false,
-                )
-                 .todo_handle("This part of the code needs to be implemented.");
-    }
-    pub fn get_app_meta_list(&self) -> Vec<String> {
-        let res = self
-            .view
+        // self.view
+        //         .kv_store_engine()
+        //         .set(
+        //            KeyTypeServiceList,
+        //           &serde_json::to_string(&list).unwrap().into(),
+        //            false,
+        //         )
+        //          .todo_handle("This part of the code needs to be implemented.");
+
+        //修改后代码：对set函数的返回类型进行处理     曾俊
+        match self.view
             .kv_store_engine()
-            .get(&KeyTypeServiceList, false, KvAdditionalConf {})
-            .map(|(_version, list)| list)
-            .unwrap_or_else(|| {
-                return vec![];
-            });
-        serde_json::from_slice(&res).unwrap_or_else(|e| {
-            tracing::warn!("parse app meta list failed, err: {:?}", e);
-            vec![]
-        })
+            .set(
+                KeyTypeServiceList,
+                &serde_json::to_string(&list).unwrap().into(),
+                false,
+            ) {
+            Ok((version, _)) => {
+                tracing::debug!("App meta list updated successfully, version: {}, list: {:?}", version, list);
+            },
+            Err(e) => {
+                tracing::error!("Failed to set app meta list: {:?}", e);
+            }
     }
+}
+
+pub fn get_app_meta_list(&self) -> Vec<String> {
+    let res = self
+        .view
+        .kv_store_engine()
+        .get(&KeyTypeServiceList, false, KvAdditionalConf {})
+        .map(|(_version, list)| list)
+        .unwrap_or_else(|| {
+            return vec![];
+        });
+    serde_json::from_slice(&res).unwrap_or_else(|e| {
+        tracing::warn!("parse app meta list failed, err: {:?}", e);
+        vec![]
+    })
+}
+
+
 
     // pub fn get_app_meta_basicinfo_list(&self) -> Vec<ServiceBasic> {
     //     let apps = self.get_app_meta_list();

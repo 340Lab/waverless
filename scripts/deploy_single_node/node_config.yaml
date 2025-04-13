@@ -3,5 +3,5 @@ nodes:
     addr: 127.0.0.1:2600
     spec: [meta,master]
   2: 
-    addr: 127.0.0.1:2605
+    addr: 192.168.31.240:2602
     spec: [meta,worker]
