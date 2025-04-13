@@ -336,7 +336,7 @@ impl DataMaster {
         );
 
         //返回结果未处理   曾俊
-        responsor
+        if let Err(e) = responsor
             .send_resp(DataVersionScheduleResponse {
                 version: new_meta.version,
                 cache_mode: new_meta.cache_mode.into_iter().map(|v| v as u32).collect(),
@@ -347,9 +347,10 @@ impl DataMaster {
                     .collect(),
                 cache_nodes,
             })
-            .await
-            //.todo_handle();
-            .todo_handle("This part of the code needs to be implemented.");
+            .await{
+                tracing::error!("Failed to send data version schedule response: {}", e);
+            }
+        // .todo_handle("This part of the code needs to be implemented.");
         Ok(())
     }
     // async fn rpc_handler_dataversion_synced_on_node(
