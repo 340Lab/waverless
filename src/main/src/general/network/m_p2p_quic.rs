@@ -361,7 +361,10 @@ async fn handle_connection(
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
                             //返回结果未处理     曾俊
-                            view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into()).todo_handle("This part of the code needs to be implemented.");
+                            if let Err(e) = view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into()){
+                                tracing::error!("Failed to dispatch rpc: {}", e);
+                            }
+                            // .todo_handle("This part of the code needs to be implemented.");
                         }
                         Err(err) => {
                             tracing::warn!("incoming deserial head error: {:?}", err);

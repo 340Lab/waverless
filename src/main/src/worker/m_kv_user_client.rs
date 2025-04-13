@@ -211,7 +211,7 @@ impl KvUserClient {
 
         let data_general = self.view.data_general();
         //返回结果未处理 曾俊
-        data_general
+        if let Err(e) = data_general
             .write_data(
                 new_data_unique_id_fn_kv(&key),
                 //原代码：
@@ -229,8 +229,10 @@ impl KvUserClient {
                     }),
                 )),
             )
-            .await
-            .todo_handle("This part of the code needs to be implemented.");
+            .await{
+                tracing::error!("Failed to write data: {}", e);
+            }
+        // .todo_handle("This part of the code needs to be implemented.");
         KvResponse::new_common(vec![])
     }
 
