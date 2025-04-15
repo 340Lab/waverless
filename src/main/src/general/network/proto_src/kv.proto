@@ -14,21 +14,17 @@ message KvPair {
 
 message KvRequest {
   message KvPutRequest{
-    // required
     KvPair kv=1;
   }
   message KvGetRequest{
-    // required
     KeyRange range=1;
   }
   message KvDeleteRequest{
-    // required
     KeyRange range=1;
   }
   message KvLockRequest{
     bool read_or_write=1;
     repeated uint32 release_id=2;
-    // required
     KeyRange range=3;
   }
   oneof op {
@@ -38,25 +34,6 @@ message KvRequest {
     KvLockRequest lock=4;
   }
 }
-
-message KvLockRequest{
-  bytes key=1;
-  uint32 read_0_write_1_unlock_2=2;
-  // use release_id to do the unlock
-  uint32 release_id=3;
-}
-
-message KvLockResponse{
-  bool success=1;
-  string context=2;
-  uint32 release_id=3;
-}
-
-// message KvLockWaitAcquireNotifyRequest{
-//   uint32 release_id=1;
-// }
-
-// message KvLockWaitAcquireNotifyResponse{}
 
 message KvPairs{
   repeated KvPair kvs=1;
@@ -68,7 +45,6 @@ message KvResponse{
   }
   oneof resp {
     KvResponse common_resp=1;
-    // 0 is invalid lock id
     uint32 lock_id=2;
   }
 }

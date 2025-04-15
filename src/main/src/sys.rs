@@ -3,22 +3,31 @@ use crate::{
     general::{
         m_appmeta_manager::AppMetaManager,
         m_data_general::DataGeneral,
-        m_dist_lock::DistLock,
         m_kv_store_engine::KvStoreEngine,
         m_metric_publisher::MetricPublisher,
         m_os::OperatingSystem,
         network::{http_handler::HttpHandlerDispatch, m_p2p::P2PModule},
     },
-    master::{m_data_master::DataMaster, m_master::Master, m_metric_observor::MetricObservor},
+    master::{
+        m_data_master::DataMaster, m_master::Master, m_master_kv::MasterKv,
+        m_metric_observor::MetricObservor,
+    },
     modules_global_bridge, util,
     worker::{
         func::{m_instance_manager::InstanceManager, wasm_host_funcs},
+        m_data_follower::DataFollower,
         m_executor::Executor,
         m_kv_user_client::KvUserClient,
         m_worker::WorkerCore,
     },
 };
-use crate::{result::WSResult, util::JoinHandleWrapper};
+use crate::{
+    // kv::{data_router::DataRouter, data_router_client::DataRouterClient, kv_client::KvClient},
+    // module_iter::LogicalModuleParent,
+    // network::p2p::P2PModule,
+    result::WSResult,
+    util::JoinHandleWrapper,
+};
 use async_trait::async_trait;
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
@@ -28,12 +37,6 @@ pub struct Sys {
     sub_tasks: Mutex<Vec<JoinHandleWrapper>>,
 }
 
-impl Drop for Sys {
-    fn drop(&mut self) {
-        tracing::info!("drop sys");
-    }
-}
-
 impl Sys {
     pub fn new(config: NodesConfig) -> Sys {
         Sys {
@@ -41,29 +44,11 @@ impl Sys {
             sub_tasks: Vec::new().into(),
         }
     }
-
     pub async fn wait_for_end(&mut self) {
         if let Err(err) = (*self.logical_modules).as_ref().unwrap().start(self).await {
             panic!("start logical nodes error: {:?}", err);
         }
         tracing::info!("modules all started, waiting for end");
-        for task in self.sub_tasks.lock().await.iter_mut() {
-            task.join().await;
-        }
-    }
-
-    #[cfg(test)]
-    pub async fn test_start_all(&self) -> LogicalModulesRef {
-        if let Err(err) = (*self.logical_modules).as_ref().unwrap().start(self).await {
-            panic!("start logical nodes error: {:?}", err);
-        }
-        assert!(self.logical_modules.is_some());
-        LogicalModulesRef {
-            inner: Arc::downgrade(&self.logical_modules),
-        }
-    }
-    #[cfg(test)]
-    pub async fn test_directly_wait_for_end(&mut self) {
         for task in self.sub_tasks.lock().await.iter_mut() {
             task.join().await;
         }
@@ -132,17 +117,12 @@ macro_rules! logical_module_view_impl {
         impl $module {
             pub fn $module_name(&self) -> &$type {
                 unsafe {
-                    #[cfg(feature="unsafe-log")]
-                    tracing::debug!("unsafe ptr begin");
-                    let res = &(*self.inner.inner.as_ptr())
+                    &(*self.inner.inner.as_ptr())
                         .as_ref()
                         .unwrap()
                         .$module_name
                         .as_ref()
-                        .unwrap();
-                    #[cfg(feature="unsafe-log")]
-                    tracing::debug!("unsafe ptr end");
-                    res
+                        .unwrap()
                 }
             }
         }
@@ -150,18 +130,7 @@ macro_rules! logical_module_view_impl {
     ($module:ident,$module_name:ident,$type:ty) => {
         impl $module {
             pub fn $module_name(&self) -> &$type {
-                camelpaste::paste! {
-                    // let tag=stringify!($module_name) ;
-                    #[cfg(feature="unsafe-log")]
-                    tracing::debug!("unsafe ptr begin2 {}",tag);
-
-                    let res = unsafe { &(*self.inner.inner.as_ptr()).as_ref().unwrap().$module_name };
-
-                    #[cfg(feature="unsafe-log")]
-                    tracing::debug!("unsafe ptr end2 {}",tag);
-
-                    res
-                }
+                unsafe { &(*self.inner.inner.as_ptr()).as_ref().unwrap().$module_name }
             }
         }
     };
@@ -328,9 +297,7 @@ start_modules!(
         data_general,
         DataGeneral,
         http_handler,
-        HttpHandlerDispatch,
-        dist_lock,
-        DistLock
+        HttpHandlerDispatch
     ],
     [
         metric_observor,
@@ -339,8 +306,8 @@ start_modules!(
         // MasterHttpHandler,
         master,
         Master,
-        // master_kv,
-        // MasterKv,
+        master_kv,
+        MasterKv,
         data_master,
         DataMaster
     ],
@@ -356,6 +323,8 @@ start_modules!(
         // kv_storage,
         // KvStorage,
         executor,
-        Executor
+        Executor,
+        data_follower,
+        DataFollower
     ]
 );

@@ -116,10 +116,8 @@ pub struct YamlConfig {
 }
 
 fn read_yaml_config(file_path: impl AsRef<Path>) -> YamlConfig {
-    tracing::info!("Running at dir: {:?}", std::env::current_dir());
-    let path = file_path.as_ref().to_owned();
     let file = std::fs::File::open(file_path).unwrap_or_else(|err| {
-        panic!("open config file {:?} failed, err: {:?}", path, err);
+        panic!("open config file failed, err: {:?}", err);
     });
     serde_yaml::from_reader(file).unwrap_or_else(|e| {
         panic!("parse yaml config file failed, err: {:?}", e);

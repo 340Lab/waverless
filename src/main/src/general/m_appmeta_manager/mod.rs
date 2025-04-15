@@ -5,16 +5,22 @@ mod v_os;
 use self::v_os::AppMetaVisitOs;
 use super::{
     m_data_general::{DataGeneral, DATA_UID_PREFIX_APP_META},
-    m_kv_store_engine::{KeyTypeServiceList, KvAdditionalConf, KvStoreEngine},
+    m_kv_store_engine::{KeyTypeServiceList, KvStoreEngine},
     m_os::OperatingSystem,
-    network::{http_handler::HttpHandler, m_p2p::P2PModule},
-};
-use crate::{general::network::proto, worker::m_executor::Executor};
-use crate::{
-    general::{
-        kv_interface::KvOps,
-        network::proto::{data_schedule_context::OpeRole, DataOpeRoleUploadApp},
+    network::{
+        http_handler::HttpHandler,
+        m_p2p::P2PModule,
+        proto::{
+            write_one_data_request::{
+                data_item::{self, Data},
+                DataItem, FileData,
+            },
+            DataMeta, DataModeCache, DataModeDistribute,
+        },
     },
+};
+use crate::{
+    general::kv_interface::KvOps,
     logical_module_view_impl,
     master::m_master::Master,
     result::{ErrCvt, WSResult, WsFuncError},
@@ -22,6 +28,7 @@ use crate::{
     util::{self, JoinHandleWrapper},
     worker::func::m_instance_manager::InstanceManager,
 };
+use crate::{general::network::proto, worker::m_executor::Executor};
 use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
@@ -229,13 +236,9 @@ impl AppMeta {
             .iter()
             .any(|(_, fnmeta)| fnmeta.allow_http_call().is_some());
         unsafe {
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("http_handler begin");
             let _ = util::non_null(&self.cache_contains_http_fn)
                 .as_mut()
                 .replace(res);
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("http_handler end");
         }
         res
     }
@@ -521,10 +524,7 @@ lazy_static::lazy_static! {
     static ref VIEW: Option<View> = None;
 }
 fn view() -> &'static View {
-    tracing::debug!("get view");
-    let res = unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() };
-    tracing::debug!("get view end");
-    res
+    unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() }
 }
 
 #[derive(LogicalModule)]
@@ -543,11 +543,7 @@ impl LogicalModule for AppMetaManager {
     {
         let view = View::new(args.logical_modules_ref.clone());
         unsafe {
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("app man view begin");
             let _ = util::non_null(&*VIEW).as_mut().replace(view.clone());
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("app man view end");
         }
         let fs_layer = AppMetaVisitOs::new(view.clone());
         Self {
@@ -599,10 +595,10 @@ impl AppMetas {
         // self.app_metas.get(app)
         let meta = view()
             .data_general()
-            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(), 0)
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app), 0)
             .await;
-        let Some(proto::DataItem {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(metabytes)),
+        let Some(DataItem {
+            data: Some(Data::RawBytes(metabytes)),
         }) = meta
         else {
             return None;
@@ -736,7 +732,7 @@ impl AppMetaManager {
         Ok(self
             .view
             .data_general()
-            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(), 0)
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app), 0)
             .await
             .is_some())
     }
@@ -821,19 +817,17 @@ impl AppMetaManager {
             .write_data(
                 format!("{}{}", DATA_UID_PREFIX_APP_META, appname),
                 vec![
-                    proto::DataItem {
-                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
+                    DataItem {
+                        data: Some(data_item::Data::RawBytes(
                             bincode::serialize(&appmeta).unwrap(),
                         )),
                     },
-                    proto::DataItem {
-                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(
-                            proto::FileData {
-                                file_name_opt: format!("apps/{}", appname),
-                                is_dir_opt: true,
-                                file_content: zipfiledata,
-                            },
-                        )),
+                    DataItem {
+                        data: Some(data_item::Data::File(FileData {
+                            file_name: format!("apps/{}", appname),
+                            is_dir: true,
+                            file_content: zipfiledata,
+                        })),
                     },
                 ],
                 // vec![
@@ -846,11 +840,12 @@ impl AppMetaManager {
                 //         distribute: DataModeDistribute::BroadcastRough as i32,
                 //     },
                 // ],
-                Some((
-                    self.view.p2p().nodes_config.this_node(),
-                    proto::DataOpeType::Write,
-                    OpeRole::UploadApp(DataOpeRoleUploadApp {}),
-                )),
+                proto::DataScheduleContext {
+                    ope_node: self.view.p2p().nodes_config.this_node(),
+                    ope_type: proto::DataOpeType::Write as i32,
+                    data_sz_bytes: vec![],
+                    ope_role,
+                },
             )
             .await;
         tracing::debug!("app uploaded");
@@ -861,15 +856,13 @@ impl AppMetaManager {
         self.view.kv_store_engine().set(
             KeyTypeServiceList,
             &serde_json::to_string(&list).unwrap().into(),
-            false,
         );
     }
     pub fn get_app_meta_list(&self) -> Vec<String> {
         let res = self
             .view
             .kv_store_engine()
-            .get(&KeyTypeServiceList, false, KvAdditionalConf {})
-            .map(|(_version, list)| list)
+            .get(KeyTypeServiceList)
             .unwrap_or_else(|| {
                 return vec![];
             });

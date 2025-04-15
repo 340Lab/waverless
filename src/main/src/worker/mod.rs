@@ -1,6 +1,6 @@
 // pub mod function_event;
 pub mod func;
-// pub mod m_data_follower;
+pub mod m_data_follower;
 pub mod m_executor;
 pub mod m_http_handler;
 pub mod m_kv_user_client;

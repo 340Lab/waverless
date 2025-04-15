@@ -1,4 +1,3 @@
 target
 *.zip
 Python-3.10.12
-test_temp_dir*
