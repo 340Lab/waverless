@@ -395,7 +395,7 @@ async fn handle_connection(
 
 fn deserialize_msg_id_task_id(head: &[u8]) -> WSResult<(MsgId, TaskId)> {
     let (msg_id, task_id) = bincode::deserialize::<(MsgId, TaskId)>(head)
-        .map_err(|err| WsSerialErr::BincodeErr{err,context: "deserialize_msg_id_task_id".to_owned()})?;
+        .map_err(|err| WsSerialErr::BincodeErr(err))?;
     Ok((msg_id, task_id))
 }
 fn serialize_msg_id_task_id(msg_id: MsgId, task_id: TaskId) -> Vec<u8> {

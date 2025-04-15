@@ -54,14 +54,7 @@ mod utils {
             .unwrap()
             .data_pointer(ptr as u32, len as u32)
             .unwrap();
-        let res = unsafe {
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("u8slice begin");
-            let res = std::slice::from_raw_parts(mem, len as usize);
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("u8slice end");
-            res
-        };
+        let res = unsafe { std::slice::from_raw_parts(mem, len as usize) };
         res
     }
 
@@ -71,14 +64,7 @@ mod utils {
             .unwrap()
             .data_pointer(ptr as u32, len as u32)
             .unwrap();
-        unsafe {
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("i32slice begin");
-            let res = std::slice::from_raw_parts(mem as *const i32, len as usize);
-            #[cfg(feature = "unsafe-log")]
-            tracing::debug!("i32slice end");
-            res
-        }
+        unsafe { std::slice::from_raw_parts(mem as *const i32, len as usize) }
     }
 
     pub fn mutu8sclice<'a>(caller: &impl WasmCtx, ptr: i32, len: i32) -> Option<&'a mut [u8]> {
@@ -87,14 +73,7 @@ mod utils {
             .unwrap()
             .data_pointer_mut(ptr as u32, len as u32)
         {
-            Some(unsafe {
-                #[cfg(feature = "unsafe-log")]
-                tracing::debug!("mutu8sclice begin");
-                let res = std::slice::from_raw_parts_mut(mem, len as usize);
-                #[cfg(feature = "unsafe-log")]
-                tracing::debug!("mutu8sclice end");
-                res
-            })
+            Some(unsafe { std::slice::from_raw_parts_mut(mem, len as usize) })
         } else {
             None
         }

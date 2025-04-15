@@ -63,16 +63,7 @@ impl RpcCustom for ProcessRpc {
         };
 
         unsafe {
-            tracing::debug!("verify begin");
             let appman = ProcessRpc::global_m_app_meta_manager();
-            struct Defer;
-            impl Drop for Defer {
-                fn drop(&mut self) {
-                    tracing::debug!("verify end");
-                }
-            }
-            let _d = Defer;
-
             let ishttp = {
                 let appmanmetas = appman.meta.read().await;
                 let Some(app) = appmanmetas.get_app_meta(&res.appid).await else {

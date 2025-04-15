@@ -75,9 +75,9 @@ pub fn start_tracing() {
         // true
     });
     let my_layer = tracing_subscriber::fmt::layer();
-    let _ = tracing_subscriber::registry()
+    tracing_subscriber::registry()
         .with(my_layer.with_filter(my_filter))
-        .try_init();
+        .init();
 }
 
 pub fn new_test_systems() -> Vec<Sys> {

@@ -5,16 +5,11 @@ use camelpaste::paste;
 use prost::{DecodeError, Message};
 use qp2p::{EndpointError, SendError};
 use thiserror::Error;
-use tokio::task::JoinError;
 use wasmedge_sdk::error::WasmEdgeError;
 use zip_extract::ZipExtractError;
 
 use crate::{
-    general::{
-        m_appmeta_manager::FnMeta,
-        m_data_general::{EachNodeSplit},
-        network::{proto, rpc_model::HashValue},
-    },
+    general::{m_appmeta_manager::FnMeta, network::rpc_model::HashValue},
     sys::NodeID,
     util::TryUtf8VecU8,
 };
@@ -58,11 +53,6 @@ pub enum WsIoErr {
     Zip2(zip::result::ZipError),
 }
 
-#[derive(Debug)]
-pub enum WsRuntimeErr {
-    TokioJoin { err: JoinError, context: String },
-}
-
 impl From<std::io::Error> for WSError {
     fn from(e: std::io::Error) -> Self {
         WSError::WsIoErr(WsIoErr::Io(e))
@@ -95,10 +85,7 @@ pub enum WsRaftErr {
 
 #[derive(Debug)]
 pub enum WsSerialErr {
-    BincodeErr {
-        err: Box<bincode::ErrorKind>,
-        context: String,
-    },
+    BincodeErr(Box<bincode::ErrorKind>),
     AppMetaKvKeyIndexOutOfBound {
         app: String,
         func: String,
@@ -174,35 +161,6 @@ pub enum WsDataError {
         cur_version: u64,
         data_id: String,
     },
-    WriteDataRequireVersionErr {
-        unique_id: Vec<u8>,
-        err: Box<WSError>, // unique_id:String,
-    },
-    WriteDataSplitLenNotMatch {
-        unique_id: Vec<u8>,
-        expect: usize,
-        actual: usize,
-    },
-    KvEngineInnerError {
-        inner: sled::Error,
-        context: String,
-    },
-    KvEngineWriteLockReqiured {
-        context: String,
-    },
-    KvEngineReadLockReqiured {
-        context: String,
-    },
-    UnmatchedFileType {
-        expect: proto::data_item::DataItemDispatch,
-        actual: proto::data_item::DataItemDispatch,
-        context: String,
-    },
-    SplitRecoverMissing {
-        unique_id: Vec<u8>,
-        idx: usize,
-        missing: Vec<EachNodeSplit>,
-    },
 }
 
 #[derive(Error, Debug)]
@@ -236,9 +194,6 @@ pub enum WSError {
 
     #[error("Data error: {0:?}")]
     WsDataError(WsDataError),
-
-    #[error("Runtime error: {0:?}")]
-    WsRuntimeErr(WsRuntimeErr),
 
     #[error("Not Implemented")]
     NotImplemented,
@@ -301,12 +256,6 @@ impl From<WsRpcErr> for WSError {
 impl From<WsDataError> for WSError {
     fn from(value: WsDataError) -> Self {
         WSError::WsDataError(value)
-    }
-}
-
-impl From<WsRuntimeErr> for WSError {
-    fn from(e: WsRuntimeErr) -> Self {
-        WSError::WsRuntimeErr(e)
     }
 }
 
