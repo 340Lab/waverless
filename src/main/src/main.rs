@@ -16,7 +16,7 @@
 use clap::Parser;
 use cmd_arg::CmdArgs;
 
-use sys::{LogicalModulesRef, Sys};
+use sys::Sys;
 use tracing::Level;
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, Layer,
@@ -41,10 +41,7 @@ async fn main() {
     let config = config::read_config(args.this_id, args.files_dir);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
-    let mut sys=Sys::new(config);
-    let modules_ref=sys.new_logical_modules_ref();
-    modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;})
-    
+    Sys::new(config).wait_for_end().await;
 }
 
 pub fn start_tracing() {
