@@ -104,21 +104,7 @@ define_msg_ids!(
         pack.context.is_some()
     }),
     (proto::DataVersionScheduleResponse, _pack, { true }),
-    (proto::WriteOneDataRequest, pack, {
-        if pack.data.is_empty() {
-            return false;
-        }
-        for data_with_idx in &pack.data {
-            let proto::DataItemWithIdx { data, .. } = data_with_idx;
-            if data.is_none() {
-                return false;
-            }
-            if data.as_ref().unwrap().data_item_dispatch.is_none() {
-                return false;
-            }
-        }
-        true
-    }),
+    (proto::WriteOneDataRequest, _pack, { true }),
     (proto::WriteOneDataResponse, _pack, { true }),
     (proto::DataMetaUpdateRequest, _pack, { true }),
     (proto::DataMetaUpdateResponse, _pack, { true }),

@@ -13,21 +13,16 @@ impl AppMetaVisitOs {
         Self { view }
     }
 
-    pub fn crac_file_path(&self) -> PathBuf {
-        self.view
-            .os()
-            .file_path
-            .clone()
-            .join("apps")
-            .join("crac_config")
+    pub fn crac_file_path(&self) -> String {
+        let sys_dir = &self.view.os().file_path;
+        let app_dir = Path::new(sys_dir).join("apps").join("crac_config");
+        (*app_dir.as_os_str().to_string_lossy()).to_owned()
     }
 
     pub fn concat_app_dir(&self, app: &str) -> PathBuf {
-        self.view.os().file_path.clone().join("apps").join(app)
-    }
-
-    pub fn app_dir(&self) -> PathBuf {
-        self.view.os().file_path.clone().join("apps")
+        let sys_dir = &self.view.os().file_path;
+        let app_dir = Path::new(sys_dir).join("apps").join(app);
+        app_dir
     }
 
     pub async fn read_app_meta(&self, app: &str) -> WSResult<AppMeta> {
@@ -49,7 +44,7 @@ impl AppMetaVisitOs {
             }
             Ok(ok) => ok,
         };
-        AppMeta::new_from_yaml(yml, app, self).await
+        AppMeta::new(yml, app, self).await
     }
 
     pub async fn get_app_type_in_dir(&self, app_dir: impl AsRef<Path>) -> WSResult<AppType> {

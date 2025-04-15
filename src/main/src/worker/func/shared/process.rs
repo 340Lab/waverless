@@ -1,18 +1,21 @@
 // process function just run in unique process
 
-use super::process_rpc::{self, proc_proto};
-use crate::general::app::app_shared::java;
-use crate::general::app::instance::InstanceTrait;
-use crate::general::app::m_executor::FnExeCtx;
-use crate::general::{
-    app::AppType,
-    network::rpc_model::{self, HashValue},
-};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use parking_lot::RwLock;
-use std::sync::Arc;
 use tokio::{process::Command, sync::oneshot};
+
+use crate::{
+    general::{
+        app::AppType,
+        network::rpc_model::{self, HashValue},
+    },
+    worker::func::{shared::java, InstanceTrait},
+};
+
+use super::process_rpc::{self, proc_proto};
 
 #[derive(EnumAsInner)]
 pub enum ProcessInstanceConnState {
@@ -199,7 +202,10 @@ impl InstanceTrait for ProcessInstance {
     fn instance_name(&self) -> String {
         self.app.clone()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtx) -> crate::result::WSResult<Option<String>> {
+    async fn execute(
+        &self,
+        fn_ctx: &mut crate::worker::func::FnExeCtx,
+    ) -> crate::result::WSResult<Option<String>> {
         // if rpc_model::start_remote_once(rpc_model::HashValue::Str(fn_ctx.func.to_owned())) {
         //     // cold start the java process
         // }
@@ -213,10 +219,11 @@ impl InstanceTrait for ProcessInstance {
                 fn_ctx.func
             );
             tracing::debug!("before process_rpc::call_func ");
-            let res =
-                process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap()).await;
+            let res = process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
+                .await;
             tracing::debug!("after process_rpc::call_func ");
-            return res.map(|v| Some(v.ret_str));
+            return res
+                .map(|v| Some(v.ret_str));
             // return process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
             //     .await
             //     .map(|v| Some(v.ret_str));

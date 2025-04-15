@@ -1,9 +1,3 @@
-use crate::general::app::instance::m_instance_manager::InstanceManager;
-use crate::general::app::instance::m_instance_manager::UnsafeFunctionCtx;
-use crate::general::app::instance::InstanceTrait;
-use crate::general::app::AppType;
-use crate::general::app::FnMeta;
-use crate::result::WSError;
 use crate::{
     general::{
         app::AppMetaManager,
@@ -20,17 +14,20 @@ use crate::{
     result::{WSResult, WsFuncError},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::JoinHandleWrapper,
+    worker::func::{m_instance_manager::UnsafeFunctionCtx, EventCtx, FnExeCtx, InstanceTrait},
 };
 use async_trait::async_trait;
+
 use std::{
     ptr::NonNull,
     sync::atomic::{AtomicU32, AtomicUsize},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
 #[cfg(target_os = "linux")]
 use ws_derive::LogicalModule;
+
+use super::func::m_instance_manager::InstanceManager;
 
 pub type SubTaskId = u32;
 
@@ -38,150 +35,11 @@ pub type SubTaskNotifier = oneshot::Sender<bool>;
 
 pub type SubTaskWaiter = oneshot::Receiver<bool>;
 
-#[derive(Clone, Debug)]
-pub enum EventCtx {
-    Http(String),
-    KvSet { key: Vec<u8>, opeid: Option<u32> },
-}
-
-impl EventCtx {
-    pub fn take_prev_kv_opeid(&mut self) -> Option<u32> {
-        match self {
-            EventCtx::KvSet { opeid, .. } => opeid.take(),
-            _ => None,
-        }
-    }
-}
-
-struct FnExeCtx {
-    pub app: String,
-    pub app_type: AppType,
-    pub func: String,
-    pub func_meta: FnMeta,
-    pub req_id: ReqId,
-    pub event_ctx: EventCtx,
-    pub res: Option<String>,
-    /// remote scheduling tasks
-    pub sub_waiters: Vec<JoinHandle<()>>, // pub trigger_node: NodeID,
-    _dummy_private: (),
-}
-
-pub enum FnExeCtxAsyncAllowedType {
-    Jar,
-    Wasm,
-    Native,
-}
-
-impl TryFrom<AppType> for FnExeCtxAsyncAllowedType {
-    type Error = WSError;
-    fn try_from(v: AppType) -> Result<Self, WSError> {
-        match v {
-            AppType::Jar => Ok(FnExeCtxAsyncAllowedType::Jar),
-            AppType::Wasm => Ok(FnExeCtxAsyncAllowedType::Wasm),
-            AppType::Native => Ok(FnExeCtxAsyncAllowedType::Native),
-        }
-    }
-}
-
-impl Into<AppType> for FnExeCtxAsyncAllowedType {
-    fn into(self) -> AppType {
-        match self {
-            FnExeCtxAsyncAllowedType::Jar => AppType::Jar,
-            FnExeCtxAsyncAllowedType::Wasm => AppType::Wasm,
-            FnExeCtxAsyncAllowedType::Native => AppType::Native,
-        }
-    }
-}
-
-pub struct FnExeCtxAsync {
-    inner: FnExeCtx,
-}
-
-impl FnExeCtxAsync {
-    pub fn new(
-        apptype: FnExeCtxAsyncAllowedType,
-        app: String,
-        func: String,
-        func_meta: FnMeta,
-        req_id: ReqId,
-        event_ctx: EventCtx,
-    ) -> Self {
-        Self {
-            inner: FnExeCtx {
-                app,
-                func,
-                req_id,
-                event_ctx,
-                res: None,
-                sub_waiters: vec![],
-                app_type: apptype.into(),
-                func_meta,
-                _dummy_private: (),
-            },
-        }
-    }
-}
-
-pub enum FnExeCtxSyncAllowedType {
-    Native,
-}
-
-impl Into<AppType> for FnExeCtxSyncAllowedType {
-    fn into(self) -> AppType {
-        AppType::Native
-    }
-}
-
-pub struct FnExeCtxSync {
-    inner: FnExeCtx,
-}
-
-impl FnExeCtxSync {
-    pub fn new(
-        apptype: FnExeCtxAsyncAllowedType,
-        app: String,
-        func: String,
-        func_meta: FnMeta,
-        req_id: ReqId,
-        event_ctx: EventCtx,
-    ) -> Self {
-        Self {
-            inner: FnExeCtx {
-                app,
-                func,
-                req_id,
-                event_ctx,
-                res: None,
-                sub_waiters: vec![],
-                app_type: apptype.into(),
-                func_meta,
-                _dummy_private: (),
-            },
-        }
-    }
-}
-
-impl FnExeCtx {
-    pub fn empty_http(&self) -> bool {
-        match &self.event_ctx {
-            EventCtx::Http(str) => str.len() == 0,
-            _ => false,
-        }
-    }
-    /// call this when you are sure it's a http event
-    pub fn http_str_unwrap(&self) -> String {
-        match &self.event_ctx {
-            EventCtx::Http(str) => str.to_owned(),
-            _ => panic!("not a http event"),
-        }
-    }
-}
-
 logical_module_view_impl!(ExecutorView);
 logical_module_view_impl!(ExecutorView, p2p, P2PModule);
 logical_module_view_impl!(ExecutorView, appmeta_manager, AppMetaManager);
-logical_module_view_impl!(ExecutorView, instance_manager, InstanceManager);
-logical_module_view_impl!(ExecutorView, executor, Executor);
+logical_module_view_impl!(ExecutorView, instance_manager, Option<InstanceManager>);
+logical_module_view_impl!(ExecutorView, executor, Option<Executor>);
 
 #[derive(LogicalModule)]
 pub struct Executor {
@@ -261,15 +119,6 @@ impl Executor {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         taskid
     }
-
-    pub async fn local_call_execute_async(&self, ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
-        self.execute(ctx.inner).await
-    }
-
-    pub fn local_call_execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {
-        self.execute_sync(ctx)
-    }
-
     pub async fn handle_distribute_task(
         &self,
         resp: RPCResponsor<proto::sche::DistributeTaskReq>,
@@ -278,7 +127,7 @@ impl Executor {
         tracing::debug!("receive distribute task: {:?}", req);
         let app = req.app.to_owned();
         let func = req.func.to_owned();
-        let (appmeta, _) = match self.view.appmeta_manager().get_app_meta(&app).await {
+        let appmeta = match self.view.appmeta_manager().get_app_meta(&app).await {
             Ok(Some(appmeta)) => appmeta,
             Ok(None) => {
                 tracing::warn!("app {} not found in data meta", app);
@@ -323,56 +172,21 @@ impl Executor {
             return;
         };
 
-        // distribute task requires async support
-        if !fnmeta.sync_async.asyncable() {
-            let warn = format!(
-                "func {} not support async, meta:{:?}",
-                func, fnmeta.sync_async
-            );
-            tracing::warn!("{}", warn);
-            if let Err(err) = resp
-                .send_resp(DistributeTaskResp {
-                    success: false,
-                    err_msg: warn,
-                })
-                .await
-            {
-                tracing::error!("send distribute task resp failed with err: {}", err);
-            }
-            return;
-        }
-
-        // construct async fn exe ctx
-        let ctx = FnExeCtxAsync::new(
-            match FnExeCtxAsyncAllowedType::try_from(apptype) {
-                Ok(v) => v,
-                Err(err) => {
-                    let warn = format!("app type {:?} not supported, err: {}", apptype, err);
-                    tracing::warn!("{}", warn);
-                    if let Err(err) = resp
-                        .send_resp(DistributeTaskResp {
-                            success: false,
-                            err_msg: warn,
-                        })
-                        .await
-                    {
-                        tracing::error!("send distribute task resp failed with err: {}", err);
-                    }
-                    return;
-                }
-            },
-            req.app,
-            req.func,
-            fnmeta.clone(),
-            req.task_id as usize,
-            match req.trigger.unwrap() {
+        let ctx = FnExeCtx {
+            app: req.app,
+            app_type: apptype,
+            func_meta: fnmeta.clone(),
+            func: req.func,
+            req_id: 0,
+            res: None,
+            event_ctx: match req.trigger.unwrap() {
                 distribute_task_req::Trigger::KvSet(set) => EventCtx::KvSet {
                     key: set.key,
                     opeid: Some(set.opeid),
                 },
             },
-        );
-
+            sub_waiters: vec![],
+        };
         if let Err(err) = resp
             .send_resp(DistributeTaskResp {
                 success: true,
@@ -382,7 +196,7 @@ impl Executor {
         {
             tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
         }
-        let _ = self.execute(ctx.inner).await;
+        let _ = self.execute(ctx).await;
     }
 
     pub async fn handle_http_task(&self, route: &str, text: String) -> WSResult<Option<String>> {
@@ -415,10 +229,7 @@ impl Executor {
         let funcname = split[1];
 
         // check app exist
-        tracing::debug!("calling get_app_meta to check app exist, app: {}", appname);
-        let Some((appmeta, datameta_opt)) =
-            self.view.appmeta_manager().get_app_meta(appname).await?
-        else {
+        let Some(app) = self.view.appmeta_manager().get_app_meta(appname).await? else {
             tracing::warn!("app {} not found", appname);
             return Err(WsFuncError::AppNotFound {
                 app: appname.to_owned(),
@@ -426,22 +237,14 @@ impl Executor {
             .into());
         };
         // check func exist
-        let Some(func) = appmeta.get_fn_meta(funcname) else {
-            tracing::warn!("func {} not found, exist:{:?}", funcname, appmeta.fns());
+        let Some(func) = app.get_fn_meta(funcname) else {
+            tracing::warn!("func {} not found, exist:{:?}", funcname, app.fns());
             return Err(WsFuncError::FuncNotFound {
                 app: appname.to_owned(),
                 func: funcname.to_owned(),
             }
             .into());
         };
-
-        // get app file and extract to execute dir
-        if let Some(datameta) = datameta_opt {
-            self.view
-                .appmeta_manager()
-                .load_app_file(appname, datameta)
-                .await?;
-        }
 
         /////////////////////////////////////////////////
         // valid call ///////////////////////////////////
@@ -465,30 +268,20 @@ impl Executor {
         }
 
         /////////////////////////////////////////////////
-        // prepare ctx and run //////////////////////////
+        // run //////////////////////////////////////////
 
-        if func.sync_async.asyncable() {
-            let ctx = FnExeCtxAsync::new(
-                FnExeCtxAsyncAllowedType::try_from(appmeta.app_type.clone()).unwrap(),
-                appname.to_owned(),
-                funcname.to_owned(),
-                func.clone(),
-                req_id,
-                EventCtx::Http(text),
-            );
-            self.execute(ctx).await
-        } else {
-            let ctx = FnExeCtxSync::new(
-                FnExeCtxAsyncAllowedType::try_from(appmeta.app_type.clone()).unwrap(),
-                appname.to_owned(),
-                funcname.to_owned(),
-                func.clone(),
-                req_id,
-                EventCtx::Http(text),
-            );
+        let ctx = FnExeCtx {
+            app: appname.to_owned(),
+            app_type: app.app_type.clone(),
+            func: funcname.to_owned(),
+            req_id,
+            res: None,
+            event_ctx: EventCtx::Http(text),
+            sub_waiters: vec![],
+            func_meta: func.clone(),
+        };
 
-            self.execute_sync(ctx)
-        }
+        self.execute(ctx).await
     }
     // pub async fn execute_http_app(&self, fn_ctx_builder: FunctionCtxBuilder) {
     //     let app_meta_man = self.view.instance_manager().app_meta_manager.read().await;
@@ -520,11 +313,7 @@ impl Executor {
     //     //     .finish_using(&sche_req.app, vm)
     //     //     .await
     // }
-
-    fn execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {}
-
-    /// prepare app and func before call execute
-    async fn execute(&self, mut fn_ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
+    async fn execute(&self, mut fn_ctx: FnExeCtx) -> WSResult<Option<String>> {
         // let app = fn_ctx.app.clone();
         // let func = fn_ctx.func.clone();
         // let event = fn_ctx.event_ctx.clone();

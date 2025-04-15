@@ -1,4 +1,4 @@
-use crate::general::data::m_dist_lock::DistLockOpe;
+use crate::{general::data::m_dist_lock::DistLockOpe};
 
 use super::proto::{self, kv::KvResponse, FileData};
 
@@ -11,7 +11,6 @@ pub trait ProtoExtDataItem {
     fn new_raw_bytes(rawbytes: impl Into<Vec<u8>>) -> Self;
     fn as_raw_bytes<'a>(&'a self) -> Option<&'a [u8]>;
     fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self;
-    fn as_file_data(&self) -> Option<&proto::FileData>;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
@@ -82,13 +81,6 @@ impl ProtoExtDataItem for proto::DataItem {
             proto::data_item::DataItemDispatch::RawBytes(vec) => {
                 format!("raw bytes: {:?}", &vec[0..vec.len().min(100)])
             }
-        }
-    }
-
-    fn as_file_data(&self) -> Option<&proto::FileData> {
-        match &self.data_item_dispatch {
-            Some(proto::data_item::DataItemDispatch::File(file_data)) => Some(file_data),
-            _ => None,
         }
     }
 }
@@ -210,7 +202,7 @@ impl DataItemExt for proto::DataItem {
             }),
             1 => proto::data_item::DataItemDispatch::RawBytes(data[1..].to_owned()),
             _ => {
-                panic!("unknown data item type id: {}", data[0])
+                panic!("unknown data type")
             }
         };
         Self {

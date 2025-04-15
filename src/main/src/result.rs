@@ -163,10 +163,6 @@ pub enum WsFuncError {
         app: String,
         want: String,
     },
-    CreateCracConfigFailed {
-        path: String,
-        err: std::io::Error,
-    },
     InstanceJavaPidNotFound(String),
     InstanceProcessStartFailed(std::io::Error),
     InsranceVerifyFailed(String),
@@ -224,10 +220,6 @@ pub enum WsDataError {
         missing: Vec<EachNodeSplit>,
     },
     SplitDataItemNotRawBytes {
-        unique_id: Vec<u8>,
-        splitidx: DataSplitIdx,
-    },
-    SplitDataItemNotFileData {
         unique_id: Vec<u8>,
         splitidx: DataSplitIdx,
     },
