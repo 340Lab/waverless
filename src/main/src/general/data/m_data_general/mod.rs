@@ -1,10 +1,8 @@
 mod dataitem;
-mod batch;
-mod batch_handler;
+// mod batch;
 
-use crate::general::data::m_data_general::dataitem::{WantIdxIter, WriteSplitDataTaskGroup};
-use crate::general::data::m_data_general::batch_handler::{BatchReceiveState, SharedWithBatchHandler};
-
+use crate::general::data::m_data_general::dataitem::WantIdxIter;
+use crate::general::data::m_data_general::dataitem::WriteSplitDataTaskGroup;
 use crate::general::{
     data::m_kv_store_engine::{
         KeyTypeDataSetItem, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine, KvVersion,
@@ -108,9 +106,6 @@ pub struct DataGeneral {
     rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
     rpc_handler_get_data_meta: RPCHandler<proto::DataMetaGetRequest>,
     rpc_handler_get_data: RPCHandler<proto::GetOneDataRequest>,
-    
-    // 批量数据接收状态管理
-    batch_receive_states: DashMap<proto::BatchRequestId, super::batch_handler::BatchReceiveState>,
 }
 
 impl DataGeneral {
@@ -918,65 +913,7 @@ impl DataGeneral {
 
         Ok(())
     }
-
-    async fn rpc_handle_batch_data(
-        &self,
-        responsor: RPCResponsor<proto::BatchDataRequest>,
-        req: proto::BatchDataRequest,
-    ) -> WSResult<()> {
-        // 1. 查找或创建状态
-        let (state, is_new_state) = self.batch_receive_states
-            .entry(req.request_id.clone())
-            .or_insert_with(|| {
-                // 通过 WriteSplitDataTaskGroup::new 创建任务组和句柄
-                let (group, handle) = super::dataitem::WriteSplitDataTaskGroup::new(
-                    req.request_id.clone(),
-                    Vec::new(), // TODO: 根据实际需求设置分片范围
-                    req.block_type,
-                    0, // TODO: 根据实际需求设置版本号
-                ).await;
-                
-                (super::batch_handler::BatchReceiveState::new(handle, group), true)
-            });
-
-        // 2. 提交分片数据
-        state.handle.submit_split(
-            req.block_idx * DEFAULT_BLOCK_SIZE,
-            req.data
-        ).await?;
-
-        // 3. 更新响应器
-        state.shared.update_responsor(responsor).await;
-
-        // 4. 只在首次创建状态时启动完成监控任务
-        if is_new_state {
-            let state_clone = state.clone();
-            let request_id = req.request_id.clone();
-            let batch_receive_states = self.batch_receive_states.clone();
-            
-            tokio::spawn(async move {
-                // 等待所有任务完成
-                if let Err(e) = state_clone.handle.wait_all_tasks().await {
-                    tracing::error!("Failed to wait for tasks: {}", e);
-                    return;
-                }
-
-                // 发送最终响应
-                if let Some(final_responsor) = state_clone.shared.get_final_responsor().await {
-                    if let Err(e) = final_responsor.response(Ok(())).await {
-                        tracing::error!("Failed to send final response: {}", e);
-                    }
-                }
-
-                // 清理状态
-                batch_receive_states.remove(&request_id);
-            });
-        }
-
-        Ok(())
-    }
 }
-
 
 #[derive(Serialize, Deserialize)]
 pub struct DataMetaSys {
@@ -1506,9 +1443,6 @@ impl LogicalModule for DataGeneral {
             rpc_handler_data_meta_update: RPCHandler::new(),
             rpc_handler_get_data_meta: RPCHandler::new(),
             rpc_handler_get_data: RPCHandler::new(),
-            
-            // 批量数据接收状态管理
-            batch_receive_states: DashMap::new(),
         }
     }
 
