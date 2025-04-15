@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 
 #     NODE_ID=$1
 #     wasm_serverless $NODE_ID test_dir

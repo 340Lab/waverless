@@ -10,12 +10,9 @@ use ws_derive::LogicalModule;
 // use
 
 use crate::{
-    general::{
-        app::AppMetaManager,
-        network::{
-            http_handler::{self, HttpHandler},
-            m_p2p::P2PModule,
-        },
+    general::network::{
+        http_handler::{self, HttpHandler},
+        m_p2p::P2PModule,
     },
     logical_module_view_impl,
     result::WSResult,
@@ -33,7 +30,6 @@ logical_module_view_impl!(
     metric_observor,
     Option<MetricObservor>
 );
-logical_module_view_impl!(MasterHttpHandlerView, appmeta_manager, AppMetaManager);
 
 #[derive(LogicalModule)]
 pub struct MasterHttpHandler {
@@ -100,39 +96,12 @@ impl HttpHandler for MasterHttpHandler {
     //     self.local_req_id_allocator.alloc()
     // }
     async fn handle_request(&self, app: &str, _http_text: String) -> Response {
-        tracing::debug!("master handle_request {}", app);
+        tracing::debug!("handle_request {}", app);
         if app == "metrics" {
             return self.handle_prometheus();
         }
-
-        let view = self.view.clone();
-        if !view.p2p().nodes_config.this.1.is_master() {
-            tracing::debug!("this is_master");
-            match self.view.appmeta_manager().app_available(app).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return (StatusCode::NOT_FOUND, "app not found").into_response();
-                }
-                Err(e) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-                }
-            }
-        }
-
-        // check app is available
-        // match self.view.appmeta_manager().app_available(app).await {
-        //     Ok(true) => {}
-        //     Ok(false) => {
-        //         return (StatusCode::NOT_FOUND, "app not found").into_response();
-        //     }
-        //     Err(e) => {
-        //         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-        //     }
-        // }
-
         // 选择节点
         let node = self.view.master().handle_http_schedule(app).await;
-        tracing::debug!("scheduled node is {:?}", node);
 
         // if self.view.p2p().nodes_config.this.0 == node {
         //     // println!("run");
@@ -160,7 +129,6 @@ impl HttpHandler for MasterHttpHandler {
             .get(&(node as u32))
             .unwrap();
 
-        tracing::debug!("scheduled target_node is {:?}", target_node);
         let url = target_node.http_url();
         let url = if url.ends_with('/') {
             // 如果是，去除末尾的斜杠

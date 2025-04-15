@@ -40,9 +40,7 @@ pub(super) fn binds(router: Router, view: super::View) -> Router {
 }
 
 async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) -> Response {
-    tracing::debug!("handle func request app: {}, func: {}", app, func);
     if view().p2p().nodes_config.this.1.is_master() {
-        tracing::debug!("app: {:?}, func: {:?}", app, func);
         view()
             .http_handler()
             .handle_request(&format!("{app}/{func}"), body)

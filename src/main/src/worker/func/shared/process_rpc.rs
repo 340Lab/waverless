@@ -5,7 +5,7 @@ pub mod proc_proto {
 use crate::{
     general::network::rpc_model::{self, HashValue, MsgIdBind, ReqMsg, RpcCustom},
     modules_global_bridge::process_func::{
-        ModulesGlobalBrigeInstanceManager,
+        ModulesGlobalBrigeAppMetaManager, ModulesGlobalBrigeInstanceManager,
     },
     result::WSResult,
     sys::LogicalModulesRef,
@@ -64,7 +64,7 @@ impl RpcCustom for ProcessRpc {
 
         unsafe {
             tracing::debug!("verify begin");
-            // let appman = ProcessRpc::global_m_app_meta_manager();
+            let appman = ProcessRpc::global_m_app_meta_manager();
             struct Defer;
             impl Drop for Defer {
                 fn drop(&mut self) {
@@ -73,21 +73,21 @@ impl RpcCustom for ProcessRpc {
             }
             let _d = Defer;
 
-            // TODO: add http available check
-            // let ishttp = {
-            //     let appmanmetas = appman.meta.read().await;
-            //     let Some(app) = appmanmetas.get_app_meta(&res.appid).await else {
-            //         tracing::warn!("app {} not found, invalid verify !", res.appid);
-            //         return None;
-            //     };
-            //     app.contains_http_fn()
-            // };
-            // let with_http_port = res.http_port.is_some();
-            // if ishttp && !with_http_port
-            // // || (!ishttp && with_http_port) <<< seems ok
-            // {
-            //     return None;
-            // }
+            let ishttp = {
+                let appmanmetas = appman.meta.read().await;
+                let Some(app) = appmanmetas.get_app_meta(&res.appid).await else {
+                    tracing::warn!("app {} not found, invalid verify !", res.appid);
+                    return None;
+                };
+                app.contains_http_fn()
+            };
+
+            let with_http_port = res.http_port.is_some();
+            if ishttp && !with_http_port
+            // || (!ishttp && with_http_port) <<< seems ok
+            {
+                return None;
+            }
 
             // update to the instance
             let insman = ProcessRpc::global_m_instance_manager().unwrap();

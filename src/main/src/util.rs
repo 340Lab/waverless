@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     future::Future,
-    ops::{Deref, DerefMut, Drop, Range},
+    ops::{Deref, DerefMut, Drop},
     pin::Pin,
     ptr::NonNull,
     task::{Context, Poll},
@@ -239,23 +239,5 @@ impl<T> From<Vec<T>> for VecOrSlice<'_, T> {
 impl<'a, T> From<&'a [T]> for VecOrSlice<'a, T> {
     fn from(v: &'a [T]) -> Self {
         Self::Slice(v)
-    }
-}
-
-pub trait VecExt<T> {
-    fn limit_range_debug(&self, range: Range<usize>) -> String;
-}
-
-impl<T: Debug> VecExt<T> for Vec<T> {
-    fn limit_range_debug(&self, range: Range<usize>) -> String {
-        if self.len() >= range.end {
-            format!("{:?}", &self[range])
-        } else {
-            format!(
-                "{:?}, hide len:{}",
-                &self[range.start..],
-                self.len() - range.end
-            )
-        }
     }
 }

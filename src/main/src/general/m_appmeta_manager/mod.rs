@@ -3,25 +3,18 @@ mod http;
 mod v_os;
 
 use self::v_os::AppMetaVisitOs;
+use super::{
+    m_data_general::{DataGeneral, DATA_UID_PREFIX_APP_META},
+    m_kv_store_engine::{KeyTypeServiceList, KvAdditionalConf, KvStoreEngine},
+    m_os::OperatingSystem,
+    network::{http_handler::HttpHandler, m_p2p::P2PModule},
+};
 use crate::{general::network::proto, result::WSResultExt, worker::m_executor::Executor};
-use crate::{general::network::proto_ext::ProtoExtDataItem, util::VecExt};
 use crate::{
     general::{
-        data::{
-            kv_interface::KvOps,
-            m_data_general::{DataGeneral, DATA_UID_PREFIX_APP_META},
-            m_kv_store_engine::{KeyTypeServiceList, KvAdditionalConf, KvStoreEngine},
-        },
-        m_os::OperatingSystem,
-        network::{
-            http_handler::HttpHandler,
-            m_p2p::P2PModule,
-            proto::{data_schedule_context::OpeRole, DataOpeRoleUploadApp},
-        },
+        kv_interface::KvOps,
+        network::proto::{data_schedule_context::OpeRole, DataOpeRoleUploadApp},
     },
-    result::{WSError, WsDataError},
-};
-use crate::{
     logical_module_view_impl,
     master::m_master::Master,
     result::{ErrCvt, WSResult, WsFuncError},
@@ -29,7 +22,6 @@ use crate::{
     util::{self, JoinHandleWrapper},
     worker::func::m_instance_manager::InstanceManager,
 };
-
 use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
@@ -44,8 +36,6 @@ use std::{
 use tokio::sync::RwLock;
 
 use ws_derive::LogicalModule;
-
-use super::data::m_data_general::{GetOrDelDataArg, GetOrDelDataArgType};
 
 logical_module_view_impl!(View);
 logical_module_view_impl!(View, os, OperatingSystem);
@@ -259,7 +249,7 @@ impl AppMeta {
 // }
 
 pub struct AppMetas {
-    tmp_app_metas: HashMap<String, AppMeta>,
+    app_metas: HashMap<String, AppMeta>,
     pattern_2_app_fn: HashMap<String, Vec<(String, String)>>,
 }
 
@@ -539,7 +529,7 @@ fn view() -> &'static View {
 
 #[derive(LogicalModule)]
 pub struct AppMetaManager {
-    meta: RwLock<AppMetas>,
+    pub meta: RwLock<AppMetas>,
     pub fs_layer: AppMetaVisitOs,
     view: View,
     // app_meta_list_lock: Mutex<()>,
@@ -562,7 +552,7 @@ impl LogicalModule for AppMetaManager {
         let fs_layer = AppMetaVisitOs::new(view.clone());
         Self {
             meta: RwLock::new(AppMetas {
-                tmp_app_metas: HashMap::new(),
+                app_metas: HashMap::new(),
                 pattern_2_app_fn: HashMap::new(),
             }),
             view,
@@ -599,9 +589,35 @@ impl AppMetas {
     // }
     // pub async fn set_tmp_appmeta(&self, )
     fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
-        self.tmp_app_metas.get(app).cloned()
+        self.app_metas.get(app).cloned()
     }
+    pub async fn get_app_meta(&self, app: &str) -> Option<AppMeta> {
+        if let Some(res) = self.get_tmp_app_meta(app) {
+            return Some(res);
+        }
 
+        // self.app_metas.get(app)
+        let meta = view()
+            .data_general()
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(), 0)
+            .await;
+        let Some(proto::DataItem {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(metabytes)),
+        }) = meta
+        else {
+            return None;
+        };
+
+        let meta = bincode::deserialize_from::<_, AppMeta>(Cursor::new(metabytes));
+        let meta = match meta {
+            Err(e) => {
+                tracing::warn!("meta decode failed {:?}", e);
+                return None;
+            }
+            Ok(meta) => meta,
+        };
+        Some(meta)
+    }
     pub fn get_pattern_triggers(
         &self,
         pattern: impl Borrow<str>,
@@ -671,7 +687,7 @@ impl AppMetas {
             //         }
             //     }
             // }
-            let _ = self.tmp_app_metas.insert(app_name, meta);
+            let _ = self.app_metas.insert(app_name, meta);
         }
         Ok(())
     }
@@ -690,7 +706,7 @@ impl AppMetaManager {
                 .meta
                 .write()
                 .await
-                .tmp_app_metas
+                .app_metas
                 .insert(tmpapp.to_owned(), appmeta.clone());
             tracing::debug!("record app meta to make checkpoint {}", tmpapp);
             self.view
@@ -707,7 +723,7 @@ impl AppMetaManager {
                 .meta
                 .write()
                 .await
-                .tmp_app_metas
+                .app_metas
                 .remove(tmpapp)
                 .unwrap_or_else(|| {
                     panic!("remove app meta failed, app: {}", tmpapp);
@@ -717,91 +733,13 @@ impl AppMetaManager {
         Ok(appmeta)
     }
     pub async fn app_available(&self, app: &str) -> WSResult<bool> {
-        match self
+        Ok(self
             .view
             .data_general()
-            .get_or_del_datameta_from_master(
-                format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(),
-                false,
-            )
+            .get_data_item(format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(), 0)
             .await
-        {
-            Err(err) => match err {
-                WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
-                    tracing::debug!(
-                        "app meta not found, app: {}",
-                        std::str::from_utf8(&*uniqueid).unwrap()
-                    );
-                    Ok(false)
-                }
-                _ => Err(err),
-            },
-            Ok(_) => Ok(true),
-        }
+            .is_some())
     }
-
-    // call inner AppMetas.get_app_meta
-    pub async fn get_app_meta(&self, app: &str) -> WSResult<Option<AppMeta>> {
-        if let Some(res) = self.meta.read().await.get_tmp_app_meta(app) {
-            return Ok(Some(res));
-        }
-
-        // self.app_metas.get(app)
-        let meta = view()
-            .data_general()
-            .get_or_del_data(GetOrDelDataArg {
-                meta: None,
-                unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
-                ty: GetOrDelDataArgType::PartialOne { idx: 0 },
-            })
-            .await;
-
-        // only one data item
-        let (_, meta): (_, proto::DataItem) = match meta {
-            Ok((_, datas)) => datas.into_iter().next().unwrap(),
-            Err(err) => match err {
-                WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
-                    tracing::debug!(
-                        "get_app_meta not exist, uniqueid: {:?}",
-                        std::str::from_utf8(&*uniqueid)
-                    );
-                    return Ok(None);
-                }
-                _ => {
-                    tracing::warn!("get_app_meta failed with err {:?}", err);
-                    return Err(err);
-                }
-            },
-        };
-
-        let proto::DataItem {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(metabytes)),
-        } = meta
-        else {
-            return Err(WsFuncError::InvalidAppMetaDataItem {
-                app: app.to_owned(),
-            }
-            .into());
-        };
-
-        let meta = bincode::deserialize_from::<_, AppMeta>(Cursor::new(&metabytes));
-        let meta = match meta {
-            Err(e) => {
-                tracing::warn!(
-                    "meta decode failed with data:{:?}, err:{:?}",
-                    metabytes.limit_range_debug(0..100),
-                    e
-                );
-                return Err(WsFuncError::InvalidAppMetaDataItem {
-                    app: app.to_owned(),
-                }
-                .into());
-            }
-            Ok(meta) => meta,
-        };
-        Ok(Some(meta))
-    }
-
     pub async fn app_uploaded(&self, appname: String, data: Bytes) -> WSResult<()> {
         // 1. tmpapp name & dir
         // TODO: fobidden tmpapp public access
@@ -813,7 +751,7 @@ impl AppMetaManager {
         // 2. unzip app pack
         let tmpappdir2 = tmpappdir.clone();
         // remove old dir&app
-        if let Some(_) = self.meta.write().await.tmp_app_metas.remove(&tmpapp) {
+        if let Some(_) = self.meta.write().await.app_metas.remove(&tmpapp) {
             tracing::debug!("remove old app meta {}", tmpapp);
         }
         let ins = self.view.instance_manager().app_instances.remove(&tmpapp);
@@ -877,36 +815,27 @@ impl AppMetaManager {
         // let _ = fs::remove_dir_all(&tmpappdir).map_err(|e| WSError::from(WsIoErr::Io(e)))?;
 
         // 3. broadcast meta and appfile
-        let write_data_id = format!("{}{}", DATA_UID_PREFIX_APP_META, appname);
-        let write_datas = vec![
-            proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
-                    bincode::serialize(&appmeta).unwrap(),
-                )),
-            },
-            proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(
-                    proto::FileData {
-                        file_name_opt: format!("apps/{}", appname),
-                        is_dir_opt: true,
-                        file_content: zipfiledata,
-                    },
-                )),
-            },
-        ];
-        tracing::debug!(
-            "2broadcast meta and appfile, datasetid: {}, datas: {:?}",
-            write_data_id,
-            write_datas
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-        );
+        tracing::debug!("broadcast meta and appfile");
         self.view
             .data_general()
             .write_data(
-                write_data_id,
-                write_datas,
+                format!("{}{}", DATA_UID_PREFIX_APP_META, appname),
+                vec![
+                    proto::DataItem {
+                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
+                            bincode::serialize(&appmeta).unwrap(),
+                        )),
+                    },
+                    proto::DataItem {
+                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(
+                            proto::FileData {
+                                file_name_opt: format!("apps/{}", appname),
+                                is_dir_opt: true,
+                                file_content: zipfiledata,
+                            },
+                        )),
+                    },
+                ],
                 // vec![
                 //     DataMeta {
                 //         cache: DataModeCache::AlwaysInMem as i32,

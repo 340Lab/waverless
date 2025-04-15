@@ -3531,7 +3531,6 @@ dependencies = [
  "async-raft",
  "async-trait",
  "axum",
- "base64 0.22.1",
  "bincode",
  "camelpaste",
  "clap",

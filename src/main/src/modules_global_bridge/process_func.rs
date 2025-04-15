@@ -1,5 +1,5 @@
 use crate::{
-    general::app::AppMetaManager,
+    general::m_appmeta_manager::AppMetaManager,
     worker::func::{m_instance_manager::InstanceManager, shared::process_rpc::ProcessRpc},
 };
 

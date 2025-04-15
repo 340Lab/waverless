@@ -1,37 +1,15 @@
-use crate::{general::data::m_dist_lock::DistLockOpe};
+use crate::{general::m_dist_lock::DistLockOpe, util::VecOrSlice};
 
-use super::proto::{self, kv::KvResponse, FileData};
+use super::proto::{self, kv::KvResponse, DataItem, FileData};
 
-use std::{ops::Range, path::Path};
+use std::ops::Range;
 
 pub trait ProtoExtDataItem {
     fn data_sz_bytes(&self) -> usize;
     fn clone_split_range(&self, range: Range<usize>) -> Self;
-    fn to_string(&self) -> String;
-    fn new_raw_bytes(rawbytes: impl Into<Vec<u8>>) -> Self;
-    fn as_raw_bytes<'a>(&'a self) -> Option<&'a [u8]>;
-    fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
-    fn new_raw_bytes(rawbytes: impl Into<Vec<u8>>) -> Self {
-        proto::DataItem {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
-                rawbytes.into(),
-            )),
-        }
-    }
-    fn new_file_data(filepath: impl AsRef<Path>, is_dir: bool) -> Self {
-        let file_content = std::fs::read(filepath.as_ref()).unwrap();
-        Self {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(FileData {
-                file_name_opt: filepath.as_ref().to_string_lossy().to_string(),
-                is_dir_opt: is_dir,
-                file_content,
-            })),
-        }
-    }
-
     fn data_sz_bytes(&self) -> usize {
         match self.data_item_dispatch.as_ref().unwrap() {
             proto::data_item::DataItemDispatch::File(file_data) => file_data.file_content.len(),
@@ -42,15 +20,6 @@ impl ProtoExtDataItem for proto::DataItem {
     }
 
     fn clone_split_range(&self, range: Range<usize>) -> Self {
-        // let data_length = match &self.data_item_dispatch.as_ref().unwrap() {
-        //     proto::data_item::DataItemDispatch::File(file_data) => file_data.file_content.len(),
-        //     proto::data_item::DataItemDispatch::RawBytes(vec) => vec.len(),
-        // };
-
-        // if range.start >= data_length || range.end > data_length {
-        //     panic!("range out of bounds: {:?}", range);
-        // }
-
         Self {
             data_item_dispatch: Some(match &self.data_item_dispatch.as_ref().unwrap() {
                 proto::data_item::DataItemDispatch::File(file_data) => {
@@ -64,23 +33,6 @@ impl ProtoExtDataItem for proto::DataItem {
                     proto::data_item::DataItemDispatch::RawBytes(vec[range.clone()].to_owned())
                 }
             }),
-        }
-    }
-
-    fn as_raw_bytes<'a>(&'a self) -> Option<&'a [u8]> {
-        match &self.data_item_dispatch.as_ref().unwrap() {
-            proto::data_item::DataItemDispatch::RawBytes(vec) => Some(vec),
-            _ => None,
-        }
-    }
-    fn to_string(&self) -> String {
-        match &self.data_item_dispatch.as_ref().unwrap() {
-            proto::data_item::DataItemDispatch::File(file_data) => {
-                format!("file: {}", file_data.file_name_opt.clone())
-            }
-            proto::data_item::DataItemDispatch::RawBytes(vec) => {
-                format!("raw bytes: {:?}", &vec[0..vec.len().min(100)])
-            }
         }
     }
 }

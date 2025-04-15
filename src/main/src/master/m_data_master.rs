@@ -1,19 +1,18 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::general::data::{
-    m_data_general::{
-        DataGeneral, DataItemIdx, DataSetMetaBuilder, DataSplit, EachNodeSplit,
-    },
-    m_kv_store_engine::{KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine},
+use crate::general::m_data_general::{
+    CacheModeVisitor, DataGeneral, DataSetMetaBuilder, DataSplit, EachNodeSplit,
 };
-
+use crate::general::m_kv_store_engine::{
+    KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine,
+};
 use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
 };
 use crate::result::{WSResult, WSResultExt};
-use crate::sys::{LogicalModulesRef};
+use crate::sys::{LogicalModulesRef, NodeID};
 use crate::util::JoinHandleWrapper;
 use crate::{
     general::network::http_handler::HttpHandler,
@@ -75,78 +74,57 @@ impl LogicalModule for DataMaster {
 }
 
 impl DataMaster {
-    // fn set_data_cache_mode_default(builder: &mut DataSetMetaBuilder) {
-    //     if builder.building.
-    //     // default cache mode
-    //     let _ = builder
-    //         .cache_mode_map_common_kv()
-    //         .cache_mode_pos_auto()
-    //         .cache_mode_time_auto();
-    // }
+    fn set_data_cache_mode_default(builder: &mut DataSetMetaBuilder) {
+        // default cache mode
+        let _ = builder
+            .cache_mode_map_common_kv()
+            .cache_mode_pos_auto()
+            .cache_mode_time_auto();
+    }
     fn set_data_cache_mode_for_meta(
         req: &DataVersionScheduleRequest,
         builder: &mut DataSetMetaBuilder,
     ) {
-        fn default_set_data_cache_mode_for_meta(
-            req: &DataVersionScheduleRequest,
-            builder: &mut DataSetMetaBuilder,
-        ) {
-            // for each item(by split length), set cache mode
-            for idx in 0..req.context.as_ref().unwrap().each_data_sz_bytes.len() {
-                let _ = builder
-                    .cache_mode_time_forever(idx as DataItemIdx)
-                    .cache_mode_pos_allnode(idx as DataItemIdx)
-                    .cache_mode_map_common_kv(idx as DataItemIdx);
-            }
-        }
         if let Some(context) = req.context.as_ref() {
             match context.ope_role.as_ref().unwrap() {
                 proto::data_schedule_context::OpeRole::UploadApp(_data_ope_role_upload_app) => {
                     let _ = builder
-                        // 0 is app meta data, map to common kv
-                        .cache_mode_time_forever(0)
-                        .cache_mode_pos_allnode(0)
-                        .cache_mode_map_common_kv(0)
-                        // 1 is app package data, map to file
-                        .cache_mode_time_forever(1)
-                        .cache_mode_pos_allnode(1)
-                        .cache_mode_map_file(1);
+                        .cache_mode_time_forever()
+                        .cache_mode_pos_allnode()
+                        .cache_mode_map_file();
                 }
                 proto::data_schedule_context::OpeRole::FuncCall(_data_ope_role_func_call) => {
-                    default_set_data_cache_mode_for_meta(req, builder);
+                    Self::set_data_cache_mode_default(builder);
                 }
             }
         } else {
-            tracing::warn!(
-                "context is None, use default cache mode, maybe we need to suitable for this case"
-            );
-            default_set_data_cache_mode_for_meta(req, builder);
+            Self::set_data_cache_mode_default(builder);
         }
     }
 
-    // fn decide_cache_nodes(
-    //     _ctx: &proto::DataScheduleContext,
-    //     each_item_cache_mode: CacheModeVisitor,
-    // ) -> Vec<NodeID> {
-    //     if cache_mode.is_time_auto() {
-    //         // for time auto, we just do the cache when data is get
-    //         return vec![];
-    //     } else if cache_mode.is_time_forever() {
-    //         if cache_mode.is_pos_auto() {
-    //             // for pos auto, we just do the cache when data is get
-    //             // simple strategy temporarily
-    //             return vec![];
-    //         } else if cache_mode.is_pos_specnode() {
-    //             return vec![];
-    //         } else {
-    //             // all node just return empty, can be just refered from cache_mode
-    //             // no need to redundant info in cache nodes
-    //             return vec![];
-    //         }
-    //     } else {
-    //         panic!("not supported time mode {:?}", cache_mode)
-    //     }
-    // }
+    fn decide_cache_nodes(
+        _ctx: &proto::DataScheduleContext,
+        cache_mode: CacheModeVisitor,
+    ) -> Vec<NodeID> {
+        if cache_mode.is_time_auto() {
+            // for time auto, we just do the cache when data is get
+            return vec![];
+        } else if cache_mode.is_time_forever() {
+            if cache_mode.is_pos_auto() {
+                // for pos auto, we just do the cache when data is get
+                // simple strategy temporarily
+                return vec![];
+            } else if cache_mode.is_pos_specnode() {
+                return vec![];
+            } else {
+                // all node just return empty, can be just refered from cache_mode
+                // no need to redundant info in cache nodes
+                return vec![];
+            }
+        } else {
+            panic!("not supported time mode {:?}", cache_mode)
+        }
+    }
 
     fn decide_each_data_split(&self, ctx: &proto::DataScheduleContext) -> Vec<DataSplit> {
         // let DEFAULT_SPLIT_SIZE = 4 * 1024 * 1024;
@@ -207,28 +185,18 @@ impl DataMaster {
             );
             let set_meta = dataset_meta.map_or_else(
                 || {
-                    tracing::debug!("new dataset meta for data({:?})", req.unique_id);
                     let mut builder = DataSetMetaBuilder::new();
-                    // version
                     let _ = builder.version(1);
-                    // data splits bf cache mod
-                    let _ = builder.set_data_splits(self.decide_each_data_split(ctx));
-                    // cache mode
                     Self::set_data_cache_mode_for_meta(&req, &mut builder);
-
+                    let _ = builder.set_data_splits(self.decide_each_data_split(ctx));
                     builder.build()
                 },
-                |(_kv_version, set_meta)| {
-                    tracing::debug!("update dataset meta for data({:?})", req.unique_id);
-                    let version = set_meta.version;
-                    let mut builder = DataSetMetaBuilder::from(set_meta);
-                    // version
-                    let _ = builder.version(version + 1);
-                    // data splits bf cache mod
-                    let _ = builder.set_data_splits(self.decide_each_data_split(ctx));
-                    // cache mode
-                    Self::set_data_cache_mode_for_meta(&req, &mut builder);
-                    builder.build()
+                |(_kv_version, mut set_meta)| {
+                    set_meta.version += 1;
+                    set_meta
+                    // let mut replace = setmeta.borrow_mut().take().unwrap();
+                    // replace.version = set_meta.version + 1;
+                    // replace
                 },
             );
             // ##  update version local
@@ -312,8 +280,10 @@ impl DataMaster {
 
         // call_tasks.push(call_task);
 
-        // let cache_nodes =
-        //     Self::decide_cache_nodes(req.context.as_ref().unwrap(), new_meta.cache_mode);
+        let cache_nodes = Self::decide_cache_nodes(
+            req.context.as_ref().unwrap(),
+            CacheModeVisitor(new_meta.cache_mode),
+        );
 
         tracing::debug!(
             "data:{:?} version required({}) and schedule done, caller will do following thing after receive `DataVersionScheduleResponse`",
@@ -324,7 +294,10 @@ impl DataMaster {
         responsor
             .send_resp(DataVersionScheduleResponse {
                 version: new_meta.version,
-                cache_mode: new_meta.cache_mode.into_iter().map(|v| v as u32).collect(),
+                cache_plan: Some(proto::DataCachePlan {
+                    cache_mode: new_meta.cache_mode as u32,
+                    cache_nodes,
+                }),
                 split: new_meta
                     .datas_splits
                     .into_iter()
