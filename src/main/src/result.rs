@@ -1,4 +1,4 @@
-use std::{fmt::Debug, os::unix::net::SocketAddr, sync::Arc, path::PathBuf};
+use std::{fmt::Debug, os::unix::net::SocketAddr, sync::Arc};
 
 use async_raft::{InitializeError, RaftError};
 use camelpaste::paste;
@@ -250,20 +250,6 @@ pub enum WsDataError {
         request_id: proto::BatchRequestId,
         idx: DataSplitIdx,
     },
-    BatchTransferTaskFailed {
-        reason: String,
-    },
-    BatchTransferFailed {
-        request_id: proto::BatchRequestId,
-        reason: String,
-    },
-    BatchTransferNotFound {
-        request_id: proto::BatchRequestId,
-    },
-    BatchTransferError {
-        request_id: proto::BatchRequestId,
-        msg: String,
-    },
     UnknownCacheMapMode {
         mode: u16,
     },
@@ -278,27 +264,20 @@ pub enum WsDataError {
         len: u8,
     },
     ItemIdxEmpty,
+    BatchTransferFailed {
+        request_id: proto::BatchRequestId,
+        reason: String,
+    },
+    BatchTransferNotFound {
+        request_id: proto::BatchRequestId,
+    },
+    BatchTransferError {
+        request_id: proto::BatchRequestId,
+        msg: String,
+    },
     VersionMismatch {
         expected: u64,
         actual: u64,
-    },
-    SizeMismatch {
-        expected: usize,  // 预期的数据大小
-        actual: usize,    // 实际的数据大小
-    },
-    ReadDataFailed {
-        path: PathBuf,     // 读取失败的文件路径
-    },
-    /// 数据分片任务错误
-    DataSplitTaskError {
-        msg: String,
-    },
-    /// 数据解码错误
-    DataDecodeError {
-        /// 错误原因
-        reason: String,
-        /// 数据类型（用于调试）
-        data_type: String,
     },
 }
 
