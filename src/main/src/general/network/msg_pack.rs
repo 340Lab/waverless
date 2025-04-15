@@ -133,18 +133,8 @@ define_msg_ids!(
         }
     }),
     (proto::kv::KvLockResponse, _pack, { true }),
-    (proto::BatchDataRequest, _pack, {
-        // 验证关键字段非空
-        // 1. request_id 必须存在，用于请求追踪
-        // 2. unique_id 必须存在，标识数据集
-        // 3. data 必须存在，实际数据内容
-        let req = _pack;
-        match (req.request_id.is_some(), req.unique_id.is_empty(), req.data.is_empty()) {
-            (true, false, false) => true,
-            _ => false
-        }
-    }),
-    (proto::BatchDataResponse, _pack, { true })
+    (proto::sche::BatchDataRequest, _pack, { true }),
+    (proto::sche::BatchDataResponse, _pack, { true })
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -199,8 +189,8 @@ impl RPCReq for proto::kv::KvLockRequest {
     type Resp = proto::kv::KvLockResponse;
 }
 
-impl RPCReq for proto::BatchDataRequest {
-    type Resp = proto::BatchDataResponse;
+impl RPCReq for proto::sche::BatchDataRequest {
+    type Resp = proto::sche::BatchDataResponse;
 }
 
 // impl RPCReq for proto::kv::KvLockWaitAcquireNotifyRequest {

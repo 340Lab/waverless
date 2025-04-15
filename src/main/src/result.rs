@@ -178,7 +178,6 @@ pub enum WsFuncError {
 
 #[derive(Debug)]
 pub enum WsDataError {
-    InvalidDataType,
     DataSetNotFound {
         uniqueid: Vec<u8>,
     },
@@ -260,21 +259,6 @@ pub enum WsDataError {
         node: NodeID,
         batch: u32,
         reason: String,
-    },
-
-    BatchTransferNotFound {
-        node_id: u32,
-        sequence: u64,
-    },
-
-    BatchBlockMissing {
-        unique_id: Vec<u8>,
-        block_index: u32,
-    },
-
-    BatchTransferError {
-        unique_id: Vec<u8>,
-        msg: String,
     },
 }
 
