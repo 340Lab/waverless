@@ -33,7 +33,7 @@ use ws_derive::LogicalModule;
 
 use crate::{
     // module_view::P2PQuicNodeLMView,
-    logical_module_view_impl, result::{ErrCvt, WSResult, WSResultExt, WsNetworkConnErr, WsSerialErr}, sys::{BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID}, util::JoinHandleWrapper
+    logical_module_view_impl, result::{ErrCvt, WSResult, WsNetworkConnErr, WsSerialErr}, sys::{LogicalModulesRef,BroadcastMsg, BroadcastSender, LogicalModule, LogicalModuleNewArgs, NodeID}, util::JoinHandleWrapper
 };
 
 use super::m_p2p::{MsgId, P2PKernel, P2PModule, TaskId};
@@ -360,7 +360,7 @@ async fn handle_connection(
                     let head=bytes.split_to(headlen as usize);
                     match deserialize_msg_id_task_id(&head) {
                         Ok((msg_id, task_id)) => {
-                            view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into()).todo_handle();
+                            view.p2p().dispatch(remote_id, msg_id, task_id, bytes.into());
                         }
                         Err(err) => {
                             tracing::warn!("incoming deserial head error: {:?}", err);

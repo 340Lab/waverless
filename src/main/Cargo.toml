@@ -8,7 +8,6 @@ edition = "2021"
 [features]
 default = []    # 默认启用的特性
 unsafe-log = []
-rpc-log = []
 
 [dependencies]
 qp2p.workspace = true        #{ path = "qp2p" }

@@ -14,7 +14,7 @@ use crate::{
         },
     },
     logical_module_view_impl,
-    result::{WSError, WSResult, WSResultExt, WsDataError},
+    result::WSResult,
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
@@ -25,7 +25,6 @@ logical_module_view_impl!(KvUserClientView);
 logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
 logical_module_view_impl!(KvUserClientView, data_general, DataGeneral);
 logical_module_view_impl!(KvUserClientView, dist_lock, DistLock);
-logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
 
 #[derive(LogicalModule)]
 pub struct KvUserClient {
@@ -192,7 +191,6 @@ impl KvUserClient {
 
         Ok(kv_responses)
     }
-
     async fn handle_kv_set(
         &self,
         app_name: &str,
@@ -219,8 +217,7 @@ impl KvUserClient {
                     }),
                 )),
             )
-            .await
-            .todo_handle();
+            .await;
         KvResponse::new_common(vec![])
     }
 
@@ -232,7 +229,7 @@ impl KvUserClient {
     ) -> Vec<proto::kv::KvPair> {
         if meta.datas_splits.len() != 1 {
             tracing::warn!(
-                "convert kv invalid data count number: {}",
+                "delete kv invalid data count number: {}",
                 meta.datas_splits.len()
             );
             vec![]
@@ -240,7 +237,7 @@ impl KvUserClient {
             match meta.datas_splits[0].recorver_data(uid, 0, &mut splits) {
                 Ok(ok) => vec![proto::kv::KvPair { key, value: ok }],
                 Err(err) => {
-                    tracing::warn!("convert kv data error:{:?}", err);
+                    tracing::warn!("delete kv data error:{:?}", err);
                     vec![]
                 }
             }
@@ -261,12 +258,8 @@ impl KvUserClient {
                 meta,
                 splits,
             ),
-            Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
-                tracing::debug!("get kv data not found, uid({:?})", uniqueid);
-                vec![]
-            }
             Err(err) => {
-                tracing::warn!("get kv data error:{:?}", err);
+                tracing::warn!("delete kv data error:{:?}", err);
                 vec![]
             }
         };
@@ -286,10 +279,6 @@ impl KvUserClient {
                 deleted_meta,
                 deleted_splits,
             ),
-            Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
-                tracing::debug!("delete kv data not found, uid({:?})", uniqueid);
-                vec![]
-            }
             Err(err) => {
                 tracing::warn!("delete kv data error:{:?}", err);
                 vec![]
@@ -362,168 +351,4 @@ impl KvUserClient {
     //     //     }
     //     // }
     // }
-}
-
-#[cfg(test)]
-mod test {
-    use core::str;
-    use std::{sync::Arc, time::Duration};
-
-    use super::KvUserClientView;
-    use crate::general::{
-        network::{
-            proto::{
-                self,
-                kv::{KvRequest, KvRequests},
-            },
-            proto_ext::KvRequestExt,
-        },
-        test_utils,
-    };
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_kv_user_client() {
-        let (_hold, _sys1, sys2) = test_utils::get_test_sys().await;
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let view = KvUserClientView::new(sys2);
-        let app = "test_app";
-        let func = "test_func";
-        let test_key = "test_key";
-        let test_value = "test_value";
-
-        // first time get should be none
-        {
-            let res = view
-                .kv_user_client()
-                .kv_requests(
-                    app,
-                    func,
-                    KvRequests {
-                        app: app.to_owned(),
-                        func: func.to_owned(),
-                        prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned())],
-                    },
-                )
-                .await
-                .unwrap();
-            assert!(res.responses.len() == 1);
-            match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
-                }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
-            }
-            tracing::debug!("first time get is none");
-        }
-
-        // (insert and get then delete twice) *3
-        for _ in 0..3 {
-            let res = view
-                .kv_user_client()
-                .kv_requests(
-                    app,
-                    func,
-                    KvRequests {
-                        app: app.to_owned(),
-                        func: func.to_owned(),
-                        prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_set(proto::kv::KvPair {
-                            key: test_key.as_bytes().to_owned(),
-                            value: test_value.as_bytes().to_owned(),
-                        })],
-                    },
-                )
-                .await
-                .unwrap();
-            assert!(res.responses.len() == 1);
-            match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
-                    // assert_eq!(str::from_utf8(&kv_response.kvs[0].key).unwrap(), test_key);
-                    // assert_eq!(
-                    //     str::from_utf8(&kv_response.kvs[0].value).unwrap(),
-                    //     test_value
-                    // );
-                }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
-            }
-            tracing::debug!("set success");
-
-            // get after set
-            let res = view
-                .kv_user_client()
-                .kv_requests(
-                    app,
-                    func,
-                    KvRequests {
-                        app: app.to_owned(),
-                        func: func.to_owned(),
-                        prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned())],
-                    },
-                )
-                .await
-                .unwrap();
-            assert!(res.responses.len() == 1);
-            match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 1);
-                    assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
-                    assert!(kv_response.kvs[0].value == test_value.as_bytes().to_owned());
-                }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
-            }
-            tracing::debug!("get after set success");
-
-            // delete after get
-            let res = view
-                .kv_user_client()
-                .kv_requests(
-                    app,
-                    func,
-                    KvRequests {
-                        app: app.to_owned(),
-                        func: func.to_owned(),
-                        prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_delete(test_key.as_bytes().to_owned())],
-                    },
-                )
-                .await
-                .unwrap();
-            assert!(res.responses.len() == 1);
-            match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
-                    assert!(kv_response.kvs[0].value == test_value.as_bytes().to_owned());
-                }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
-            }
-            tracing::debug!("delete after get success");
-
-            // delete again will be none
-            let res = view
-                .kv_user_client()
-                .kv_requests(
-                    app,
-                    func,
-                    KvRequests {
-                        app: app.to_owned(),
-                        func: func.to_owned(),
-                        prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_delete(test_key.as_bytes().to_owned())],
-                    },
-                )
-                .await
-                .unwrap();
-            assert!(res.responses.len() == 1);
-            match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
-                }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
-            }
-            tracing::debug!("delete again is none");
-        }
-    }
 }

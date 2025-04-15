@@ -224,20 +224,3 @@ impl<T> Drop for DropDebug<T> {
         tracing::debug!("tracked drop {} [{}]", self.tag, self.rand);
     }
 }
-
-pub enum VecOrSlice<'a, T> {
-    Vec(Vec<T>),
-    Slice(&'a [T]),
-}
-
-impl<T> From<Vec<T>> for VecOrSlice<'_, T> {
-    fn from(v: Vec<T>) -> Self {
-        Self::Vec(v)
-    }
-}
-
-impl<'a, T> From<&'a [T]> for VecOrSlice<'a, T> {
-    fn from(v: &'a [T]) -> Self {
-        Self::Slice(v)
-    }
-}
