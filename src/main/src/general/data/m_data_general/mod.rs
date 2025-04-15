@@ -155,11 +155,24 @@ impl DataGeneral {
             let (tx, mut rx) = tokio::sync::mpsc::channel(32);
             let mut handles = Vec::new();
             
-            let data_size = data.size().await?;
-            let splits = calculate_splits(data_size);
+            let data_size = match data.as_ref() {
+                DataItemSource::Memory { data } => data.len(),
+                DataItemSource::File { path } => {
+                    let metadata = tokio::fs::metadata(path).await.map_err(|e| WsDataError::BatchTransferFailed {
+                        request_id: proto::BatchRequestId {
+                            node_id: target_node as u32,
+                            sequence: 0,
+                        },
+                        reason: format!("Failed to get file size: {}", e),
+                    })?;
+                    metadata.len() as usize
+                }
+            };
             
-            tracing::debug!("batch_transfer total size({}), splits: {:?}", data_size, splits);
-
+            // 从 batch_handler 中获取总块数
+            let total_blocks = (data_size + DEFAULT_BLOCK_SIZE - 1) / DEFAULT_BLOCK_SIZE;
+            let splits = calculate_splits(total_blocks as u32);
+            
             for (block_idx, split_range) in splits.iter().enumerate() {
                 let block_data = match data.as_ref() {
                     DataItemSource::Memory { data } => data[split_range.clone()].to_vec(),
@@ -218,7 +231,6 @@ impl DataGeneral {
                     operation: proto::DataOpeType::Write as i32,
                     unique_id: unique_id.clone(),
                     version,
-                    total_size: data_size as u64,
                 };
     
                 let tx = tx.clone();
@@ -294,7 +306,6 @@ impl DataGeneral {
         unique_id: &[u8],
         delete: bool,
     ) -> WSResult<DataSetMetaV2> {
-        tracing::debug!("get_or_del_datameta_from_master uid: {:?}, delete: {}, whoami: {}", unique_id, delete, self.view.p2p().nodes_config.this.0);
         let p2p = self.view.p2p();
         // get meta from master
         let meta = self
@@ -334,7 +345,6 @@ impl DataGeneral {
             ty,
         }: GetOrDelDataArg,
     ) -> WSResult<(DataSetMetaV2, HashMap<DataItemIdx, proto::DataItem>)> {
-        tracing::debug!("get_or_del_data uid: {:?}, maybe with meta: {:?}", unique_id, meta);
         let mut data_map = HashMap::new();
 
         // get meta from master
@@ -345,7 +355,7 @@ impl DataGeneral {
                 .await?
         };
 
-        tracing::debug!("start get_or_del_data uid: {:?},meta: {:?}", unique_id, meta);
+        tracing::debug!("get_or_del_data uid: {:?},meta: {:?}", unique_id, meta);
 
         // basical verify
         for idx in 0..meta.data_item_cnt() {
@@ -830,14 +840,8 @@ impl DataGeneral {
 
         let key = KeyTypeDataSetMeta(&req.unique_id);
         let keybytes = key.make_key();
-        
-        // test only log
-        #[cfg(test)]
-        tracing::debug!("rpc_handle_data_meta_update {:?}\n    {:?}", req,bincode::deserialize::<DataSetMeta>(&req.serialized_meta));
-        // not test log
-        #[cfg(not(test))]
-        tracing::debug!("rpc_handle_data_meta_update {:?}", req);
 
+        tracing::debug!("rpc_handle_data_meta_update {:?}", req);
         let kv_lock = self.view.kv_store_engine().with_rwlock(&keybytes);
         let _kv_write_lock_guard = kv_lock.write();
 
@@ -907,15 +911,15 @@ impl DataGeneral {
         responsor: RPCResponsor<proto::DataMetaGetRequest>,
     ) -> WSResult<()> {
         tracing::debug!("rpc_handle_get_data_meta with req({:?})", req);
-        let meta = self.view.get_data_meta_local(&req.unique_id, req.delete)?;
-        if meta.is_none() {
-            tracing::debug!("rpc_handle_get_data_meta data meta not found");
-        } else {
-            tracing::debug!("rpc_handle_get_data_meta data meta found");
-        }
-        let serialized_meta = meta.map_or(vec![], |(_kvversion, meta)| {
-            bincode::serialize(&meta).unwrap()
-        });
+        let meta = self.view.get_metadata(&req.unique_id, req.delete).await?;
+        tracing::debug!("rpc_handle_get_data_meta data meta found");
+        
+        let serialized_meta = bincode::serialize(&meta).map_err(|err| {
+            WsSerialErr::BincodeErr {
+                err,
+                context: "rpc_handle_get_data_meta".to_owned(),
+            }
+        })?;
 
         responsor
             .send_resp(proto::DataMetaGetResponse { serialized_meta })
@@ -1034,7 +1038,7 @@ impl DataGeneral {
                 // 创建任务组和句柄
                 let (mut group, handle) = match WriteSplitDataTaskGroup::new(
                     req.unique_id.clone(),
-                    req.total_size as usize,
+                    Vec::new(), // TODO: 根据实际需求设置分片范围
                     req.block_type(),
                     req.version,
                 ).await {
@@ -1098,8 +1102,6 @@ impl DataGeneral {
             data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(data)),
             ..Default::default()
         };
-
-        tracing::debug!("submit_split with data split idx: {}, at node: {}", block_index, self.view.p2p().nodes_config.this_node());
         state.handle.submit_split(
             block_index as usize * DEFAULT_BLOCK_SIZE,
             data_item,
@@ -1433,7 +1435,7 @@ pub enum GetOrDelDataArgType {
 }
 
 impl DataGeneralView {
-    fn get_data_meta_local(
+    fn get_data_meta(
         &self,
         unique_id: &[u8],
         delete: bool,
@@ -1462,7 +1464,7 @@ impl DataGeneralView {
         delete: bool,
     ) -> WSResult<DataSetMetaV2> {
         // 先尝试从本地获取
-        if let Some((_version, meta)) = self.get_data_meta_local(unique_id, delete)? {
+        if let Some((_version, meta)) = self.get_data_meta(unique_id, delete)? {
             return Ok(meta);
         }
 

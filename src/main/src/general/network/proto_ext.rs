@@ -1,6 +1,5 @@
 use crate::general::app::DataEventTrigger;
 use crate::general::data::m_data_general::dataitem::DataItemSource;
-use crate::general::data::m_data_general::DataItemIdx;
 use crate::general::data::m_dist_lock::DistLockOpe;
 use crate::general::network::proto::sche::distribute_task_req::{
     DataEventTriggerNew, DataEventTriggerWrite, Trigger,
@@ -288,16 +287,6 @@ impl ProtoExtDataEventTrigger for DataEventTrigger {
                 Trigger::EventNew(DataEventTriggerNew { key, opeid })
             }
         }
-    }
-}
-
-pub trait ProtoExtDataScheduleContext {
-    fn dataitem_cnt(&self) -> DataItemIdx;
-}
-
-impl ProtoExtDataScheduleContext for proto::DataScheduleContext {
-    fn dataitem_cnt(&self) -> DataItemIdx {
-        self.each_data_sz_bytes.len() as DataItemIdx
     }
 }
 

@@ -235,7 +235,6 @@ impl KvUserClient {
         _meta: DataSetMetaV2,
         splits: HashMap<DataItemIdx, proto::DataItem>,
     ) -> WSResult<Vec<proto::kv::KvPair>> {
-        tracing::debug!("convert_get_data_res_to_kv_response uid: {:?}, split keys: {:?}", uid, splits.keys().collect::<Vec<_>>());
         if splits.len() != 1 {
             return Err(WSError::WsDataError(
                 WsDataError::KvGotWrongSplitCountAndIdx {

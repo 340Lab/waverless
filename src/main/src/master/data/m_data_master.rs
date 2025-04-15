@@ -1,7 +1,6 @@
 use crate::general::app::m_executor::Executor;
 use crate::general::app::AppMetaManager;
 use crate::general::app::DataEventTrigger;
-use crate::general::data::m_data_general::CacheModeVisitor;
 use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
@@ -191,12 +190,14 @@ impl DataMaster {
 
         // 设置数据分片
         let _ = builder.set_data_splits(splits.clone());
-        // 暂时用zui'lzuil        
-        for idx in 0..splits.len() {
-            let _= builder.cache_mode_time_auto(idx as u8).cache_mode_pos_auto(idx as u8);
-        }
-        let cache_modes=builder.build().cache_mode;
-        tracing::debug!("planned for write data({:?}) cache_modes: {:?}", data_unique_id, cache_modes);
+
+        // 设置缓存模式 - 对所有缓存节点启用永久缓存
+        let cache_modes = vec![
+            CACHE_MODE_TIME_FOREVER_MASK | CACHE_MODE_MAP_COMMON_KV_MASK;
+            context.each_data_sz_bytes.len()
+        ];
+        let _ = builder.set_cache_mode_for_all(cache_modes.clone());
+
         Ok((cache_modes, splits, cache_nodes))
     }
 
@@ -266,68 +267,64 @@ impl DataMaster {
         };
 
         // update version peers
-        {
-            tracing::debug!("updating meta({:?}) to peers for data({:?})", new_meta, req.unique_id);
-            let need_notify_nodes = {
-                let mut need_notify_nodes = HashSet::new();
-                for one_data_splits in &new_meta.datas_splits {
-                    for data_split in &one_data_splits.splits {
-                        let _ = need_notify_nodes.insert(data_split.node_id);
+        let need_notify_nodes = {
+            let mut need_notify_nodes = HashSet::new();
+            for one_data_splits in &new_meta.datas_splits {
+                for data_split in &one_data_splits.splits {
+                    let _ = need_notify_nodes.insert(data_split.node_id);
+                }
+            }
+            // TODO: do we need to notify cache nodes?
+            need_notify_nodes
+        };
+
+        for need_notify_node in need_notify_nodes {
+            let view = self.view.clone();
+            let serialized_meta = bincode::serialize(&new_meta).unwrap();
+            let unique_id = req.unique_id.clone();
+            let version = new_meta.version;
+            let _ = tokio::spawn(async move {
+                let p2p = view.p2p();
+                let display_id = std::str::from_utf8(&unique_id)
+                    .map_or_else(|_err| format!("{:?}", unique_id), |ok| ok.to_owned());
+                tracing::debug!(
+                    "updating version for data({:?}) to node: {}, this_node:  {}",
+                    display_id,
+                    need_notify_node,
+                    p2p.nodes_config.this_node()
+                );
+
+                tracing::debug!(
+                    "async notify `DataMetaUpdateRequest` to node {}",
+                    need_notify_node
+                );
+                let resp = view
+                    .data_master()
+                    .rpc_caller_data_meta_update
+                    .call(
+                        p2p,
+                        need_notify_node,
+                        proto::DataMetaUpdateRequest {
+                            unique_id,
+                            version,
+                            serialized_meta,
+                        },
+                        Some(Duration::from_secs(60)),
+                    )
+                    .await;
+                if let Err(err) = resp {
+                    tracing::error!(
+                        "notify `DataMetaUpdateRequest` to node {} failed: {}",
+                        need_notify_node,
+                        err
+                    );
+                } else if let Ok(ok) = resp {
+                    if ok.version != version {
+                        tracing::error!("notify `DataMetaUpdateRequest` to node {} failed: version mismatch, expect: {}, remote: {}", need_notify_node, version, ok.version);
                     }
                 }
-                // TODO: do we need to notify cache nodes?
-                need_notify_nodes
-            };
-
-            for need_notify_node in need_notify_nodes {
-                let view = self.view.clone();
-                let serialized_meta = bincode::serialize(&new_meta).unwrap();
-                let unique_id = req.unique_id.clone();
-                let version = new_meta.version;
-                let _ = tokio::spawn(async move {
-                    let p2p = view.p2p();
-                    let display_id = std::str::from_utf8(&unique_id)
-                        .map_or_else(|_err| format!("{:?}", unique_id), |ok| ok.to_owned());
-                    tracing::debug!(
-                        "updating version for data({:?}) to node: {}, this_node:  {}",
-                        display_id,
-                        need_notify_node,
-                        p2p.nodes_config.this_node()
-                    );
-
-                    tracing::debug!(
-                        "async notify `DataMetaUpdateRequest` to node {}",
-                        need_notify_node
-                    );
-                    let resp = view
-                        .data_master()
-                        .rpc_caller_data_meta_update
-                        .call(
-                            p2p,
-                            need_notify_node,
-                            proto::DataMetaUpdateRequest {
-                                unique_id,
-                                version,
-                                serialized_meta,
-                            },
-                            Some(Duration::from_secs(60)),
-                        )
-                        .await;
-                    if let Err(err) = resp {
-                        tracing::error!(
-                            "notify `DataMetaUpdateRequest` to node {} failed: {}",
-                            need_notify_node,
-                            err
-                        );
-                    } else if let Ok(ok) = resp {
-                        if ok.version != version {
-                            tracing::error!("notify `DataMetaUpdateRequest` to node {} failed: version mismatch, expect: {}, remote: {}", need_notify_node, version, ok.version);
-                        }
-                    }
-                });
-            }
+            });
         }
-    
 
         tracing::debug!(
             "data:{:?} version required({}) and schedule done, caller will do following thing after receive `DataVersionScheduleResponse`",
