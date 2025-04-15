@@ -660,30 +660,25 @@ impl DataGeneral {
                 let message = "New data version overwrite".to_owned();
                 tracing::warn!("{}", message);
                 
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+                responsor                    //返回结果未处理  曾俊
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
-                    .await{
-                        tracing::error!("Failed to send write one data response 1: {}", e);
-                    }
-                // .todo_handle("1 err_comment waitting to fill");
-
+                    .await
+                    .todo_handle("1 err_comment waitting to fill");
             };
             let fail_with_msg = |message: String| async {
                 tracing::warn!("{}", message);
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+                responsor                    //返回结果未处理  曾俊
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
-                    .await {
-                        tracing::error!("Failed to send write one data response 2 : {}", e);
-                    }
-                    // .todo_handle("2 err_comment waitting to fill");
+                    .await
+                    .todo_handle("2 err_comment waitting to fill");
             };
 
             loop {
@@ -784,7 +779,7 @@ impl DataGeneral {
             || check_meta.as_ref().unwrap().0 != required_meta.as_ref().unwrap().0
         {
             drop(guard);
-            if let Err(e) = responsor                    //返回结果未处理  曾俊
+            responsor                    //返回结果未处理  曾俊
                 .send_resp(WriteOneDataResponse {
                     remote_version: if check_meta.is_none() {
                         0
@@ -794,10 +789,8 @@ impl DataGeneral {
                     success: false,
                     message: "meta is updated again, cancel write".to_owned(),
                 })
-                .await{
-                    tracing::error!("Failed to send write one data response 3: {}", e);
-                }
-            // .todo_handle("3 err_comment waitting to fill");
+                .await
+                .todo_handle("3 err_comment waitting to fill");
             return;
         }
 
@@ -827,16 +820,14 @@ impl DataGeneral {
         kv_store_engine.flush();
         drop(guard);
         tracing::debug!("data partial is written");
-        if let Err(e) = responsor               //返回结果未使用  曾俊
+        responsor               //返回结果未使用  曾俊
             .send_resp(WriteOneDataResponse {
                 remote_version: req.version,
                 success: true,
                 message: "".to_owned(),
             })
-            .await{
-                tracing::error!("Failed to send write one data response 4: {}", e);
-            }
-        // .todo_handle("4 err_comment waitting to fill");
+            .await
+            .todo_handle("4 err_comment waitting to fill");
     }
 
     async fn rpc_handle_data_meta_update(
@@ -876,30 +867,24 @@ impl DataGeneral {
                 drop(_kv_write_lock_guard);
                 let err_msg = "New data version is smaller, failed update";
                 tracing::warn!("{}", err_msg);
-                if let Err(e) = responsor                //返回结果未处理  曾俊
+                responsor                //返回结果未处理  曾俊
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: old_meta.version,
                         message: err_msg.to_owned(),
                     })
-                    .await{
-                        tracing::error!("Failed to send data meta update response 5: {}", e);
-                    }
-                // .todo_handle("5 err_comment waitting to fill");
+                    .await
+                    .todo_handle("5 err_comment waitting to fill");
                 return;
             }
             old_meta.version = req.version;
             if req.serialized_meta.len() > 0 {
-                if let Err(e) = self.view.kv_store_engine()                  //返回结果未处理  曾俊
-                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true){
-                        tracing::error!("Failed to set raw data in kv store 6: {}", e);
-                    }
-                // .todo_handle("6 err_comment waitting to fill");
+                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
+                    .todo_handle("6 err_comment waitting to fill");
             } else {
-                if let Err(e) = self.view.kv_store_engine()                  //返回结果未处理  曾俊
-                    .set(key, &old_meta, true){
-                        tracing::error!("Failed to set raw data in kv store 7: {}", e);
-                    }
-                // .todo_handle("7 err_comment waitting to fill");
+                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                    .set(key, &old_meta, true)
+                    .todo_handle("7 err_comment waitting to fill");
             }
         } else {
             if req.serialized_meta.len() > 0 {
@@ -907,38 +892,32 @@ impl DataGeneral {
                     "set new meta data, {:?}",
                     bincode::deserialize::<DataSetMeta>(&req.serialized_meta)
                 );
-                if let Err(e) = self.view.kv_store_engine()                       //返回结果未处理  曾俊      
-                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true){
-                        tracing::error!("Failed to set raw data in kv store 8: {}", e);
-                    }
-                // .todo_handle("8 err_comment waitting to fill");
+                self.view.kv_store_engine()                       //返回结果未处理  曾俊      
+                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
+                    .todo_handle("8 err_comment waitting to fill");
             } else {
                 drop(_kv_write_lock_guard);
                 let err_msg = "Old meta data not found and missing new meta";
                 tracing::warn!("{}", err_msg);
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+                 responsor                    //返回结果未处理  曾俊
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: 0,
                         message: err_msg.to_owned(),
                     })
-                    .await{
-                        tracing::error!("Failed to send data meta update response 9: {}", e);
-                    }
-                // .todo_handle("9 err_comment waitting to fill");
+                    .await
+                    .todo_handle("9 err_comment waitting to fill");
                 return;
             }
         }
         drop(_kv_write_lock_guard);
         tracing::debug!("rpc_handle_data_meta_update success");
-        if let Err(e) = responsor                          //返回结果未处理  曾俊
+        responsor                          //返回结果未处理  曾俊
             .send_resp(proto::DataMetaUpdateResponse {
                 version: req.version,
                 message: "Update success".to_owned(),
             })
-            .await{
-                tracing::error!("Failed to send data meta update response 10: {}", e);
-            }
-        // .todo_handle("10 err_comment waitting to fill");
+            .await
+            .todo_handle("10 err_comment waitting to fill");
     }
 
     async fn rpc_handle_get_data_meta(
@@ -1609,11 +1588,9 @@ impl LogicalModule for DataGeneral {
                 .regist(p2p, move |responsor, req| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        if let Err(e) = view.data_general().rpc_handle_get_data_meta(req, responsor)             //返回结果未处理    曾俊
-                            .await{
-                                tracing::error!("Failed to handle get data meta: {}", e);
-                            }
-                        // .todo_handle("rpc_handle_get_data_meta err");
+                        view.data_general().rpc_handle_get_data_meta(req, responsor)             //返回结果未处理    曾俊
+                            .await
+                            .todo_handle("rpc_handle_get_data_meta err");
                     });
                     Ok(())
                 });
