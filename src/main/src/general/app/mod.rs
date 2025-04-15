@@ -6,7 +6,6 @@ pub mod instance;
 pub mod m_executor;
 pub mod v_os;
 
-use std::path::PathBuf;
 use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType};
 use super::m_os::APPS_REL_DIR;
 use crate::general::app::app_native::native_apps;
@@ -1018,40 +1017,20 @@ impl AppMetaManager {
 
         // mv temp app to formal app dir
         let rel_app_dir = format!("{}/{}", APPS_REL_DIR, appname);
-        // 修改前： let formal_app_dir = self.view.os().file_path.join(rel_app_dir);   rel_app_dir是字符串类型发生所有权转移，然而在下方还被使用了，选择修改为clone   曾俊
-        let formal_app_dir = self.view.os().file_path.join(rel_app_dir.clone());
-        //let _ = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| WSError::from(WsDataError::FileOpenErr { path: (), err: () }));
-        //虞光勇修改：因为在调用 fs::rename 并处理其结果时遇到了类型不匹配的问题。具体来说，
-        // 在构造WsDataError::FileOpenErr 时，path 字段的类型不匹配：期望的是 PathBuf 类型，但实际传入的是 ()（即单元类型）。
-        //修改：
-        // let result = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| {  
-        // 这里result变量下方没有再使用 加了一个标志       曾俊
-        let _result = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| {
-            WSError::from(WsDataError::FileOpenErr {
-                path: PathBuf::from(formal_app_dir.clone()),
-                err: e,
-            })
-        });
+        let formal_app_dir = self.view.os().file_path.join(rel_app_dir);
+        let _ = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| WSError::from(WsDataError::FileOpenErr { path: (), err: () }));
 
         // 3. broadcast meta and appfile
         let write_data_id = format!("{}{}", DATA_UID_PREFIX_APP_META, appname);
         let write_datas = vec![
             DataItemArgWrapper::from_bytes(bincode::serialize(&appmeta).unwrap()),
-            //DataItemArgWrapper::from_file(rel_app_dir),
-            //虞光勇修改，因为编译器提示在调用 DataItemArgWrapper::from_file 方法时，传递的参数类型不匹配。
-            // 具体来说，from_file 方法期望的是一个 PathBuf 类型的参数，但你传递的是一个 String 类型。
-            //修改后：
-            //DataItemArgWrapper::from_file(rel_app_dir.into()),
-            //这里的 from_file 方法返回一个 Result<DataItemArgWrapper, WSError>，
-            // 但你直接将其赋值给一个期望 DataItemArgWrapper 类型的变量或参数，导致类型不匹配。使用 ? 操作符
-            //DataItemArgWrapper::from_file(rel_app_dir.into())?,
-            DataItemArgWrapper::from_file(rel_app_dir.into())?,
+            DataItemArgWrapper::from_file(rel_app_dir),
         ];
         tracing::debug!(
             "app data size: {:?}",
             write_datas
                 .iter()
-                // 修改前：.map(|v| v.to_string())   去掉了这一行，为结构体派生了debug特征  曾俊  
+                .map(|v| v.to_string())
                 .collect::<Vec<_>>()
         );
         self.view
@@ -1071,15 +1050,14 @@ impl AppMetaManager {
     }
 
     pub fn set_app_meta_list(&self, list: Vec<String>) {
-        //发送逻辑处理                               曾俊
         self.view
-                .kv_store_engine()
-                .set(
-                   KeyTypeServiceList,
-                  &serde_json::to_string(&list).unwrap().into(),
-                   false,
-                )
-                 .todo_handle("This part of the code needs to be implemented.");
+            .kv_store_engine()
+            .set(
+                KeyTypeServiceList,
+                &serde_json::to_string(&list).unwrap().into(),
+                false,
+            )
+            .todo_handle();
     }
     pub fn get_app_meta_list(&self) -> Vec<String> {
         let res = self

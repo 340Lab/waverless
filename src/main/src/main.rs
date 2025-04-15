@@ -43,8 +43,8 @@ async fn main() {
     // dist_kv_raft::tikvraft_proxy::start();
     let mut sys=Sys::new(config);
     let modules_ref=sys.new_logical_modules_ref();
-    // modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;})   由于modules_ref_scope改为了异步函数，所以这里加上.await   曾俊
-    modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;}).await;
+    modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;})
+    
 }
 
 pub fn start_tracing() {

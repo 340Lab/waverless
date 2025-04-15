@@ -1,16 +1,9 @@
 use crate::general::data::m_data_general::UniqueId;
-use crate::LogicalModulesRef;//虞光勇修改，修改内容：增加use crate::LogicalModulesRef;来导入 LogicalModulesRef。
-use ::zip::CompressionMethod;//虞光勇修改，因为编译器无法找到 zip 模块中的 CompressionMethod，需加入头文件（860续）
-use crate::general::m_os::OperatingSystem;
 use crate::general::network::proto;
 use crate::general::data::m_data_general::{DataItemIdx, DataSplitIdx, GetOrDelDataArgType};
 use crate::general::network::proto_ext::{NewPartialFileDataArg, ProtoExtDataItem};
-use crate::logical_module_view_impl;
-use crate::modules_global_bridge::try_get_modules_ref;
-use crate::result::{WSError, WSResult, WSResultExt, WsDataError};
-use crate::util::zip;
+use crate::result::{WSError, WSResult, WsDataError};
 use futures::stream::{FuturesUnordered, StreamExt};
-use std::cell::RefCell;
 use std::collections::btree_set;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -20,12 +13,8 @@ use tokio::sync::mpsc;
 use tokio::sync::broadcast;
 use tracing;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use std::sync::RwLock;
 
 const DEFAULT_BLOCK_SIZE: usize = 4096;
-
-logical_module_view_impl!(DataItemView);
-logical_module_view_impl!(DataItemView,os,OperatingSystem);
 
 /// 用于遍历数据项索引的迭代器
 #[derive(Debug)]
@@ -240,13 +229,10 @@ pub struct WriteSplitTaskResult {
 pub enum WriteSplitDataTaskGroup {
     /// 文件写入模式
     ToFile {
-        is_dir: bool,
         /// 任务唯一标识
         unique_id: UniqueId,
-        /// 临时文件路径，用作传输
-        tmp_file_path: PathBuf,
-        /// 目标文件路径, 用作最终使用
-        target_file_path: PathBuf,
+        /// 目标文件路径
+        file_path: PathBuf,
         /// 任务列表
         tasks: Vec<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 接收新任务的通道
@@ -262,18 +248,8 @@ pub enum WriteSplitDataTaskGroup {
     ToMem {
         /// 任务唯一标识
         unique_id: UniqueId,
-
-
-        // /// 共享内存区域
-        // shared_mem: RefCell<Option<<SharedMemHolder>>>,
-        /// 费新文修改，修改内容：shared_mem: RefCell<Option<<SharedMemHolder>>>,
-        /// 修改原因：shared_mem: RefCell<Option<<SharedMemHolder>>>, 需要修改为 RefCell<Option<SharedMemHolder>>,
-        /// 修改后：shared_mem: RefCell<Option<SharedMemHolder>>,
         /// 共享内存区域
-        /// 
-        // shared_mem: RefCell<Option<SharedMemHolder>>, 修改为RwLock<Option<SharedMemHolder>>, 曾俊
-        shared_mem: RwLock<Option<SharedMemHolder>>,
-
+        shared_mem: SharedMemHolder,
         /// 任务列表
         tasks: Vec<tokio::task::JoinHandle<WriteSplitTaskResult>>,
         /// 接收新任务的通道
@@ -292,36 +268,30 @@ impl WriteSplitDataTaskGroup {
     pub async fn new(
         unique_id: UniqueId,
         total_size: usize,
-        block_type: proto::data_item::DataItemDispatch,
+        block_type: proto::BatchDataBlockType,
         version: u64,
-        // file_name: Option<&str>,     函数体并没有用到这个参数    查看引用发现也没有使用到这个参数   这里直接删除     曾俊
     ) -> WSResult<(Self, WriteSplitDataTaskHandle)> {
         let (tx, rx) = mpsc::channel(32);
         let (broadcast_tx, _) = broadcast::channel::<()>(32);
         let broadcast_tx = Arc::new(broadcast_tx);
-        // let pathbase=DataItemView::new(try_get_modules_ref().todo_handle("Failed to get modules ref when create WriteSplitDataTaskGroup")?).os().file_path;
-        //所有权发生变化   添加克隆方法    曾俊
-        let pathbase=DataItemView::new(try_get_modules_ref().todo_handle("Failed to get modules ref when create WriteSplitDataTaskGroup")?).os().file_path.clone();
 
         match block_type {
-            proto::data_item::DataItemDispatch::File(file_data) => {
-                let tmp_file_path = pathbase.join(format!("{}.data", 
+            proto::BatchDataBlockType::File => {
+                let file_path = PathBuf::from(format!("{}.data", 
                     STANDARD.encode(&unique_id)));
                 
                 let handle = WriteSplitDataTaskHandle {
                     tx,
                     write_type: WriteSplitDataType::File {
-                        path: tmp_file_path.clone(),
+                        path: file_path.clone(),
                     },
                     version,
                     broadcast_tx: broadcast_tx.clone(),
                 };
                 
                 let group = Self::ToFile {
-                    is_dir: file_data.is_dir_opt,
                     unique_id,
-                    tmp_file_path,
-                    target_file_path: pathbase.join(file_data.file_name_opt.as_str()), 
+                    file_path,
                     tasks: Vec::new(),
                     rx,
                     expected_size: total_size,
@@ -331,7 +301,7 @@ impl WriteSplitDataTaskGroup {
                 
                 Ok((group, handle))
             }
-            proto::data_item::DataItemDispatch::RawBytes(_) => {
+            proto::BatchDataBlockType::Memory => {
                 let shared_mem = SharedMemHolder {
                     data: Arc::new(vec![0; total_size]),
                 };
@@ -347,8 +317,7 @@ impl WriteSplitDataTaskGroup {
                 
                 let group = Self::ToMem {
                     unique_id,
-                    // 原代码：shared_mem,     类型不匹配        曾俊
-                    shared_mem:RwLock::new(Some(shared_mem)),
+                    shared_mem,
                     tasks: Vec::new(),
                     rx,
                     expected_size: total_size,
@@ -380,7 +349,7 @@ impl WriteSplitDataTaskGroup {
 
         loop {
             // 1. 检查完成状态
-            match self.try_complete().await.todo_handle("Failed to complete write split data tasks")? {
+            match self.try_complete()? {
                 Some(item) => return Ok(item),
                 None => {}  // 继续等待
             }
@@ -421,9 +390,9 @@ impl WriteSplitDataTaskGroup {
     /// - Ok(Some(item)) - 写入完成,返回数据项
     /// - Ok(None) - 写入未完成
     /// - Err(e) - 写入出错
-    async fn try_complete(&self) -> WSResult<Option<proto::DataItem>> {
+    fn try_complete(&self) -> WSResult<Option<proto::DataItem>> {
         match self {
-            Self::ToFile { current_size, expected_size, tmp_file_path, target_file_path, unique_id, is_dir, .. } => {
+            Self::ToFile { current_size, expected_size, file_path, unique_id, .. } => {
                 if *current_size > *expected_size {
                     Err(WSError::WsDataError(WsDataError::BatchTransferError {
                         request_id: proto::BatchRequestId {
@@ -434,44 +403,7 @@ impl WriteSplitDataTaskGroup {
                             current_size, expected_size, unique_id)
                     }))
                 } else if *current_size == *expected_size {
-                    if *is_dir{
-                        // unzip to file_path
-                        // - open received file with std api
-                        let file=std::fs::File::open(tmp_file_path).map_err(|e|{
-                            tracing::error!("Failed to open file: {}", e);
-                            WSError::from(WsDataError::FileOpenErr {
-                                path: tmp_file_path.clone(),
-                                err: e,
-                            })
-                        })?;
-                        let tmp_file_path=tmp_file_path.clone();
-                        let target_file_path=target_file_path.clone();
-                        tokio::task::spawn_blocking(move ||
-                            zip_extract::extract(file,target_file_path.as_path() , false).map_err(|e|{
-                                WSError::from(WsDataError::UnzipErr {
-                                    path: tmp_file_path,
-                                    err: e,
-                                })
-                            })
-                        ).await.unwrap().todo_handle("Failed to unzip file")?;
-                    }else{
-                        // rename tmp_file_path to target_file_path
-                        std::fs::rename(tmp_file_path, target_file_path).map_err(|e|{
-                            tracing::error!("Failed to rename file: {}", e);
-                            WSError::from(WsDataError::FileRenameErr {
-                                from: tmp_file_path.clone(),
-                                to: target_file_path.clone(),
-                                err: e,
-                            })
-                        })?;
-                    }
-                    Ok(Some(proto::DataItem{
-                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData{
-                            file_name_opt: target_file_path.to_string_lossy().to_string(),
-                            is_dir_opt: *is_dir,
-                            file_content: vec![],
-                        })),
-                    }))
+                    Ok(Some(proto::DataItem::new_file_data(file_path.clone(), false)))
                 } else {
                     Ok(None)
                 }
@@ -487,11 +419,7 @@ impl WriteSplitDataTaskGroup {
                             current_size, expected_size, unique_id)
                     }))
                 } else if *current_size == *expected_size {
-                    Ok(Some(proto::DataItem{
-                        //曾俊  随RwLock数据类型改动
-                        // data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(shared_mem.borrow_mut().take().unwrap().try_take_data().expect("only group can take data once"))),
-                        data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(shared_mem.write().expect("Failed to lock RwLock for writing").take().unwrap().try_take_data().expect("only group can take data once"))),
-                    }))
+                    Ok(Some(proto::DataItem::new_raw_bytes(shared_mem.clone())))
                 } else {
                     Ok(None)
                 }
@@ -499,25 +427,6 @@ impl WriteSplitDataTaskGroup {
         }
     }
 }
-
-/// 简化的任务完成等待器
-pub struct WriteSplitDataWaiter {
-    rx: broadcast::Receiver<()>,
-}
-
-impl WriteSplitDataWaiter {
-    /// 等待所有任务完成
-    pub async fn wait(mut self) -> WSResult<()> {
-        // 持续接收直到通道关闭
-        while let Ok(_) = self.rx.recv().await {
-            // 不需要处理具体消息内容，只需要知道有消息到达
-        }
-        
-        // 通道关闭表示所有发送端都已释放
-        Ok(())
-    }
-}
-
 
 /// 写入分片任务的句柄
 /// 用于提交新的分片任务和等待任务完成
@@ -542,12 +451,6 @@ impl WriteSplitDataTaskHandle {
         self.version
     }
 
-    pub fn get_all_tasks_waiter(&self) -> WriteSplitDataWaiter {
-        WriteSplitDataWaiter {
-            rx: self.broadcast_tx.subscribe(),
-        }
-    }
-
     /// 提交新的分片任务
     /// 
     /// # 参数
@@ -559,8 +462,7 @@ impl WriteSplitDataTaskHandle {
     /// * `Err(e)` - 任务提交失败,可能是通道已关闭
     pub async fn submit_split(&self, idx: DataSplitIdx, data: proto::DataItem) -> WSResult<()> {
         let task = match &self.write_type {
-            // WriteSplitDataType::File { path } | WriteSplitDataType::Dir { path } => {   原WriteSplitDataType::Dir忽视了zip_file字段   发现没有用到修改为直接忽视   曾俊
-            WriteSplitDataType::File { path } | WriteSplitDataType::Dir { path ,..} => {
+            WriteSplitDataType::File { path } => {
                 let path = path.clone();
                 let offset = idx;
                 let data = data.as_raw_bytes().unwrap_or(&[]).to_vec();
@@ -652,16 +554,6 @@ impl WriteSplitDataTaskHandle {
         
         Ok(())
     }
-
-    // 在任务处理逻辑中保持发送端的引用
-    pub async fn process_tasks(&mut self) -> WSResult<()> {
-    let _tx_holder = self.broadcast_tx.clone(); // 保持发送端存活
-    
-    // ...任务处理逻辑...
-    
-    // 当所有任务完成，_tx_holder被释放，广播通道自动关闭
-    Ok(())
-}
 }
 
 #[derive(Debug)]
@@ -699,21 +591,6 @@ impl DataItemSource {
         }
     }
 
-    //添加一个DataItemSource转换到DataItem的函数      曾俊
-    pub fn to_data_item(&self) -> proto::DataItem {
-        match self {
-            DataItemSource::Memory { data } => proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(data.clone())),
-            },
-            DataItemSource::File { path } => proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData {
-                    file_name_opt: path.to_str().map_or_else(|| String::from(""), |s| s.to_string()), // 这里需要根据实际情况调整类型转换
-                    ..Default::default() // 假设 FileData 有其他字段，这里使用默认值
-                })),
-            },
-        }
-    }
-
     pub async fn size(&self) -> WSResult<usize> {
         match self {
             DataItemSource::Memory { data } => Ok(data.len()),
@@ -731,13 +608,13 @@ impl DataItemSource {
             }
         }
     }
-    
-    // pub fn block_type(&self) -> proto::BatchDataBlockType {
-    //     match self {
-    //         DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory,
-    //         DataItemSource::File { .. } => proto::BatchDataBlockType::File,
-    //     }
-    // }
+
+    pub fn block_type(&self) -> proto::BatchDataBlockType {
+        match self {
+            DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory,
+            DataItemSource::File { .. } => proto::BatchDataBlockType::File,
+        }
+    }
 
     pub async fn get_block(&self, block_idx: usize) -> WSResult<Vec<u8>> {
         match self {
@@ -818,7 +695,7 @@ impl DataItemExt for DataItemSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum DataItemZip {
     /// 未初始化状态
     Uninitialized,
@@ -830,8 +707,6 @@ enum DataItemZip {
     }
 }
 
-//派生显示特征  曾俊
-#[derive(Debug, Clone)]
 pub struct DataItemArgWrapper {
     pub dataitem: proto::DataItem,
     /// 目录压缩状态
@@ -839,41 +714,22 @@ pub struct DataItemArgWrapper {
 }
 
 impl DataItemArgWrapper {
-
-     // 根据传入的DataItem类型新建一个DataItemArgWrapper实例， tmpzipfile默认为Uninitialized。      曾俊
-    pub fn new(value: Vec<u8>) -> Self {
-        DataItemArgWrapper {
-            dataitem:proto::DataItem {data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value))},
-            tmpzipfile: DataItemZip::Uninitialized,
-        }
-    }
-    pub fn from_file(filepath: PathBuf) -> WSResult<Self> {
-        let view=DataItemView::new(try_get_modules_ref().map_err(|err|{
-            tracing::error!("Failed to get modules ref: {}", err);
-            err
-        })?);
-
-        //let abs_filepath=view.os().abs_file_path(filepath);
-        //虞光勇修改 添加.clone()
-        let abs_filepath=view.os().abs_file_path(filepath.clone());
-
-        Ok(Self { 
+    pub fn from_file(filepath: PathBuf) -> Self {
+        Self { 
             dataitem: proto::DataItem{
                 data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData{
-                    is_dir_opt: abs_filepath.is_dir(),
+                    is_dir_opt: filepath.is_dir(),
                     file_name_opt: filepath.to_str().unwrap().to_string(),
                     file_content: vec![],
                 })),
             },
             tmpzipfile: DataItemZip::Uninitialized,
-        })
+        }
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         Self { 
-            dataitem: proto::DataItem{
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(bytes)),
-            },
+            dataitem: proto::DataItem::new_raw_bytes(bytes),
             tmpzipfile: DataItemZip::Uninitialized,
         }
     }
@@ -927,8 +783,7 @@ impl DataItemArgWrapper {
             // 压缩目录到临时文件
             crate::util::zip::zip_dir_2_file(
                 &filedata.file_name_opt,
-                //zip::CompressionMethod::Stored,
-                CompressionMethod::Stored,//（续）虞光勇修改，修改内容删除zip::
+                zip::CompressionMethod::Stored,
                 tmp_file.into_file(),
             ).await?;
 

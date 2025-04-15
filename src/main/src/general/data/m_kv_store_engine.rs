@@ -580,8 +580,7 @@ mod test {
                     .build(),
                 false,
             )
-            // .todo_handle();
-            .todo_handle("This part of the code needs to be implemented.");
+            .todo_handle();
         let set = view
             .kv_store_engine()
             .get(

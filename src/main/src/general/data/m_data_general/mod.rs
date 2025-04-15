@@ -7,8 +7,7 @@ pub mod batch_handler;
 
 use crate::general::data::m_data_general::dataitem::{calculate_splits, WantIdxIter, WriteSplitDataTaskGroup, DataItemSource};
 use crate::general::data::m_data_general::batch_handler::{BatchReceiveState, SharedWithBatchHandler};
-use crate::general::network::proto::DataItem;
-use dataitem::{DataItemArgWrapper, WriteSplitTaskResult};
+use dataitem::DataItemArgWrapper;
 use tokio::io::{AsyncSeekExt, AsyncReadExt};
 
 use crate::general::{
@@ -211,14 +210,9 @@ impl DataGeneral {
                     }),
                     dataset_unique_id: unique_id.clone(),
                     data_item_idx: data_item_idx as u32,
-                    // 用空的 DataItem 代替
                     block_type: match data.as_ref() {
-                        DataItemSource::Memory { .. } => Some(proto::DataItem{
-                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(Vec::new())),
-                        }),
-                        DataItemSource::File { .. } => Some(proto::DataItem{
-                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData { file_name_opt: String::new(), is_dir_opt: true, file_content: Vec::new() })),
-                        }),
+                        DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory as i32,
+                        DataItemSource::File { .. } => proto::BatchDataBlockType::File as i32,
                     },
                     block_index: block_idx as u32,
                     data: block_data,
@@ -495,7 +489,7 @@ impl DataGeneral {
     pub async fn write_data(
         &self,
         unique_id: impl Into<Vec<u8>>,
-        mut datas: Vec<DataItemArgWrapper>,
+        datas: Vec<DataItemArgWrapper>,
         context_openode_opetype_operole: Option<(
             NodeID,
             proto::DataOpeType,
@@ -524,8 +518,7 @@ impl DataGeneral {
                     unique_id: unique_id.clone(),
                     context: context_openode_opetype_operole.map(|(node, ope, role)| {
                         proto::DataScheduleContext {
-                            // each_data_sz_bytes: data_transfer_sizes,     原代码类型不匹配       曾俊
-                            each_data_sz_bytes: data_transfer_sizes.iter().map(|&x| x as u32).collect(),
+                            each_data_sz_bytes: data_transfer_sizes,
                             ope_node: node as i64,
                             ope_type: ope as i32,
                             ope_role: Some(role),
@@ -544,7 +537,7 @@ impl DataGeneral {
         // 处理每个数据项
         let mut iter = WantIdxIter::new(&GetOrDelDataArgType::All, datas.len() as u8);
         while let Some(data_item_idx) = iter.next() {
-            let data_item: &DataItemArgWrapper = &mut datas[data_item_idx as usize];
+            let data_item: &DataItemArgWrapper = &datas[data_item_idx as usize];
             let split = &splits[data_item_idx as usize];
             let mut primary_tasks = Vec::new();
             
@@ -556,11 +549,7 @@ impl DataGeneral {
                     log_tag, split_idx + 1, split.splits.len(), split_info.node_id, split_info.data_offset, split_info.data_size);
                 let split_info = split_info.clone();
                 let unique_id_clone = unique_id.clone();
-                // let data_item_primary = data_item.clone_split_range(split_info.data_offset..split_info.data_offset+split_info.data_size);        类型不匹配     曾俊
-                // 生成一个复制的可变数据项
-                let mut data_item_clone = (*data_item).clone();
-                let data_item_primary = data_item_clone.clone_split_range(split_info.data_offset as usize..(split_info.data_offset+split_info.data_size)as usize).await.todo_handle("clone_split_range for write data err")?;
-                // let data_item_primary = data_item.clone_split_range(split_info.data_offset as usize..(split_info.data_offset+split_info.data_size)as usize).await.todo_handle("clone_split_range for write data err")?;
+                let data_item_primary = data_item.clone_split_range(split_info.data_offset..split_info.data_offset+split_info.data_size)
                 let view = self.view.clone();
                 let version_copy = version;
                 let task = tokio::spawn(async move {
@@ -574,7 +563,6 @@ impl DataGeneral {
                                 version: version_copy,
                                 data: vec![proto::DataItemWithIdx {
                                     idx: data_item_idx as u32,
-                                    // data: Some(data_item_primary),           类型不匹配    曾俊
                                     data: Some(data_item_primary),
                                 }],
                             },
@@ -611,8 +599,7 @@ impl DataGeneral {
                     let task = tokio::spawn(async move {
                         let _permit = permit; // 持有permit直到任务完成
                         view.data_general()
-                            // .write_data_batch(unique_id_clone.clone(), version, data_item_cache, data_item_idx, node_id)               //类型不匹配  曾俊
-                            .write_data_batch(unique_id_clone.clone(), version, data_item_cache.dataitem, data_item_idx, node_id)
+                            .write_data_batch(unique_id_clone.clone(), version, data_item_cache, data_item_idx, node_id)
                             .await?;
                         Ok::<proto::WriteOneDataResponse, WSError>(proto::WriteOneDataResponse {
                             remote_version: version,
@@ -659,26 +646,25 @@ impl DataGeneral {
             let fail_by_overwrite = || async {
                 let message = "New data version overwrite".to_owned();
                 tracing::warn!("{}", message);
-                
-                responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
                     .await
-                    .todo_handle("1 err_comment waitting to fill");
+                    .todo_handle();
             };
             let fail_with_msg = |message: String| async {
                 tracing::warn!("{}", message);
-                responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
                     .await
-                    .todo_handle("2 err_comment waitting to fill");
+                    .todo_handle();
             };
 
             loop {
@@ -779,7 +765,7 @@ impl DataGeneral {
             || check_meta.as_ref().unwrap().0 != required_meta.as_ref().unwrap().0
         {
             drop(guard);
-            responsor                    //返回结果未处理  曾俊
+            responsor
                 .send_resp(WriteOneDataResponse {
                     remote_version: if check_meta.is_none() {
                         0
@@ -790,7 +776,7 @@ impl DataGeneral {
                     message: "meta is updated again, cancel write".to_owned(),
                 })
                 .await
-                .todo_handle("3 err_comment waitting to fill");
+                .todo_handle();
             return;
         }
 
@@ -820,14 +806,14 @@ impl DataGeneral {
         kv_store_engine.flush();
         drop(guard);
         tracing::debug!("data partial is written");
-        responsor               //返回结果未使用  曾俊
+        responsor
             .send_resp(WriteOneDataResponse {
                 remote_version: req.version,
                 success: true,
                 message: "".to_owned(),
             })
             .await
-            .todo_handle("4 err_comment waitting to fill");
+            .todo_handle();
     }
 
     async fn rpc_handle_data_meta_update(
@@ -867,24 +853,24 @@ impl DataGeneral {
                 drop(_kv_write_lock_guard);
                 let err_msg = "New data version is smaller, failed update";
                 tracing::warn!("{}", err_msg);
-                responsor                //返回结果未处理  曾俊
+                responsor
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: old_meta.version,
                         message: err_msg.to_owned(),
                     })
                     .await
-                    .todo_handle("5 err_comment waitting to fill");
+                    .todo_handle();
                 return;
             }
             old_meta.version = req.version;
             if req.serialized_meta.len() > 0 {
-                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                self.view.kv_store_engine()
                     .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
-                    .todo_handle("6 err_comment waitting to fill");
+                    .todo_handle();
             } else {
-                self.view.kv_store_engine()                  //返回结果未处理  曾俊
+                self.view.kv_store_engine()
                     .set(key, &old_meta, true)
-                    .todo_handle("7 err_comment waitting to fill");
+                    .todo_handle();
             }
         } else {
             if req.serialized_meta.len() > 0 {
@@ -892,32 +878,32 @@ impl DataGeneral {
                     "set new meta data, {:?}",
                     bincode::deserialize::<DataSetMeta>(&req.serialized_meta)
                 );
-                self.view.kv_store_engine()                       //返回结果未处理  曾俊      
+                self.view.kv_store_engine()
                     .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
-                    .todo_handle("8 err_comment waitting to fill");
+                    .todo_handle();
             } else {
                 drop(_kv_write_lock_guard);
                 let err_msg = "Old meta data not found and missing new meta";
                 tracing::warn!("{}", err_msg);
-                 responsor                    //返回结果未处理  曾俊
+                responsor
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: 0,
                         message: err_msg.to_owned(),
                     })
                     .await
-                    .todo_handle("9 err_comment waitting to fill");
+                    .todo_handle();
                 return;
             }
         }
         drop(_kv_write_lock_guard);
         tracing::debug!("rpc_handle_data_meta_update success");
-        responsor                          //返回结果未处理  曾俊
+        responsor
             .send_resp(proto::DataMetaUpdateResponse {
                 version: req.version,
                 message: "Update success".to_owned(),
             })
             .await
-            .todo_handle("10 err_comment waitting to fill");
+            .todo_handle();
     }
 
     async fn rpc_handle_get_data_meta(
@@ -1035,7 +1021,7 @@ impl DataGeneral {
         Ok(())
     }
 
-    // 处理批量数据写入请求
+    /// 处理批量数据写入请求
     pub async fn rpc_handle_batch_data(
         &self,
         responsor: RPCResponsor<proto::BatchDataRequest>,
@@ -1052,11 +1038,10 @@ impl DataGeneral {
         let state = match self.batch_receive_states
             .get_or_init(req.request_id.clone().unwrap(), async move {
                 // 创建任务组和句柄
-                let (mut group, handle) = match WriteSplitDataTaskGroup::new(    
+                let (mut group, handle) = match WriteSplitDataTaskGroup::new(
                     req.unique_id.clone(),
                     req.total_size as usize,
-                    // req.block_type(),      类型错误    曾俊
-                    req.block_type.unwrap().data_item_dispatch.unwrap(),
+                    req.block_type(),
                     req.version,
                 ).await {
                     Ok((group, handle)) => (group, handle),
@@ -1067,7 +1052,7 @@ impl DataGeneral {
                 };
 
                 // 再process之前订阅，避免通知先于订阅
-                let waiter = handle.get_all_tasks_waiter();
+                let mut waiter = handle.get_all_tasks_waiter();
 
                 // 启动process_tasks
                 let _ = tokio::spawn(async move {
@@ -1588,9 +1573,9 @@ impl LogicalModule for DataGeneral {
                 .regist(p2p, move |responsor, req| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        view.data_general().rpc_handle_get_data_meta(req, responsor)             //返回结果未处理    曾俊
+                        view.data_general().rpc_handle_get_data_meta(req, responsor)
                             .await
-                            .todo_handle("rpc_handle_get_data_meta err");
+                            .todo_handle();
                     });
                     Ok(())
                 });

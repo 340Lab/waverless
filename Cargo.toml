@@ -61,7 +61,6 @@ path-absolutize = "3.0.13"
 dashmap = "6.1.0"
 base64 = "0.22.1"
 hex = "0.4.3"
-tempfile="3.8"
 
 [profile.test]
 # 0: no optimizations
