@@ -200,10 +200,6 @@ pub enum WsDataError {
         expect: usize,
         actual: usize,
     },
-    WriteDataFailed {
-        unique_id: Vec<u8>,
-        message: String,
-    },
     KvDeserializeErr {
         unique_id: Vec<u8>,
         context: String,

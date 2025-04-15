@@ -1,7 +1,6 @@
 warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
 package:   /home/nature/padev/waverless/src/main/Cargo.toml
 workspace: /home/nature/padev/waverless/Cargo.toml
-   Compiling wasm_serverless v0.1.0 (/home/nature/padev/waverless/src/main)
 warning: function `path_is_option` is never used
   --> ws_derive/src/lib.rs:21:4
    |
@@ -11,6 +10,7 @@ warning: function `path_is_option` is never used
    = note: `#[warn(dead_code)]` on by default
 
 warning: `ws_derive` (lib) generated 1 warning
+   Compiling wasm_serverless v0.1.0 (/home/nature/padev/waverless/src/main)
 warning: unused import: `crate::general::app::m_executor::FnExeCtxAsync`
  --> src/main/src/general/app/app_owned/wasm_host_funcs/result.rs:2:5
   |
@@ -79,6 +79,12 @@ warning: unused import: `tokio::io::AsyncWriteExt`
 31 | use tokio::io::AsyncWriteExt;
    |     ^^^^^^^^^^^^^^^^^^^^^^^^
 
+warning: unused import: `crate::general::data::m_data_general::dataitem::WantIdxIter`
+ --> src/main/src/general/data/m_data_general/mod.rs:6:5
+  |
+6 | use crate::general::data::m_data_general::dataitem::WantIdxIter;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 warning: unused imports: `DataMetaGetRequest` and `DataVersionScheduleRequest`
   --> src/main/src/general/data/m_data_general/mod.rs:16:29
    |
@@ -97,17 +103,17 @@ warning: unused import: `enum_as_inner::EnumAsInner`
 36 | use enum_as_inner::EnumAsInner;
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: unused import: `dashmap::DashMap`
-  --> src/main/src/general/data/m_data_general/mod.rs:38:5
-   |
-38 | use dashmap::DashMap;
-   |     ^^^^^^^^^^^^^^^^
-
 warning: unused import: `std::ops::Range`
   --> src/main/src/general/data/m_data_general/mod.rs:40:5
    |
 40 | use std::ops::Range;
    |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `AtomicU32` and `Ordering`
+  --> src/main/src/general/data/m_data_general/mod.rs:45:20
+   |
+45 |     sync::atomic::{AtomicU32, Ordering},
+   |                    ^^^^^^^^^  ^^^^^^^^
 
 warning: unused import: `std::future::Future`
   --> src/main/src/general/data/m_data_general/mod.rs:51:5
@@ -243,51 +249,176 @@ warning: unused import: `std::time::Duration`
 6 | use std::time::Duration;
   |     ^^^^^^^^^^^^^^^^^^^
 
-error: fields `version`, `block_type`, and `total_blocks` are never read
-  --> src/main/src/general/data/m_data_general/batch.rs:52:9
+error: fields `batch_manager` and `batch_transfers` are never read
+   --> src/main/src/general/data/m_data_general/mod.rs:96:5
+    |
+94  | pub struct DataGeneral {
+    |            ----------- fields in this struct
+95  |     view: DataGeneralView,
+96  |     batch_manager: Arc<BatchManager>,
+    |     ^^^^^^^^^^^^^
+...
+110 |     batch_transfers: DashMap<String, (u64, Vec<u8>)>, // 修改类型为 (unique_id -> (version, data))
+    |     ^^^^^^^^^^^^^^^
+    |
+note: the lint level is defined here
+   --> src/main/src/main.rs:7:5
+    |
+7   |     dead_code,
+    |     ^^^^^^^^^
+
+error: function `flush_the_data` is never used
+    --> src/main/src/general/data/m_data_general/mod.rs:1500:4
+     |
+1500 | fn flush_the_data(
+     |    ^^^^^^^^^^^^^^
+
+error: enum `WantIdxIter` is never used
+  --> src/main/src/general/data/m_data_general/dataitem.rs:21:17
+   |
+21 | pub(super) enum WantIdxIter<'a> {
+   |                 ^^^^^^^^^^^
+
+error: associated function `new` is never used
+  --> src/main/src/general/data/m_data_general/dataitem.rs:37:19
+   |
+36 | impl<'a> WantIdxIter<'a> {
+   | ------------------------ associated function in this implementation
+37 |     pub(super) fn new(ty: &'a GetOrDelDataArgType, itemcnt: DataItemIdx) -> Self {
+   |                   ^^^
+
+error: multiple fields are never read
+  --> src/main/src/general/data/m_data_general/batch.rs:51:9
    |
 50 | pub(super) struct BatchTransfer {
    |                   ------------- fields in this struct
 51 |     pub unique_id: Vec<u8>,
+   |         ^^^^^^^^^
 52 |     pub version: u64,
    |         ^^^^^^^
 53 |     pub block_type: proto::BatchDataBlockType,
    |         ^^^^^^^^^^
 54 |     pub total_blocks: u32,
    |         ^^^^^^^^^^^^
-   |
-note: the lint level is defined here
-  --> src/main/src/main.rs:7:5
-   |
-7  |     dead_code,
-   |     ^^^^^^^^^
+55 |     // 使用 channel 进行数据传输
+56 |     data_sender: mpsc::Sender<WSResult<(DataSplitIdx, proto::DataItem)>>,
+   |     ^^^^^^^^^^^
+57 |     // 写入任务
+58 |     write_task: JoinHandle<WSResult<proto::DataItem>>,
+   |     ^^^^^^^^^^
+59 |     // 完成通知 channel
+60 |     pub tx: Option<mpsc::Sender<WSResult<proto::DataItem>>>,
+   |         ^^
 
-error: method `add_block` is never used
-   --> src/main/src/general/data/m_data_general/batch.rs:104:18
+error: associated items `new`, `add_block`, `complete`, and `calculate_splits` are never used
+   --> src/main/src/general/data/m_data_general/batch.rs:64:18
     |
 63  | impl BatchTransfer {
-    | ------------------ method in this implementation
+    | ------------------ associated items in this implementation
+64  |     pub async fn new(
+    |                  ^^^
 ...
 104 |     pub async fn add_block(&self, index: u32, data: Vec<u8>) -> WSResult<bool> {
     |                  ^^^^^^^^^
-
-error: method `handle_block` is never used
-   --> src/main/src/general/data/m_data_general/batch.rs:211:18
-    |
-173 | impl BatchManager {
-    | ----------------- method in this implementation
 ...
-211 |     pub async fn handle_block(
+121 |     pub async fn complete(mut self) -> WSResult<()> {
+    |                  ^^^^^^^^
+...
+154 |     fn calculate_splits(total_size: usize, block_size: usize) -> Vec<Range<usize>> {
+    |        ^^^^^^^^^^^^^^^^
+
+error: fields `transfers` and `sequence` are never read
+   --> src/main/src/general/data/m_data_general/batch.rs:168:5
+    |
+167 | pub(super) struct BatchManager {
+    |                   ------------ fields in this struct
+168 |     transfers: DashMap<proto::BatchRequestId, BatchTransfer>,
+    |     ^^^^^^^^^
+169 |     sequence: AtomicU64,
+    |     ^^^^^^^^
+
+error: methods `next_sequence`, `create_transfer`, and `handle_block` are never used
+   --> src/main/src/general/data/m_data_general/batch.rs:180:12
+    |
+172 | impl BatchManager {
+    | ----------------- methods in this implementation
+...
+180 |     pub fn next_sequence(&self) -> u64 {
+    |            ^^^^^^^^^^^^^
+...
+184 |     pub async fn create_transfer(
+    |                  ^^^^^^^^^^^^^^^
+...
+210 |     pub async fn handle_block(
     |                  ^^^^^^^^^^^^
 
 error: method `call_batch_data` is never used
-   --> src/main/src/general/data/m_data_general/batch.rs:238:25
+   --> src/main/src/general/data/m_data_general/batch.rs:237:25
     |
-236 | impl DataGeneral {
+235 | impl DataGeneral {
     | ---------------- method in this implementation
-237 |     /// 发起批量数据传输
-238 |     pub(super) async fn call_batch_data(
+236 |     /// 发起批量数据传输
+237 |     pub(super) async fn call_batch_data(
     |                         ^^^^^^^^^^^^^^^
 
-warning: `wasm_serverless` (bin "wasm_serverless") generated 38 warnings
-error: could not compile `wasm_serverless` (bin "wasm_serverless") due to 4 previous errors; 38 warnings emitted
+error: unused result of type `std::option::Option<DataItem>`
+   --> src/main/src/general/data/m_data_general/mod.rs:308:21
+    |
+308 |                     data_map.insert(idx, resp.data[0].clone());
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: the lint level is defined here
+   --> src/main/src/main.rs:9:5
+    |
+9   |     unused_results,
+    |     ^^^^^^^^^^^^^^
+
+error: unused result of type `std::option::Option<DataItem>`
+   --> src/main/src/general/data/m_data_general/mod.rs:337:21
+    |
+337 |                     data_map.insert(idx, resp.data[0].clone());
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: unused result of type `std::option::Option<DataItem>`
+   --> src/main/src/general/data/m_data_general/mod.rs:364:17
+    |
+364 |                 data_map.insert(idx, resp.data[0].clone());
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: unused result of type `std::option::Option<DataItem>`
+   --> src/main/src/general/data/m_data_general/mod.rs:391:21
+    |
+391 |                     data_map.insert(idx, resp.data[0].clone());
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: unused result of type `WriteOneDataResponse`
+   --> src/main/src/general/data/m_data_general/mod.rs:561:17
+    |
+561 |                 task.await??;
+    |                 ^^^^^^^^^^^^^
+
+error: unused `Result` that must be used
+    --> src/main/src/general/data/m_data_general/mod.rs:1451:25
+     |
+1451 |                         view.data_general().rpc_handle_batch_data(responsor, req).await;
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+note: the lint level is defined here
+    --> src/main/src/main.rs:12:5
+     |
+12   |     unused_must_use,
+     |     ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+     |
+1451 |                         let _ = view.data_general().rpc_handle_batch_data(responsor, req).await;
+     |                         +++++++
+
+error: unused result of type `std::option::Option<BatchTransfer>`
+   --> src/main/src/general/data/m_data_general/batch.rs:206:9
+    |
+206 |         self.transfers.insert(request_id.clone(), transfer);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `wasm_serverless` (bin "wasm_serverless") generated 39 warnings
+error: could not compile `wasm_serverless` (bin "wasm_serverless") due to 16 previous errors; 39 warnings emitted
