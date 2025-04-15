@@ -67,19 +67,17 @@ message DataVersionScheduleRequest {
   DataScheduleContext context = 3;
 }
 
-//message DataCachePlan{
-//  uint32 cache_mode=1;
-//  // left empty when mode is all node pr no node
-//  repeated uint32 cache_nodes=2;
-//}
+message DataCachePlan{
+  uint32 cache_mode=1;
+  // left empty when mode is all node pr no node
+  repeated uint32 cache_nodes=2; 
+}
 
 message DataVersionScheduleResponse {
   uint64 version = 1;
   // required
   // split of each data part
-  // DataCachePlan cache_plan = 2;
-
-  repeated uint32 cache_mode=2;
+  DataCachePlan cache_plan = 2;
   repeated DataSplit split = 3;
 }
 

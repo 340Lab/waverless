@@ -5,7 +5,7 @@ pub mod wasm_host_funcs;
 
 use crate::{
     general::{
-        app::{AppType, FnMeta},
+        m_appmeta_manager::{AppType, FnMeta},
         network::http_handler::ReqId,
     },
     result::WSResult,

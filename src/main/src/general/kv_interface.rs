@@ -1,9 +1,10 @@
 use crate::{
-    general::network::proto,
     result::WSResult,
     sys::{LogicalModule, NodeID},
 };
 use async_trait::async_trait;
+
+use super::network::proto;
 
 pub struct KvOptions {
     spec_node: Option<NodeID>,

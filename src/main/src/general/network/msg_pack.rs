@@ -1,3 +1,4 @@
+
 use downcast_rs::{impl_downcast, Downcast};
 
 use super::{
@@ -103,7 +104,9 @@ define_msg_ids!(
     (proto::DataVersionScheduleRequest, pack, {
         pack.context.is_some()
     }),
-    (proto::DataVersionScheduleResponse, _pack, { true }),
+    (proto::DataVersionScheduleResponse, pack, {
+        pack.cache_plan.is_some()
+    }),
     (proto::WriteOneDataRequest, _pack, { true }),
     (proto::WriteOneDataResponse, _pack, { true }),
     (proto::DataMetaUpdateRequest, _pack, { true }),

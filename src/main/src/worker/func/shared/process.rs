@@ -9,9 +9,10 @@ use tokio::{process::Command, sync::oneshot};
 
 use crate::{
     general::{
-        app::AppType,
+        m_appmeta_manager::AppType,
         network::rpc_model::{self, HashValue},
     },
+    result::{WSError, WsIoErr},
     worker::func::{shared::java, InstanceTrait},
 };
 
@@ -213,20 +214,9 @@ impl InstanceTrait for ProcessInstance {
         // if fn_ctx.func_meta.allow_rpc_call()
         {
             let _ = self.wait_for_verify().await;
-            tracing::debug!(
-                "wait_for_verify done, call app:{}, func:{}",
-                fn_ctx.app,
-                fn_ctx.func
-            );
-            tracing::debug!("before process_rpc::call_func ");
-            let res = process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
-                .await;
-            tracing::debug!("after process_rpc::call_func ");
-            return res
+            return process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
+                .await
                 .map(|v| Some(v.ret_str));
-            // return process_rpc::call_func(&fn_ctx.app, &fn_ctx.func, fn_ctx.http_str_unwrap())
-            //     .await
-            //     .map(|v| Some(v.ret_str));
         }
 
         // if let Some(httpmethod) = fn_ctx.func_meta.allow_http_call() {

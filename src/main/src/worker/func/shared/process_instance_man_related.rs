@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::{
-    general::app::AppType,
+    general::m_appmeta_manager::AppType,
     result::{WSResult, WsFuncError},
     worker::func::{
         m_instance_manager::{EachAppCache, InstanceManager},
@@ -68,7 +68,6 @@ impl InstanceManager {
         // let pid = java::wait_for_pid(app_name).await?;
         proc_ins.bind_process(p);
         let _ = proc_ins.wait_for_verify().await;
-        tracing::debug!("wait_for_verify done1");
         if !restart {
             tracing::debug!("don't restart after checkpoint, kill it");
 
@@ -85,7 +84,6 @@ impl InstanceManager {
         tracing::debug!("make checkpoint for app: {}", app);
         let p = self.get_process_instance(&AppType::Jar, app);
         let _ = p.wait_for_verify().await;
-        tracing::debug!("wait_for_verify done2");
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         self.update_checkpoint(app, false).await?;

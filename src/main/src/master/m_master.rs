@@ -110,9 +110,7 @@ pub struct TargetNode(pub NodeID);
 
 impl TargetNode {
     pub fn http_redirect(&self, nodesconf: &NodesConfig) -> Redirect {
-        tracing::debug!("node_id : {:?}", self.0);
         let conf = nodesconf.get_nodeconfig(self.0);
-        tracing::debug!("conf.http_url() : {:?}", &conf.http_url().clone());
         Redirect::temporary(&conf.http_url())
     }
 }

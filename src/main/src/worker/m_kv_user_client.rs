@@ -1,13 +1,9 @@
-use crate::general::network::proto_ext::ProtoExtDataItem;
+use std::collections::HashMap;
+
 use crate::{
     general::{
-        data::{
-            m_data_general::{
-                new_data_unique_id_fn_kv, DataGeneral, DataItemIdx, DataSetMetaV2, GetOrDelDataArg,
-                GetOrDelDataArgType,
-            },
-            m_dist_lock::DistLock,
-        },
+        m_data_general::{new_data_unique_id_fn_kv, DataGeneral, DataSetMetaV2},
+        m_dist_lock::DistLock,
         network::{
             m_p2p::{P2PModule, RPCCaller},
             proto::{
@@ -19,11 +15,10 @@ use crate::{
     },
     logical_module_view_impl,
     result::{WSError, WSResult, WSResultExt, WsDataError},
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
-use std::collections::HashMap;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(KvUserClientView);
@@ -231,50 +226,25 @@ impl KvUserClient {
 
     fn convert_get_data_res_to_kv_response(
         key: Vec<u8>,
-        uid: Vec<u8>,
-        _meta: DataSetMetaV2,
-        splits: HashMap<DataItemIdx, proto::DataItem>,
-    ) -> WSResult<Vec<proto::kv::KvPair>> {
-        if splits.len() != 1 {
-            return Err(WSError::WsDataError(
-                WsDataError::KvGotWrongSplitCountAndIdx {
-                    unique_id: uid.clone(),
-                    idx: splits.keys().cloned().collect(),
-                },
-            ));
-        }
-
-        let (idx, data_item) = splits.into_iter().next().unwrap();
-        if idx != 0 {
-            return Err(WSError::WsDataError(
-                WsDataError::KvGotWrongSplitCountAndIdx {
-                    unique_id: uid.clone(),
-                    idx: vec![idx],
-                },
-            ));
-        }
-
-        let data_item_dispatch = data_item.data_item_dispatch.unwrap();
-        let raw_bytes = match data_item_dispatch {
-            proto::data_item::DataItemDispatch::RawBytes(value) => value,
-            _ => {
-                return Err(WSError::WsDataError(WsDataError::KvDeserializeErr {
-                    unique_id: uid,
-                    context: format!(
-                        "data_item_dispatch({}) is not RawBytes",
-                        proto::DataItem {
-                            data_item_dispatch: Some(data_item_dispatch),
-                        }
-                        .to_string(),
-                    ),
-                }))
+        uid: &[u8],
+        meta: DataSetMetaV2,
+        mut splits: HashMap<(NodeID, usize), proto::DataItem>,
+    ) -> Vec<proto::kv::KvPair> {
+        if meta.datas_splits.len() != 1 {
+            tracing::warn!(
+                "convert kv invalid data count number: {}",
+                meta.datas_splits.len()
+            );
+            vec![]
+        } else {
+            match meta.datas_splits[0].recorver_data(uid, 0, &mut splits) {
+                Ok(ok) => vec![proto::kv::KvPair { key, value: ok }],
+                Err(err) => {
+                    tracing::warn!("convert kv data error:{:?}", err);
+                    vec![]
+                }
             }
-        };
-
-        Ok(vec![proto::kv::KvPair {
-            key: key,
-            value: raw_bytes,
-        }])
+        }
     }
 
     async fn handle_kv_get(&self, get: proto::kv::kv_request::KvGetRequest) -> KvResponse {
@@ -282,27 +252,15 @@ impl KvUserClient {
 
         let data_general = self.view.data_general();
         let uid = new_data_unique_id_fn_kv(&get.range.as_ref().unwrap().start);
-        let got = data_general
-            .get_or_del_data(GetOrDelDataArg {
-                meta: None,
-                unique_id: uid.clone(),
-                ty: GetOrDelDataArgType::All,
-            })
-            .await;
+        let got = data_general.get_data(uid.clone()).await;
 
         let got = match got {
-            Ok((meta, splits)) => match Self::convert_get_data_res_to_kv_response(
+            Ok((meta, splits)) => Self::convert_get_data_res_to_kv_response(
                 get.range.unwrap().start,
-                uid,
+                &uid,
                 meta,
                 splits,
-            ) {
-                Ok(res) => res,
-                Err(err) => {
-                    tracing::warn!("get kv data error:{:?}", err);
-                    vec![]
-                }
-            },
+            ),
             Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
                 tracing::debug!("get kv data not found, uid({:?})", uniqueid);
                 vec![]
@@ -319,27 +277,15 @@ impl KvUserClient {
 
         let data_general = self.view.data_general();
         let uid = new_data_unique_id_fn_kv(&delete.range.as_ref().unwrap().start);
-        let deleted = data_general
-            .get_or_del_data(GetOrDelDataArg {
-                meta: None,
-                unique_id: uid.clone(),
-                ty: GetOrDelDataArgType::Delete,
-            })
-            .await;
+        let deleted = data_general.delete_data(uid.clone()).await;
 
         let deleted = match deleted {
-            Ok((deleted_meta, deleted_splits)) => match Self::convert_get_data_res_to_kv_response(
+            Ok((deleted_meta, deleted_splits)) => Self::convert_get_data_res_to_kv_response(
                 delete.range.unwrap().start,
-                uid,
+                &uid,
                 deleted_meta,
                 deleted_splits,
-            ) {
-                Ok(res) => res,
-                Err(err) => {
-                    tracing::warn!("delete kv data error:{:?}", err);
-                    vec![]
-                }
-            },
+            ),
             Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
                 tracing::debug!("delete kv data not found, uid({:?})", uniqueid);
                 vec![]
@@ -420,8 +366,8 @@ impl KvUserClient {
 
 #[cfg(test)]
 mod test {
-    
-    use std::{time::Duration};
+    use core::str;
+    use std::{sync::Arc, time::Duration};
 
     use super::KvUserClientView;
     use crate::general::{
@@ -522,7 +468,7 @@ mod test {
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
                 proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert_eq!(kv_response.kvs.len(), 1);
+                    assert!(kv_response.kvs.len() == 1);
                     assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
                     assert!(kv_response.kvs[0].value == test_value.as_bytes().to_owned());
                 }

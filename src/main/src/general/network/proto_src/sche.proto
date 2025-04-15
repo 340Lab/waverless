@@ -35,8 +35,5 @@ message DistributeTaskReq{
     }
 }
 
-message DistributeTaskResp{
-    bool success=1;
-    string err_msg=2;
-}
+message DistributeTaskResp{}
 

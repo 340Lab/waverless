@@ -1,9 +1,5 @@
-mod dataitem;
-
-use crate::general::data::m_data_general::dataitem::WantIdxIter;
-use crate::general::data::m_data_general::dataitem::WriteSplitDataTaskGroup;
-use crate::general::{
-    data::m_kv_store_engine::{
+use super::{
+    m_kv_store_engine::{
         KeyTypeDataSetItem, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine, KvVersion,
     },
     m_os::OperatingSystem,
@@ -18,7 +14,7 @@ use crate::general::{
 };
 use crate::{
     general::{
-        data::m_kv_store_engine::{KeyLockGuard, KeyType},
+        m_kv_store_engine::{KeyLockGuard, KeyType},
         network::{msg_pack::MsgPack, proto_ext::DataItemExt},
     },
     logical_module_view_impl,
@@ -30,12 +26,11 @@ use crate::{result::WsDataError, sys::LogicalModulesRef};
 use async_trait::async_trait;
 use camelpaste::paste;
 use core::str;
-use enum_as_inner::EnumAsInner;
 
+use prost::{bytes, Message};
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -51,7 +46,6 @@ logical_module_view_impl!(DataGeneralView, kv_store_engine, KvStoreEngine);
 logical_module_view_impl!(DataGeneralView, os, OperatingSystem);
 
 pub type DataVersion = u64;
-pub type DataItemIdx = u8;
 
 pub const DATA_UID_PREFIX_APP_META: &str = "app";
 pub const DATA_UID_PREFIX_FN_KV: &str = "fkv";
@@ -86,11 +80,6 @@ pub fn new_data_unique_id_fn_kv(key: &[u8]) -> Vec<u8> {
 pub struct DataGeneral {
     view: DataGeneralView,
 
-    // // unique_id,idx -> file_path
-    // auto_cache: moka::sync::Cache<(String, u8), (DataVersion, proto::DataItem)>,
-
-    // // unique_id,idx -> serialized value
-    // forever_cache: dashmap::DashMap<(String, u8), (DataVersion, proto::DataItem)>,
     pub rpc_call_data_version_schedule: RPCCaller<DataVersionScheduleRequest>,
     rpc_call_write_once_data: RPCCaller<WriteOneDataRequest>,
     rpc_call_get_data_meta: RPCCaller<DataMetaGetRequest>,
@@ -111,8 +100,6 @@ impl LogicalModule for DataGeneral {
         Self {
             view: DataGeneralView::new(args.logical_modules_ref.clone()),
 
-            // auto_cache: moka::sync::Cache::new(100),
-            // forever_cache: dashmap::DashMap::new(),
             rpc_call_data_version_schedule: RPCCaller::new(),
             rpc_call_write_once_data: RPCCaller::new(),
             rpc_call_get_data_meta: RPCCaller::new(),
@@ -197,7 +184,7 @@ impl DataGeneralView {
     ) {
         struct Defer {
             node: NodeID,
-        }
+        };
         impl Drop for Defer {
             fn drop(&mut self) {
                 tracing::debug!("rpc_handle_data_meta_update return at node({})", self.node);
@@ -411,7 +398,6 @@ impl DataGeneralView {
 
         // Step1: verify version
         // take old meta
-        #[allow(unused_assignments)]
         let mut required_meta: Option<(usize, DataSetMetaV2)> = None;
         {
             let keybytes: Vec<u8> = KeyTypeDataSetMeta(&req.unique_id).make_key();
@@ -637,35 +623,8 @@ impl DataGeneralView {
 //     File(PathBuf),
 // }
 
-pub enum DataUidMeta {
-    Meta {
-        unique_id: Vec<u8>,
-        meta: DataSetMetaV2,
-    },
-    UniqueId(Vec<u8>),
-}
-
-#[derive(EnumAsInner, Clone)]
-pub enum GetOrDelDataArgType {
-    Delete,
-    All,
-    PartialOne {
-        // partial can't be deleted
-        idx: DataItemIdx,
-    },
-    PartialMany {
-        idxs: BTreeSet<DataItemIdx>,
-    },
-}
-
-pub struct GetOrDelDataArg {
-    pub meta: Option<DataSetMetaV2>,
-    pub unique_id: Vec<u8>,
-    pub ty: GetOrDelDataArgType,
-}
-
 impl DataGeneral {
-    pub async fn get_or_del_datameta_from_master(
+    async fn get_or_del_datameta_from_master(
         &self,
         unique_id: &[u8],
         delete: bool,
@@ -702,401 +661,139 @@ impl DataGeneral {
         })
     }
 
-    // should return real dataitem, rather than split dataitem
-    pub async fn get_or_del_data(
+    async fn get_data_by_meta(
         &self,
-        GetOrDelDataArg {
-            meta,
-            unique_id,
-            ty,
-        }: GetOrDelDataArg,
-    ) -> WSResult<(DataSetMetaV2, HashMap<DataItemIdx, proto::DataItem>)> {
-        // get meta from master
-        let meta = if let Some(meta) = meta {
-            meta
-        } else {
-            self.get_or_del_datameta_from_master(&unique_id, false)
-                .await?
-        };
-
-        tracing::debug!("get_or_del_data uid: {:?},meta: {:?}", unique_id, meta);
-
-        // basical verify
-        for idx in 0..meta.data_item_cnt() {
-            let idx = idx as DataItemIdx;
-            let check_cache_map = |meta: &DataSetMetaV2| -> WSResult<()> {
-                if !meta.cache_mode_visitor(idx).is_map_common_kv()
-                    && !meta.cache_mode_visitor(idx).is_map_file()
-                {
-                    return Err(WsDataError::UnknownCacheMapMode {
-                        mode: meta.cache_mode_visitor(idx).0,
-                    }
-                    .into());
-                }
-                Ok(())
-            };
-            // not proper desig, skip
-            //   https://fvd360f8oos.feishu.cn/wiki/DYAHw4oPLiZ5NYkTG56cFtJdnKg#share-Div9dUq11oGFOBxJO9ic3RtnnSf
-            //   fn check_cache_pos(meta: &DataSetMetaV2) -> WSResult<()> {
-            //       if !meta.cache_mode_visitor().is_pos_allnode()
-            //           && !meta.cache_mode_visitor().is_pos_auto()
-            //           && !meta.cache_mode_visitor().is_pos_specnode()
-            //       {
-            //           return Err(WsDataError::UnknownCachePosMode {
-            //               mode: meta.cache_mode_visitor().0,
-            //           }
-            //           .into());
-            //       }
-            //       if meta.cache_mode_visitor().is_pos_specnode() {
-            //           // check this node is in the spec node list
-            //           panic!("TODO: check this node is in the spec node list");
-            //       }
-            //       Ok(())
-            //   }
-            let check_cache_time = |meta: &DataSetMetaV2| -> WSResult<()> {
-                if !meta.cache_mode_visitor(idx).is_time_auto()
-                    && !meta.cache_mode_visitor(idx).is_time_forever()
-                {
-                    return Err(WsDataError::UnknownCacheTimeMode {
-                        mode: meta.cache_mode_visitor(idx).0,
-                    }
-                    .into());
-                }
-                Ok(())
-            };
-            check_cache_map(&meta)?;
-            // not proper desig, skip
-            //   check_cache_pos(&meta)?;
-            check_cache_time(&meta)?;
-        }
-
-        // verify idx range & get whether to delete
-        let delete = match &ty {
-            GetOrDelDataArgType::Delete => true,
-            GetOrDelDataArgType::All => false,
-            GetOrDelDataArgType::PartialOne { idx } => {
-                if *idx as usize >= meta.data_item_cnt() {
-                    return Err(WsDataError::ItemIdxOutOfRange {
-                        wanted: *idx,
-                        len: meta.data_item_cnt() as u8,
-                    }
-                    .into());
-                }
-                false
-            }
-            GetOrDelDataArgType::PartialMany { idxs } => {
-                let Some(biggest_idx) = idxs.iter().rev().next() else {
-                    return Err(WsDataError::ItemIdxEmpty.into());
-                };
-                if *biggest_idx >= meta.data_item_cnt() as u8 {
-                    return Err(WsDataError::ItemIdxOutOfRange {
-                        wanted: *biggest_idx,
-                        len: meta.data_item_cnt() as u8,
-                    }
-                    .into());
-                }
-                false
-            }
-        };
-
-        // // TODO 读取数据的时候先看看缓存有没有，如果没有再读数据源，如果有从缓存里面拿，需要校验 version
-        // if !delete {
-        //     let mut cached_items = HashMap::new();
-        //     // 遍历需要获取的索引
-        //     for idx in WantIdxIter::new(&ty) {
-        //         let cache_key = (unique_id.clone(), idx);
-        //         // 根据缓存模式选择缓存源
-        //         let cached = if meta.cache_mode_visitor(idx).is_time_auto() {
-        //             self.auto_cache.get(&cache_key)
-        //         } else if meta.cache_mode_visitor(idx).is_time_forever() {
-        //             self.forever_cache.get(&cache_key)
-        //         } else {
-        //             None
-        //         };
-        //         let Some(cached) = cached else {
-        //         };
-        //         // 从缓存中获取数据
-        //         let cached_value = cache_list.get(&cache_key);
-        //         // 如果找到缓存且版本匹配
-        //         if let Some((cached_version, cached_item)) = cached_value {
-        //             if cached_version == meta.version {
-        //                 cached_items.insert(idx, cached_item.clone());
-        //                 tracing::debug!("Cache hit for idx: {}, version: {}", idx, cached_version);
-        //             } else {
-        //                 // 如果缓存版本不匹配，从缓存中删除掉
-        //                 cache_list.remove(&cache_key);
-        //                 tracing::debug!(
-        //                     "Cache version mismatch for idx: {}, cached: {}, current: {}",
-        //                     idx,
-        //                     cached_version,
-        //                     meta.version
-        //                 );
-        //             }
-        //         }
-        //     }
-        //     // 如果所有请求的数据都在缓存中找到，直接返回
-        //     if matches!(ty, GetOrDelDataArgType::All)
-        //         && cached_items.len() == meta.datas_splits.len()
-        //         || matches!(ty, GetOrDelDataArgType::PartialOne { .. }) && cached_items.len() == 1
-        //         || matches!(ty, GetOrDelDataArgType::PartialMany { idxs })
-        //             && cached_items.len() == idxs.len()
-        //     {
-        //         tracing::debug!("All requested data found in cache, returning early");
-        //         return Ok((meta, cached_items));
-        //     }
-        // }
-        // TODO 如果缓存里只有一部分或者没有，则需要从数据源读取，并且要在数据源读取时判断是不是已经在缓存里找到了
-
-        let mut cache: Vec<bool> = Vec::new();
-        for _ in 0..meta.data_item_cnt() {
-            match &ty {
-                GetOrDelDataArgType::Delete => {
-                    cache.push(false);
-                }
-                GetOrDelDataArgType::All
-                | GetOrDelDataArgType::PartialOne { .. }
-                | GetOrDelDataArgType::PartialMany { .. } => {
-                    cache.push(true);
-                }
-            }
-        }
-
-        // Step2: get/delete data on each node
-        // nodeid -> (getdata_req, splitidx)
-        let mut each_node_getdata: HashMap<NodeID, (proto::GetOneDataRequest, Vec<usize>)> =
-            HashMap::new();
-        let mut each_item_idx_receive_worker_tx_rx_splits: HashMap<
-            u8,
-            (
-                tokio::sync::mpsc::Sender<WSResult<(DataSplitIdx, proto::DataItem)>>,
-                tokio::sync::mpsc::Receiver<WSResult<(DataSplitIdx, proto::DataItem)>>,
-                Vec<Range<usize>>, // split ranges
-            ),
-        > = HashMap::new();
-
-        for idx in WantIdxIter::new(&ty, meta.data_item_cnt() as DataItemIdx) {
-            tracing::debug!("prepare get data slices request with idx:{}", idx);
-            let data_splits = &meta.datas_splits[idx as usize];
-            for (splitidx, split) in data_splits.splits.iter().enumerate() {
-                let _ = each_node_getdata
+        unique_id: &[u8],
+        meta: DataSetMetaV2,
+        delete: bool,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let view = &self.view;
+        // Step2: delete data on each node
+        let mut each_node_data: HashMap<NodeID, proto::GetOneDataRequest> = HashMap::new();
+        for (idx, data_splits) in meta.datas_splits.iter().enumerate() {
+            for split in &data_splits.splits {
+                let _ = each_node_data
                     .entry(split.node_id)
-                    .and_modify(|(req, splitidxs)| {
-                        req.idxs.push(idx as u32);
-                        splitidxs.push(splitidx);
+                    .and_modify(|old| {
+                        old.idxs.push(idx as u32);
                     })
-                    .or_insert((
-                        proto::GetOneDataRequest {
-                            unique_id: unique_id.to_owned(),
-                            idxs: vec![idx as u32],
-                            delete,
-                            return_data: true,
-                        },
-                        vec![splitidx],
-                    ));
+                    .or_insert(proto::GetOneDataRequest {
+                        unique_id: unique_id.to_owned(),
+                        idxs: vec![idx as u32],
+                        delete,
+                        return_data: true,
+                    });
             }
-            let (tx, rx) =
-                tokio::sync::mpsc::channel::<WSResult<(DataSplitIdx, proto::DataItem)>>(3);
-            let _ = each_item_idx_receive_worker_tx_rx_splits.insert(
-                idx,
-                (
-                    tx,
-                    rx,
-                    data_splits
-                        .splits
-                        .iter()
-                        .map(|split| {
-                            split.data_offset as usize
-                                ..split.data_offset as usize + split.data_size as usize
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-            );
         }
 
-        // this part is a little complex
-        // 1. all the splits will be read parallelly
-        // 2. for one dataitem (unique by idx), we want one worker to wait for ready dataitem(split)
-
-        // 1. read tasks
-
-        for (node_id, (req, splitidxs)) in each_node_getdata {
-            let view = self.view.clone();
-            // let req_idxs = req.idxs.clone();
-            // let idx_2_sender_to_recv_worker = each_item_idx_receive_worker_tx_rx_splitcnt.clone();
-            let idx_of_idx_and_sender_to_recv_worker = req
-                .idxs
-                .iter()
-                .enumerate()
-                .map(|(idx_of_idx, reqidx)| {
-                    let tx_rx_splits = each_item_idx_receive_worker_tx_rx_splits
-                        .get(&(*reqidx as DataItemIdx))
-                        .unwrap();
-                    (idx_of_idx, tx_rx_splits.0.clone())
-                })
-                .collect::<Vec<_>>();
-            let unique_id = unique_id.clone();
-            let _task = tokio::spawn(async move {
+        let mut tasks = vec![];
+        for (node_id, req) in each_node_data {
+            let view = view.clone();
+            let task = tokio::spawn(async move {
+                let req_idxs = req.idxs.clone();
                 tracing::debug!("rpc_call_get_data start, remote({})", node_id);
-                let mut res = view
+                let res = view
                     .data_general()
                     .rpc_call_get_data
                     .call(view.p2p(), node_id, req, Some(Duration::from_secs(30)))
                     .await;
                 tracing::debug!("rpc_call_get_data returned, remote({})", node_id);
-
-                // result will contain multiple splits of dataitems
-                // so we need to send the result to the corresponding tx
-
-                if res.is_err() {
-                    let e = Arc::new(res.err().unwrap());
-                    for (_idx_of_idx, tx) in idx_of_idx_and_sender_to_recv_worker {
-                        tracing::warn!("send to data merge tasks failed: {:?}", e);
-                        tx.send(Err(WSError::ArcWrapper(e.clone())))
-                            .await
-                            .expect("send to data merge tasks failed");
+                let res: WSResult<Vec<(u32, proto::DataItem)>> = res.map(|response| {
+                    if !response.success {
+                        tracing::warn!("get/delete data failed {}", response.message);
+                        vec![]
+                    } else {
+                        req_idxs.into_iter().zip(response.data).collect()
                     }
-                } else {
-                    for (idx_of_idx, tx) in idx_of_idx_and_sender_to_recv_worker {
-                        let res = res.as_mut().unwrap();
-                        if !res.success {
-                            tx.send(Err(WsDataError::GetDataFailed {
-                                unique_id: unique_id.clone(),
-                                msg: std::mem::take(&mut res.message),
-                            }
-                            .into()))
-                                .await
-                                .expect("send to data merge tasks failed");
-                        } else {
-                            let _ = tx
-                                .send(Ok((
-                                    splitidxs[idx_of_idx],
-                                    std::mem::take(&mut res.data[idx_of_idx]),
-                                )))
-                                .await
-                                .expect("send to data merge tasks failed");
-                        }
-                    }
-                }
+                });
+                (node_id, res)
             });
+            tasks.push(task);
         }
 
-        // 2. data merge tasks
-        let mut merge_task_group_tasks = vec![];
-        for idx in WantIdxIter::new(&ty, meta.data_item_cnt() as DataItemIdx) {
-            let (_, rx, splits) = each_item_idx_receive_worker_tx_rx_splits
-                .remove(&idx)
-                .unwrap();
-            let unique_id = unique_id.clone();
-            let cache_mode = meta.cache_mode_visitor(idx);
-            let task = tokio::spawn(async move {
-                WriteSplitDataTaskGroup::new(unique_id.clone(), splits, rx, cache_mode)
-            });
-            merge_task_group_tasks.push((idx, task));
-        }
-
-        // 3. wait for results
-        let mut idx_2_data_item = HashMap::new();
-        for (idx, task) in merge_task_group_tasks {
-            let merge_group = task.await;
-            match merge_group {
-                Err(e) => {
-                    return Err(WsRuntimeErr::TokioJoin {
-                        err: e,
-                        context: format!("get data split failed, idx:{}", idx),
-                    }
-                    .into());
-                }
-                Ok(merge_group) => match merge_group.await {
-                    Err(e) => {
-                        return Err(e);
-                    }
-                    Ok(res) => {
-                        let res = res.join().await;
-                        match res {
-                            Err(e) => {
-                                return Err(e);
-                            }
-                            Ok(res) => {
-                                let _ = idx_2_data_item.insert(idx, res);
-                            }
-                        }
-                    }
-                },
+        let mut node_2_datas: HashMap<(NodeID, usize), proto::DataItem> = HashMap::new();
+        for tasks in tasks {
+            let (node_id, data) = tasks.await.map_err(|err| {
+                WSError::from(WsRuntimeErr::TokioJoin {
+                    err,
+                    context: "delete_data - deleting remote data".to_owned(),
+                })
+            })?;
+            for (idx, data_item) in data? {
+                let _ = node_2_datas.insert((node_id, idx as usize), data_item);
             }
         }
 
-        // // TODO: 将这里获取到的数据写入到缓存中
-        // for (idx, data_item) in idx_2_data_item.iter() {
-        //     // 只缓存需要缓存的数据，前面拿到过
-        //     if !cache[*idx as usize] {
-        //         continue;
-        //     }
-        //     let cache_mode = meta.cache_mode_visitor(*idx);
-        //     let cache_key = (unique_id.clone(), *idx);
-        //     let cache_value = (meta.version, data_item.clone());
-        //     if cache_mode.is_time_forever() {
-        //         self.forever_cache.insert(cache_key, cache_value);
-        //     } else if cache_mode.is_time_auto() {
-        //         self.auto_cache.insert(cache_key, cache_value);
-        //     }
-        // }
-
-        Ok((meta, idx_2_data_item))
+        Ok((meta, node_2_datas))
     }
 
-    // pub async fn get_data(
-    //     &self,
-    //     unique_id: impl Into<Vec<u8>>,
-    // ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
-    //     let unique_id: Vec<u8> = unique_id.into();
-    //     tracing::debug!("get_or_del_datameta_from_master start");
-    //     // Step1: get meta
-    //     let meta: DataSetMetaV2 = self
-    //         .get_or_del_datameta_from_master(&unique_id, false)
-    //         .await
-    //         .map_err(|err| {
-    //             if let WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) = err {
-    //                 tracing::debug!("data not found, uniqueid:{:?}", uniqueid);
-    //                 return WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid });
-    //             }
-    //             tracing::warn!("`get_data` failed, err:{}", err);
-    //             err
-    //         })?;
-    //     tracing::debug!("get_or_del_datameta_from_master end\n  get_data_by_meta start");
-    //     let res = self.get_data_by_meta(GetDataArg::All{
+    pub async fn get_data(
+        &self,
+        unique_id: impl Into<Vec<u8>>,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let unique_id: Vec<u8> = unique_id.into();
+        tracing::debug!("get_or_del_datameta_from_master start");
+        // Step1: get meta
+        let meta: DataSetMetaV2 = self
+            .get_or_del_datameta_from_master(&unique_id, false)
+            .await
+            .map_err(|err| {
+                if let WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) = err {
+                    tracing::debug!("data not found, uniqueid:{:?}", uniqueid);
+                    return WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid });
+                }
+                tracing::warn!("`get_data` failed, err:{}", err);
+                err
+            })?;
+        tracing::debug!("get_or_del_datameta_from_master end");
+        tracing::debug!("get_data_by_meta start");
+        let res = self.get_data_by_meta(&unique_id, meta, false).await;
+        tracing::debug!("get_data_by_meta end");
+        res
+    }
 
-    //     }).await;
-    //     tracing::debug!("get_data_by_meta end");
-    //     res
-    // }
+    /// return (meta, data_map)
+    /// data_map: (node_id, idx) -> data_items
+    pub async fn delete_data(
+        &self,
+        unique_id: impl Into<Vec<u8>>,
+    ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
+        let unique_id: Vec<u8> = unique_id.into();
 
-    // /// return (meta, data_map)
-    // /// data_map: (node_id, idx) -> data_items
-    // pub async fn delete_data(
-    //     &self,
-    //     unique_id: impl Into<Vec<u8>>,
-    // ) -> WSResult<(DataSetMetaV2, HashMap<(NodeID, usize), proto::DataItem>)> {
-    //     let unique_id: Vec<u8> = unique_id.into();
+        // Step1: get meta
+        let meta: DataSetMetaV2 = self
+            .get_or_del_datameta_from_master(&unique_id, true)
+            .await
+            .map_err(|err| {
+                if let WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) = err {
+                    tracing::debug!("data not found, uniqueid:{:?}", uniqueid);
+                    return WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid });
+                }
+                tracing::warn!("`get_data` failed, err:{}", err);
+                err
+            })?;
+        // .default_log_err("`delete_data`")?;
 
-    //     // Step1: get meta
-    //     let meta: DataSetMetaV2 = self
-    //         .get_or_del_datameta_from_master(&unique_id, true)
-    //         .await
-    //         .map_err(|err| {
-    //             if let WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) = err {
-    //                 tracing::debug!("data not found, uniqueid:{:?}", uniqueid);
-    //                 return WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid });
-    //             }
-    //             tracing::warn!("`get_data` failed, err:{}", err);
-    //             err
-    //         })?;
-    //     // .default_log_err("`delete_data`")?;
+        self.get_data_by_meta(&unique_id, meta, true).await
+        //
+    }
 
-    //     return self.get_data_by_meta(GetDataArg::Delete{
-    //         unique_id,
-    //     }&, meta, true).await
-    //     //
-    // }
+    /// - check the uid from DATA_UID_PREFIX_XXX
+    pub async fn get_data_item(&self, unique_id: &[u8], idx: u8) -> Option<proto::DataItem> {
+        let Some((_, itembytes)) = self.view.kv_store_engine().get(
+            &KeyTypeDataSetItem {
+                uid: unique_id,
+                idx: idx as u8,
+            },
+            false,
+            KvAdditionalConf {},
+        ) else {
+            return None;
+        };
+        Some(proto::DataItem {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(itembytes)),
+        })
+    }
 
     ///  The user's data write entry
     ///
@@ -1118,8 +815,6 @@ impl DataGeneral {
     ) -> WSResult<()> {
         let p2p = self.view.p2p();
         let unique_id: Vec<u8> = unique_id.into();
-        tracing::debug!("write_data {:?} start", unique_id.clone());
-
         let log_tag = Arc::new(format!(
             "write_data,uid:{:?},operole:{:?}",
             str::from_utf8(&unique_id),
@@ -1129,33 +824,28 @@ impl DataGeneral {
         // Step 1: need the master to do the decision
         // - require for the latest version for write permission
         // - require for the distribution and cache mode
-        let version_schedule_req = DataVersionScheduleRequest {
-            unique_id: unique_id.clone(),
-            version: 0,
-            context: context_openode_opetype_operole.map(|(ope_node, ope_type, ope_role)| {
-                proto::DataScheduleContext {
-                    ope_node: ope_node as i64,
-                    ope_type: ope_type as i32,
-                    each_data_sz_bytes: datas
-                        .iter()
-                        .map(|data_item| data_item.data_sz_bytes() as u32)
-                        .collect::<Vec<_>>(),
-                    ope_role: Some(ope_role),
-                }
-            }),
-        };
-        tracing::debug!(
-            "{} data version schedule requesting {:?}",
-            log_tag,
-            version_schedule_req
-        );
+        tracing::debug!("{} data version scheduling", log_tag);
         let version_schedule_resp = {
             let resp = self
                 .rpc_call_data_version_schedule
                 .call(
                     self.view.p2p(),
                     p2p.nodes_config.get_master_node(),
-                    version_schedule_req,
+                    DataVersionScheduleRequest {
+                        unique_id: unique_id.clone(),
+                        version: 0,
+                        context: context_openode_opetype_operole.map(
+                            |(ope_node, ope_type, ope_role)| proto::DataScheduleContext {
+                                ope_node: ope_node as i64,
+                                ope_type: ope_type as i32,
+                                each_data_sz_bytes: datas
+                                    .iter()
+                                    .map(|data_item| data_item.data_sz_bytes() as u32)
+                                    .collect::<Vec<_>>(),
+                                ope_role: Some(ope_role),
+                            },
+                        ),
+                    },
                     Some(Duration::from_secs(60)),
                 )
                 .await;
@@ -1391,18 +1081,8 @@ pub struct DataSetMetaV2 {
     // unique_id: Vec<u8>,
     api_version: u8,
     pub version: u64,
-    pub cache_mode: Vec<u16>,
-    /// the data splits for each data item, the index is the data item index
+    pub cache_mode: u16,
     pub datas_splits: Vec<DataSplit>,
-}
-
-impl DataSetMetaV2 {
-    pub fn cache_mode_visitor(&self, idx: DataItemIdx) -> CacheModeVisitor {
-        CacheModeVisitor(self.cache_mode[idx as usize])
-    }
-    pub fn data_item_cnt(&self) -> usize {
-        self.datas_splits.len()
-    }
 }
 
 pub type DataSetMeta = DataSetMetaV2;
@@ -1420,74 +1100,71 @@ pub struct EachNodeSplit {
     pub data_size: u32,
 }
 
-/// the split of one dataitem
 /// we need to know the split size for one data
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DataSplit {
     pub splits: Vec<EachNodeSplit>,
 }
 
-pub type DataSplitIdx = usize;
+impl DataSplit {
+    /// node_2_datas will be consumed partially
+    pub fn recorver_data(
+        &self,
+        unique_id: &[u8],
+        idx: usize,
+        node_2_datas: &mut HashMap<(NodeID, usize), proto::DataItem>,
+    ) -> WSResult<Vec<u8>> {
+        let nodes = node_2_datas
+            .iter()
+            .filter(|v| v.0 .1 == idx)
+            .map(|v| v.0 .0)
+            .collect::<Vec<_>>();
 
-// impl DataSplit {
-//     /// node_2_datas will be consumed partially
-//     pub fn recorver_data(
-//         &self,
-//         unique_id: &[u8],
-//         idx: DataItemIdx,
-//         node_2_datas: &mut HashMap<(NodeID, DataItemIdx), proto::DataItem>,
-//     ) -> WSResult<Vec<u8>> {
-//         let nodes = node_2_datas
-//             .iter()
-//             .filter(|v| v.0 .1 == idx)
-//             .map(|v| v.0 .0)
-//             .collect::<Vec<_>>();
+        let mut each_node_splits: HashMap<NodeID, (proto::DataItem, Option<EachNodeSplit>)> =
+            HashMap::new();
 
-//         let mut each_node_splits: HashMap<NodeID, (proto::DataItem, Option<EachNodeSplit>)> =
-//             HashMap::new();
+        for node in nodes {
+            let data = node_2_datas.remove(&(node, idx)).unwrap();
+            let _ = each_node_splits.insert(node, (data, None));
+        }
 
-//         for node in nodes {
-//             let data = node_2_datas.remove(&(node, idx)).unwrap();
-//             let _ = each_node_splits.insert(node, (data, None));
-//         }
+        let mut max_size = 0;
+        let mut missing = vec![];
 
-//         let mut max_size = 0;
-//         let mut missing = vec![];
+        // zip with split info
+        //  by the way, check if the split is missing
+        for split in &self.splits {
+            let Some(find) = each_node_splits.get_mut(&split.node_id) else {
+                missing.push((*split).clone());
+                continue;
+            };
+            find.1 = Some(split.clone());
+            if split.data_offset + split.data_size > max_size {
+                max_size = split.data_offset + split.data_size;
+            }
+        }
 
-//         // zip with split info
-//         //  by the way, check if the split is missing
-//         for split in &self.splits {
-//             let Some(find) = each_node_splits.get_mut(&split.node_id) else {
-//                 missing.push((*split).clone());
-//                 continue;
-//             };
-//             find.1 = Some(split.clone());
-//             if split.data_offset + split.data_size > max_size {
-//                 max_size = split.data_offset + split.data_size;
-//             }
-//         }
+        if missing.len() > 0 {
+            return Err(WsDataError::SplitRecoverMissing {
+                unique_id: unique_id.to_owned(),
+                idx,
+                missing,
+            }
+            .into());
+        }
 
-//         if missing.len() > 0 {
-//             return Err(WsDataError::SplitRecoverMissing {
-//                 unique_id: unique_id.to_owned(),
-//                 idx,
-//                 missing,
-//             }
-//             .into());
-//         }
+        let mut recover = vec![0; max_size.try_into().unwrap()];
 
-//         let mut recover = vec![0; max_size.try_into().unwrap()];
+        for (_node, (data, splitmeta)) in each_node_splits {
+            let splitmeta = splitmeta.unwrap();
+            let begin = splitmeta.data_offset as usize;
+            let end = begin + splitmeta.data_size as usize;
+            recover[begin..end].copy_from_slice(data.as_ref());
+        }
 
-//         for (_node, (data, splitmeta)) in each_node_splits {
-//             let splitmeta = splitmeta.unwrap();
-//             let begin = splitmeta.data_offset as usize;
-//             let end = begin + splitmeta.data_size as usize;
-//             recover[begin..end].copy_from_slice(data.as_ref());
-//         }
-
-//         Ok(recover)
-//     }
-// }
+        Ok(recover)
+    }
+}
 
 impl Into<proto::EachNodeSplit> for EachNodeSplit {
     fn into(self) -> proto::EachNodeSplit {
@@ -1519,22 +1196,12 @@ macro_rules! generate_cache_mode_methods {
             impl CacheModeVisitor {
                 $(
                     pub fn [<is _ $group _ $mode>](&self) -> bool {
-                        (self.0 & [<CACHE_MODE_ $group:upper _MASK>]) ==
-                            ([<CACHE_MODE_ $group:upper _ $mode:upper _MASK>] & [<CACHE_MODE_ $group:upper _MASK>])
+                        self.0 & [<CACHE_MODE_ $group:upper _MASK>]
+                            == self.0 & [<CACHE_MODE_ $group:upper _MASK>] & [<CACHE_MODE_ $group:upper _ $mode:upper _MASK>]
                     }
                 )*
             }
-            impl DataSetMetaBuilder {
-                $(
-                    pub fn [<cache_mode_ $group _ $mode>](&mut self, idx: DataItemIdx) -> &mut Self {
-                        self.assert_cache_mode_len();
-                        self.building.as_mut().unwrap().cache_mode[idx as usize] =
-                            (self.building.as_mut().unwrap().cache_mode[idx as usize] & ![<CACHE_MODE_ $group:upper _MASK>]) |
-                            ([<CACHE_MODE_ $group:upper _ $mode:upper _MASK>] & [<CACHE_MODE_ $group:upper _MASK>]);
-                        self
-                    }
-                )*
-            }
+
         }
     };
 }
@@ -1562,27 +1229,6 @@ fn test_cache_mode_visitor() {
     let cache_mode_visitor = CacheModeVisitor(CACHE_MODE_MAP_FILE_MASK);
     assert!(cache_mode_visitor.is_map_file());
     assert!(!cache_mode_visitor.is_map_common_kv());
-
-    // test builder
-
-    let meta = DataSetMetaBuilder::new()
-        .set_data_splits(vec![DataSplit { splits: vec![] }])
-        .cache_mode_map_file(0)
-        .cache_mode_time_forever(0)
-        .build();
-    assert!(meta.cache_mode_visitor(0).is_map_file());
-    assert!(!meta.cache_mode_visitor(0).is_map_common_kv());
-    assert!(meta.cache_mode_visitor(0).is_time_forever());
-    assert!(!meta.cache_mode_visitor(0).is_time_auto());
-    let meta = DataSetMetaBuilder::new()
-        .set_data_splits(vec![DataSplit { splits: vec![] }])
-        .cache_mode_map_common_kv(0)
-        .cache_mode_time_forever(0)
-        .build();
-    assert!(meta.cache_mode_visitor(0).is_map_common_kv());
-    assert!(!meta.cache_mode_visitor(0).is_map_file());
-    assert!(meta.cache_mode_visitor(0).is_time_forever());
-    assert!(!meta.cache_mode_visitor(0).is_time_auto());
 }
 
 pub struct DataSetMetaBuilder {
@@ -1598,16 +1244,45 @@ impl DataSetMetaBuilder {
         Self {
             building: Some(DataSetMetaV2 {
                 version: 0,
-                cache_mode: vec![],
+                cache_mode: 0,
                 api_version: 2,
                 datas_splits: vec![],
             }),
         }
     }
-    fn assert_cache_mode_len(&self) {
-        if self.building.as_ref().unwrap().cache_mode.len() == 0 {
-            panic!("please set_data_splits before set_cache_mode");
-        }
+    pub fn cache_mode_time_forever(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_TIME_FOREVER_MASK;
+        self
+    }
+
+    pub fn cache_mode_time_auto(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_TIME_AUTO_MASK;
+        self
+    }
+
+    pub fn cache_mode_pos_allnode(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_ALLNODE_MASK;
+        self
+    }
+
+    pub fn cache_mode_pos_specnode(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_SPECNODE_MASK;
+        self
+    }
+
+    pub fn cache_mode_pos_auto(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_POS_AUTO_MASK;
+        self
+    }
+
+    pub fn cache_mode_map_common_kv(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_MAP_COMMON_KV_MASK;
+        self
+    }
+
+    pub fn cache_mode_map_file(&mut self) -> &mut Self {
+        self.building.as_mut().unwrap().cache_mode &= CACHE_MODE_MAP_FILE_MASK;
+        self
     }
 
     pub fn version(&mut self, version: u64) -> &mut Self {
@@ -1617,9 +1292,7 @@ impl DataSetMetaBuilder {
 
     #[must_use]
     pub fn set_data_splits(&mut self, splits: Vec<DataSplit>) -> &mut Self {
-        let building = self.building.as_mut().unwrap();
-        building.datas_splits = splits;
-        building.cache_mode = vec![0; building.datas_splits.len()];
+        self.building.as_mut().unwrap().datas_splits = splits;
         self
     }
 
@@ -1628,25 +1301,25 @@ impl DataSetMetaBuilder {
     }
 }
 
-// impl From<DataSetMetaV1> for DataSetMetaV2 {
-//     fn from(
-//         DataSetMetaV1 {
-//             version,
-//             data_metas: _,
-//             synced_nodes: _,
-//         }: DataSetMetaV1,
-//     ) -> Self {
-//         DataSetMetaBuilder::new()
-//             .version(version)
-//             .cache_mode_pos_allnode()
-//             .build()
-//         // DataSetMetaV2 {
-//         //     version,
-//         //     data_metas,
-//         //     synced_nodes,
-//         // }
-//     }
-// }
+impl From<DataSetMetaV1> for DataSetMetaV2 {
+    fn from(
+        DataSetMetaV1 {
+            version,
+            data_metas: _,
+            synced_nodes: _,
+        }: DataSetMetaV1,
+    ) -> Self {
+        DataSetMetaBuilder::new()
+            .version(version)
+            .cache_mode_pos_allnode()
+            .build()
+        // DataSetMetaV2 {
+        //     version,
+        //     data_metas,
+        //     synced_nodes,
+        // }
+    }
+}
 
 #[test]
 fn test_option_and_vec_serialization_size() {

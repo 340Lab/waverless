@@ -1,6 +1,6 @@
 use crate::{
     general::{
-        app::AppMetaManager,
+        m_appmeta_manager::AppMetaManager,
         network::{
             http_handler::ReqId,
             m_p2p::{P2PModule, RPCHandler, RPCResponsor},
@@ -127,55 +127,23 @@ impl Executor {
         tracing::debug!("receive distribute task: {:?}", req);
         let app = req.app.to_owned();
         let func = req.func.to_owned();
-        let appmeta = match self.view.appmeta_manager().get_app_meta(&app).await {
-            Ok(Some(appmeta)) => appmeta,
-            Ok(None) => {
-                tracing::warn!("app {} not found in data meta", app);
-                if let Err(err) = resp
-                    .send_resp(DistributeTaskResp {
-                        success: false,
-                        err_msg: format!("app {} not found in data meta", app),
-                    })
-                    .await
-                {
-                    tracing::error!("send distribute task resp failed with err: {}", err);
-                }
-                return;
-            }
-            Err(err) => {
-                tracing::error!("get appmeta failed with err: {}", err);
-                if let Err(err) = resp
-                    .send_resp(DistributeTaskResp {
-                        success: false,
-                        err_msg: format!("get appmeta failed with err: {}", err),
-                    })
-                    .await
-                {
-                    tracing::error!("send distribute task resp failed with err: {}", err);
-                }
-                return;
-            }
-        };
-
-        let apptype = appmeta.app_type.clone();
-        let Some(fnmeta) = appmeta.get_fn_meta(&func) else {
-            tracing::warn!("func {} not found, exist:{:?}", func, appmeta.fns());
-            if let Err(err) = resp
-                .send_resp(DistributeTaskResp {
-                    success: false,
-                    err_msg: format!("func {} not found, exist:{:?}", func, appmeta.fns()),
-                })
-                .await
-            {
-                tracing::error!("send distribute task resp failed with err: {}", err);
-            }
-            return;
+        let (apptype, fnmeta) = {
+            let appmetaman_r = self.view.appmeta_manager().meta.read().await;
+            let Some(appmeta) = appmetaman_r.get_app_meta(&app).await else {
+                // TODO: return err
+                unreachable!();
+            };
+            let Some(fnmeta) = appmeta.get_fn_meta(&func) else {
+                // TODO: return err
+                unreachable!();
+            };
+            (appmeta.app_type.clone(), fnmeta.clone())
         };
 
         let ctx = FnExeCtx {
             app: req.app,
             app_type: apptype,
-            func_meta: fnmeta.clone(),
+            func_meta: fnmeta,
             func: req.func,
             req_id: 0,
             res: None,
@@ -187,13 +155,7 @@ impl Executor {
             },
             sub_waiters: vec![],
         };
-        if let Err(err) = resp
-            .send_resp(DistributeTaskResp {
-                success: true,
-                err_msg: "".to_owned(),
-            })
-            .await
-        {
+        if let Err(err) = resp.send_resp(DistributeTaskResp {}).await {
             tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
         }
         let _ = self.execute(ctx).await;
@@ -227,9 +189,9 @@ impl Executor {
         // trigger app
         let appname = split[0];
         let funcname = split[1];
-
+        let app_meta_man = self.view.appmeta_manager().meta.read().await;
         // check app exist
-        let Some(app) = self.view.appmeta_manager().get_app_meta(appname).await? else {
+        let Some(app) = app_meta_man.get_app_meta(appname).await else {
             tracing::warn!("app {} not found", appname);
             return Err(WsFuncError::AppNotFound {
                 app: appname.to_owned(),
@@ -280,7 +242,7 @@ impl Executor {
             sub_waiters: vec![],
             func_meta: func.clone(),
         };
-
+        drop(app_meta_man);
         self.execute(ctx).await
     }
     // pub async fn execute_http_app(&self, fn_ctx_builder: FunctionCtxBuilder) {
@@ -348,7 +310,6 @@ impl Executor {
             .expect("Time went backwards")
             .as_millis() as u64;
 
-        tracing::debug!("start execute");
         let res = instance.execute(&mut fn_ctx).await;
 
         // let return_to_agent_time = SystemTime::now()
@@ -358,7 +319,7 @@ impl Executor {
 
         let res = res.map(|v| {
             v.map(|v| {
-                let mut res: serde_json::Value = serde_json::from_str(&*v).unwrap();
+                let mut res: serde_json::Value = serde_json::from_str(&v).unwrap();
                 let _ = res.as_object_mut().unwrap().insert(
                     "bf_exec_time".to_owned(),
                     serde_json::Value::from(bf_exec_time),
