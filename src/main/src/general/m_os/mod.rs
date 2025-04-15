@@ -37,9 +37,6 @@ logical_module_view_impl!(OperatingSystemView, p2p, P2PModule);
 logical_module_view_impl!(OperatingSystemView, os, OperatingSystem);
 logical_module_view_impl!(OperatingSystemView, appmeta_manager, AppMetaManager);
 
-
-pub const APPS_REL_DIR: &str = "apps";
-
 #[derive(LogicalModule)]
 pub struct OperatingSystem {
     view: OperatingSystemView,

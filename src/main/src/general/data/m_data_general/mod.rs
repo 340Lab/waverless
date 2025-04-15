@@ -7,7 +7,6 @@ pub mod batch_handler;
 
 use crate::general::data::m_data_general::dataitem::{calculate_splits, WantIdxIter, WriteSplitDataTaskGroup, DataItemSource};
 use crate::general::data::m_data_general::batch_handler::{BatchReceiveState, SharedWithBatchHandler};
-use dataitem::DataItemArgWrapper;
 use tokio::io::{AsyncSeekExt, AsyncReadExt};
 
 use crate::general::{
@@ -159,7 +158,7 @@ impl DataGeneral {
             let data_size = data.size().await?;
             let splits = calculate_splits(data_size);
             
-            tracing::debug!("batch_transfer total size({}), splits: {:?}, to node {}", data_size, splits, target_node);
+            tracing::debug!("batch_transfer total size({}), splits: {:?}", data_size, splits);
 
             for (block_idx, split_range) in splits.iter().enumerate() {
                 let block_data = match data.as_ref() {
@@ -489,7 +488,7 @@ impl DataGeneral {
     pub async fn write_data(
         &self,
         unique_id: impl Into<Vec<u8>>,
-        datas: Vec<DataItemArgWrapper>,
+        datas: Vec<proto::DataItem>,
         context_openode_opetype_operole: Option<(
             NodeID,
             proto::DataOpeType,
@@ -499,15 +498,7 @@ impl DataGeneral {
         let unique_id = unique_id.into();
         let log_tag = format!("[write_data({})]", String::from_utf8_lossy(&unique_id));
         tracing::debug!("{} start write data", log_tag);
-        
-        let mut data_transfer_sizes=Vec::new();
-        data_transfer_sizes.reserve(datas.len());
-        for d in datas.iter_mut(){
-            data_transfer_sizes.push(d.transfer_size().await.map_err(|err|{
-                tracing::error!("{} transfer size error: {}", log_tag, err);
-                err
-            })?);
-        }
+
         // 获取数据调度计划
         let version_schedule_resp = self
             .rpc_call_data_version_schedule
@@ -518,7 +509,10 @@ impl DataGeneral {
                     unique_id: unique_id.clone(),
                     context: context_openode_opetype_operole.map(|(node, ope, role)| {
                         proto::DataScheduleContext {
-                            each_data_sz_bytes: data_transfer_sizes,
+                            each_data_sz_bytes: datas
+                                .iter()
+                                .map(|d| d.data_sz_bytes() as u32)
+                                .collect(),
                             ope_node: node as i64,
                             ope_type: ope as i32,
                             ope_role: Some(role),
@@ -537,7 +531,7 @@ impl DataGeneral {
         // 处理每个数据项
         let mut iter = WantIdxIter::new(&GetOrDelDataArgType::All, datas.len() as u8);
         while let Some(data_item_idx) = iter.next() {
-            let data_item: &DataItemArgWrapper = &datas[data_item_idx as usize];
+            let data_item = &datas[data_item_idx as usize];
             let split = &splits[data_item_idx as usize];
             let mut primary_tasks = Vec::new();
             
@@ -549,7 +543,10 @@ impl DataGeneral {
                     log_tag, split_idx + 1, split.splits.len(), split_info.node_id, split_info.data_offset, split_info.data_size);
                 let split_info = split_info.clone();
                 let unique_id_clone = unique_id.clone();
-                let data_item_primary = data_item.clone_split_range(split_info.data_offset..split_info.data_offset+split_info.data_size)
+                let data_item_primary = data_item.clone_split_range(
+                    split_info.data_offset as usize
+                        ..(split_info.data_offset + split_info.data_size) as usize
+                );
                 let view = self.view.clone();
                 let version_copy = version;
                 let task = tokio::spawn(async move {
@@ -612,9 +609,7 @@ impl DataGeneral {
             }
 
             let primary_results = futures::future::join_all(primary_tasks).await;
-            tracing::debug!("{} primary_results: {:?}", log_tag, primary_results);
             let cache_results = futures::future::join_all(cache_tasks).await;
-            tracing::debug!("{} cache_results: {:?}", log_tag, cache_results);
 
             if primary_results.iter().any(|res| res.is_err()) || cache_results.iter().any(|res| res.is_err()) {
                 let error_msg = format!("主节点或缓存节点数据写入失败");
@@ -753,7 +748,7 @@ impl DataGeneral {
         }
 
         // Step3: write data
-        tracing::debug!("start to write partial data");
+        tracing::debug!("start to write data");
         let lock = kv_store_engine.with_rwlock(&KeyTypeDataSetMeta(&req.unique_id).make_key());
         let guard = KeyLockGuard::Write(lock.write());
         let check_meta = kv_store_engine.get(
@@ -805,7 +800,7 @@ impl DataGeneral {
         }
         kv_store_engine.flush();
         drop(guard);
-        tracing::debug!("data partial is written");
+        tracing::debug!("data is written");
         responsor
             .send_resp(WriteOneDataResponse {
                 remote_version: req.version,
@@ -1027,7 +1022,6 @@ impl DataGeneral {
         responsor: RPCResponsor<proto::BatchDataRequest>,
         req: proto::BatchDataRequest,
     ) -> WSResult<()> {
-        tracing::debug!("rpc_handle_batch_data with batchid({:?})", req.request_id.clone().unwrap());
         let batch_receive_states = self.batch_receive_states.clone();
         // 预先克隆闭包外需要的字段
         let block_index = req.block_index;
@@ -1051,9 +1045,6 @@ impl DataGeneral {
                     }
                 };
 
-                // 再process之前订阅，避免通知先于订阅
-                let mut waiter = handle.get_all_tasks_waiter();
-
                 // 启动process_tasks
                 let _ = tokio::spawn(async move {
                     match group.process_tasks().await {
@@ -1070,15 +1061,11 @@ impl DataGeneral {
 
                 // response task
                 let _=tokio::spawn(async move {
-                    tracing::debug!("rpc_handle_batch_data response task started");
                     // 等待所有任务完成
-                    if let Err(e) = waiter.wait().await {
+                    if let Err(e) = state_clone.handle.wait_all_tasks().await {
                         tracing::error!("Failed to wait for tasks: {}", e);
-                        todo!("use responsor to send error response");
                         return;
                     }
-
-                    tracing::debug!("rpc_handle_batch_data response task wait all tasks done");
 
                     // 发送最终响应
                     if let Some(final_responsor) = state_clone.shared.get_final_responsor().await {
@@ -1105,8 +1092,6 @@ impl DataGeneral {
             })),
             Ok(state) => state,
         };
-
-        tracing::debug!("rpc_handle_batch_data ready with write_split_data_task_group");
 
         // 2. 提交分片数据
         let data_item = proto::DataItem {
