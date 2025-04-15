@@ -1,9 +1,9 @@
-use crate::general::m_data_general::DataGeneral;
-use crate::general::m_kv_store_engine::KvStoreEngine;
+
+
+use crate::general::m_data_general::{DataGeneral};
+use crate::general::m_kv_store_engine::{KvStoreEngine};
 use crate::general::network::m_p2p::{P2PModule, RPCHandler, RPCResponsor};
-use crate::general::network::proto::{
-    self, DataVersionScheduleRequest, DataVersionScheduleResponse,
-};
+use crate::general::network::proto::{self, DataVersionRequest, DataVersionResponse};
 use crate::result::{WSError, WSResult, WsDataError};
 use crate::sys::LogicalModulesRef;
 use crate::util::JoinHandleWrapper;
@@ -25,7 +25,7 @@ logical_module_view_impl!(DataFollowerView, data_general, DataGeneral);
 #[derive(LogicalModule)]
 pub struct DataFollower {
     view: DataFollowerView,
-    rpc_handler: RPCHandler<proto::DataVersionScheduleRequest>,
+    rpc_handler: RPCHandler<proto::DataVersionRequest>,
 }
 
 #[async_trait]
@@ -65,8 +65,8 @@ impl LogicalModule for DataFollower {
 impl DataFollower {
     async fn rpc_handler_dataversion(
         &self,
-        responsor: RPCResponsor<DataVersionScheduleRequest>,
-        req: DataVersionScheduleRequest,
+        responsor: RPCResponsor<DataVersionRequest>,
+        req: DataVersionRequest,
     ) -> WSResult<()> {
         let targetv = req.version;
         tracing::debug!(
@@ -84,7 +84,7 @@ impl DataFollower {
                 _ => 0,
             };
             responsor
-                .send_resp(DataVersionScheduleResponse {
+                .send_resp(DataVersionResponse {
                     version: cur_version,
                 })
                 .await;
@@ -93,7 +93,7 @@ impl DataFollower {
 
         tracing::debug!("follower updated version({})", targetv);
         responsor
-            .send_resp(DataVersionScheduleResponse { version: targetv })
+            .send_resp(DataVersionResponse { version: targetv })
             .await;
         Ok(())
     }
