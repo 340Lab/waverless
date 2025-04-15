@@ -254,9 +254,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        if let Err(e) = responser.send_resp(res).await {
-            tracing::error!("Failed to send run cmd response: {}", e);
-        }
+        responser.send_resp(res).await.todo_handle("This part of the code needs to be implemented.");      //返回结果未处理    曾俊
     }
 
     async fn remote_get_dir_content_handler(
@@ -300,7 +298,9 @@ impl OperatingSystem {
                             get_dir_content_resp::GetDirContentRespOk { files, dirs },
                         )),
                     }
+                    // 在这里使用 responser 将 dir_contents 发送回调用方
                 } else {
+                    // 发生读取目录错误，可以选择使用 responser 发送错误消息
                     GetDirContentResp {
                         dispatch: Some(get_dir_content_resp::Dispatch::Fail(
                             GetDirContentRespFail {
@@ -321,9 +321,7 @@ impl OperatingSystem {
         })
         .await
         .unwrap();
-        if let Err(e) = responser.send_resp(res).await {
-            tracing::error!("Failed to send get dir content response: {}", e);
-        }
+        responser.send_resp(res).await.todo_handle("This part of the code needs to be implemented.");     //返回结果未处理  曾俊
     }
 
     pub fn open_file(&self, fname: &str) -> WSResult<i32> {
