@@ -12,67 +12,12 @@
     使用细致的图表达并行或顺序结构，条件结构；以及数据流转
     一个阻塞执行的角色应该强化在块里，如子并行task，rpc caller，rpc handler，任务池
 
-- 修改canvas要求
-  - 每次修改都必须，更新项目下canvas，阅读最新内容
-  - 不可擅自删除内容，除非是目标修改内容，其他内容都得保留
-  - 要结合原本canvas内的关联内容修改
-  - 分离关键执行角色，如rpc caller，rpc handler，任务池，子并行task
-  - 将代码函数名，类型名都反映在关联逻辑的位置
-  - 函数具体逻辑要反映成流程图结构，而不是黏贴代码
-    - 例如函数里会spawn任务，就要分离spawn任务和当前函数的对象（概念），然后用图表现他们的关系
-    - 例如多个task直接会通过channel通信，就要展现数据流向，以及两边怎么处理数据的发送接收（阻塞or 非阻塞）
-    - 示例：
-      pub async fn batch_transfer(unique_id: Vec<u8>,version: u64,target_node: NodeID,data: Arc<DataSource>,view: DataGeneralView,) -> WSResult<()> {
-          let total_size = data.size().await?;
-          let total_blocks = (total_size + DEFAULT_BLOCK_SIZE - 1) / DEFAULT_BLOCK_SIZE;
-          let semaphore = Arc::new(Semaphore::new(32));
-          let mut handles = Vec::new();
-          // 发送所有数据块
-          for block_idx in 0..total_blocks {
-              // 获取信号量许可
-              let permit = semaphore.clone().acquire_owned().await.unwrap();
-              let offset = block_idx as usize * DEFAULT_BLOCK_SIZE;
-              let size = DEFAULT_BLOCK_SIZE.min(total_size - offset);
-              // 读取数据块
-              let block_data = data.read_chunk(offset, size).await?;
-              // 构造请求
-              let request = proto::BatchDataRequest {request_id: Some(proto::BatchRequestId {node_id: target_node as u32,sequence: block_idx as u32,}),block_type: data.block_type() as i32,block_index: block_idx as u32,data: block_data,operation: proto::DataOpeType::Write as i32,unique_id: unique_id.clone(),version,};
-              // 发送请求
-              let view = view.clone();
-              let handle = tokio::spawn(async move {
-                  let _permit = permit; // 持有permit直到任务完成
-                  let resp = view.data_general().rpc_call_batch_data.call(view.p2p(),target_node,request,Some(Duration::from_secs(30)),).await?;  
-                  if !resp.success {return Err(WsDataError::BatchTransferFailed {node: target_node,batch: block_idx as u32,reason: resp.error_message,}.into());}
-                  Ok(())
-              });
-              handles.push(handle);
-          }
-          // 等待所有请求完成
-          for handle in handles {   handle.await??;}
-          Ok(())
-      }
-      对象（表上关键类型名）
-      - 当前函数进程
-      - spawn的进程
-      - Semaphore
-      流程结构
-      - 条件和循环
-      - 多个task并行
-      数据流向
-      - 发送数据转移给子进程
-      - semaphore clone   转移给子进程
-      操作（需要表上关键函数名）
-      - 当前函数进程.预先准备
-      - 当前函数进程.阻塞申请semaphore
-      - 当前函数进程.spawn子进程
-      - 子进程.rpc_call
-      - 子进程释放semaphore
-
 - 更新canvas流程
-  - 更新项目下canvas 以进行编辑
-    使用 python3 scripts/sync_md_files.py from_s3fs,  将从s3fs目录获取最新编辑，将在项目目录下访问到 design.canvas
-  - 更新s3fs canvas以反馈review最新修改
-    使用 python3 scripts/sync_md_files.py to_s3fs,  将项目目录下的design.canvas 更新到s3fs目录
+  将 /mnt/s3fs/waverless/design.canvas 拷贝成待时间戳的tmp和tmp.bak
+  如 {项目根路径}/design.canvas.1703171246.tmp 
+     和 {项目根路径}/design.canvas.1703171246.tmp.bak
+  然后在 {项目根路径}/design.canvas.1703171246.tmp 中进行修改
+  然后覆盖原来 /mnt/s3fs/waverless/design.canvas  以及{项目根路径}/design.canvas
 
 - 提到“我更新了canvas”的情况，执行下python3 scripts/sync_md_files.py from_s3fs
   这样项目下的 {项目根路径}/design.canvas 才是最新的
@@ -85,9 +30,6 @@
 - error的结构是一个 WSError，包含子error结构形如 WsXXXErr，父结构实现Error derive，子结构只需要实现debug
   子结构尽量实现现有分类
 
-- 修改代码原则
-  现在review中迭代代码草稿
-  确认草稿后，在更新到当前项目中
 
 ## 1. 任务执行强制等待规则
 - 制定计划后必须等待用户确认：
