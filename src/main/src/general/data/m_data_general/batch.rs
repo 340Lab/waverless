@@ -118,7 +118,6 @@ impl BatchTransfer {
         Ok(index == self.total_blocks - 1)
     }
 
-    #[allow(dead_code)]
     pub async fn complete(mut self) -> WSResult<()> {
         // 定义错误转换函数
         let join_error = |e| WsDataError::BatchTransferError {
@@ -204,7 +203,7 @@ impl BatchManager {
             tx,
         ).await?;
 
-        let _ = self.transfers.insert(request_id.clone(), transfer);
+        self.transfers.insert(request_id.clone(), transfer);
         Ok(request_id)
     }
 
