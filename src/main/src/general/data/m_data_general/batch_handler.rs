@@ -1,10 +1,7 @@
 use crate::general::network::{
     proto::BatchDataRequest,
-    proto::BatchDataResponse,
     m_p2p::RPCResponsor,
 };
-use crate::general::data::m_data_general::dataitem::{WriteSplitDataTaskHandle, WriteSplitDataTaskGroup};
-use super::UniqueId;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing;
@@ -20,7 +17,6 @@ pub struct SharedWithBatchHandler {
 
 impl SharedWithBatchHandler {
     /// 创建新的共享状态
-    #[must_use]
     pub fn new() -> Self {
         Self {
             responsor: Arc::new(Mutex::new(None)),
@@ -36,12 +32,7 @@ impl SharedWithBatchHandler {
         let mut guard = self.responsor.lock().await;
         if let Some(old_responsor) = guard.take() {
             // 旧的responsor直接返回成功
-            if let Err(e) = old_responsor.send_resp(BatchDataResponse {
-                request_id: None,  // 这里需要正确的 request_id
-                version: 0,  // 这里需要正确的版本号
-                success: true,
-                error_message: String::new(),
-            }).await {
+            if let Err(e) = old_responsor.response(Ok(())).await {
                 tracing::error!("Failed to respond to old request: {}", e);
             }
         }
@@ -62,6 +53,10 @@ pub struct BatchReceiveState {
     pub handle: super::dataitem::WriteSplitDataTaskHandle,
     /// 共享状态,用于处理请求响应
     pub shared: SharedWithBatchHandler,
+    /// 任务组,持有以保持其生命周期
+    /// 当 BatchReceiveState 被 drop 时,任务组也会被 drop
+    /// 确保所有相关资源都被正确释放
+    pub task_group: super::dataitem::WriteSplitDataTaskGroup,
 }
 
 impl BatchReceiveState {
@@ -69,11 +64,13 @@ impl BatchReceiveState {
     /// 
     /// # 参数
     /// * `handle` - 写入任务句柄
-    /// * `shared` - 共享状态
-    pub fn new(handle: super::dataitem::WriteSplitDataTaskHandle, shared: SharedWithBatchHandler) -> Self {
+    /// * `task_group` - 任务组
+    pub fn new(handle: super::dataitem::WriteSplitDataTaskHandle, 
+               task_group: super::dataitem::WriteSplitDataTaskGroup) -> Self {
         Self {
             handle,
-            shared,
+            shared: SharedWithBatchHandler::new(),
+            task_group,
         }
     }
 }
