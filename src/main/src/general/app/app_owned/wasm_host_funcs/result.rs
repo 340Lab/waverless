@@ -1,4 +1,5 @@
 use super::{utils, HostFuncRegister};
+use crate::general::app::m_executor::FnExeCtxAsync;
 
 #[cfg(target_os = "macos")]
 use wasmer::{imports, Function, FunctionType, Imports};
