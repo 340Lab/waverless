@@ -65,9 +65,9 @@ pub fn start_tracing() {
                 return false;
             }
             if *v.level() == Level::DEBUG {
-                // if mp.contains("wasm_serverless::worker::m_kv_user_client") {
-                //     return false;
-                // }
+                if mp.contains("wasm_serverless::worker::m_kv_user_client") {
+                    return false;
+                }
                 // if mp.contains("wasm_serverless::general::m_data_general") {
                 //     return false;
                 // }
