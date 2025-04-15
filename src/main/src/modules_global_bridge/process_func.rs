@@ -1,14 +1,15 @@
-use crate::general::app::app_shared::process_rpc::ProcessRpc;
-use crate::general::app::instance::m_instance_manager::InstanceManager;
-use crate::general::app::AppMetaManager;
+use crate::{
+    general::app::AppMetaManager,
+    worker::func::{m_instance_manager::InstanceManager, shared::process_rpc::ProcessRpc},
+};
 
 pub trait ModulesGlobalBrigeInstanceManager: Sized + 'static {
-    unsafe fn global_m_instance_manager() -> &'static InstanceManager;
+    unsafe fn global_m_instance_manager() -> Option<&'static InstanceManager>;
 }
 
 impl ModulesGlobalBrigeInstanceManager for ProcessRpc {
-    unsafe fn global_m_instance_manager() -> &'static InstanceManager {
-        super::modules().instance_manager()
+    unsafe fn global_m_instance_manager() -> Option<&'static InstanceManager> {
+        super::modules().instance_manager.as_ref()
     }
 }
 

@@ -57,7 +57,6 @@ impl<'a> Iterator for WantIdxIter<'a> {
             WantIdxIter::PartialMany { iter, .. } => iter.next().map(|v| *v as DataItemIdx),
             WantIdxIter::PartialOne { idx, itercnt } => {
                 if *itercnt == 0 {
-                    *itercnt += 1;
                     Some(*idx)
                 } else {
                     None
@@ -185,12 +184,8 @@ impl WriteSplitDataTaskGroup {
                         let split_range = splits[splitidx as usize].clone();
 
                         let task = tokio::task::spawn_blocking(move || {
-                            let Some(proto::FileData {
-                                file_content: split_data_bytes,
-                                ..
-                            }) = split_data_item.as_file_data()
-                            else {
-                                return Err(WsDataError::SplitDataItemNotFileData {
+                            let Some(split_data_bytes) = split_data_item.as_raw_bytes() else {
+                                return Err(WsDataError::SplitDataItemNotRawBytes {
                                     unique_id: unique_id.clone(),
                                     splitidx,
                                 }

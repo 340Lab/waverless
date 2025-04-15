@@ -2,15 +2,16 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
-use crate::general::app::instance::m_instance_manager::EachAppCache;
 use crate::{
-    general::app::app_shared::java,
-    general::app::app_shared::process::ProcessInstance,
-    general::app::app_shared::SharedInstance,
-    general::app::instance::m_instance_manager::InstanceManager,
     general::app::AppType,
     result::{WSResult, WsFuncError},
+    worker::func::{
+        m_instance_manager::{EachAppCache, InstanceManager},
+        shared::java,
+    },
 };
+
+use super::{process::ProcessInstance, SharedInstance};
 
 impl InstanceManager {
     pub async fn update_checkpoint(&self, app_name: &str, restart: bool) -> WSResult<()> {
@@ -48,18 +49,14 @@ impl InstanceManager {
             tracing::debug!("taking snapshot for app: {}", app_name);
             match proc_ins.app_type {
                 AppType::Jar => java::take_snapshot(app_name, self.view.os()).await,
-                AppType::Wasm | AppType::Native => {
-                    panic!("wasm/native can't take snapshot")
-                }
+                AppType::Wasm => unreachable!(),
             }
         }
         // recover by criu
-        // tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
         tracing::debug!("restart app after snapshot: {}", app_name);
-        let res = java::JavaColdStart::mksure_checkpoint(self.view.os().app_path(app_name))
-            .await
-            .cold_start(app_name, self.view.os());
+        let res = java::cold_start(app_name, self.view.os());
         let p = match res {
             Err(e) => {
                 tracing::warn!("cold start failed: {:?}", e);
@@ -116,9 +113,7 @@ impl InstanceManager {
                         // let app = app.to_owned();
                         // let instance = instance.clone();
 
-                        let p = java::JavaColdStart::direct_start()
-                            .cold_start(&app, self.view.os())
-                            .unwrap();
+                        let p = java::cold_start(&app, self.view.os()).unwrap();
                         instance.bind_process(p);
                     }
 
@@ -127,8 +122,7 @@ impl InstanceManager {
 
                     EachAppCache::Shared(instance.into())
                 }
-                AppType::Wasm => panic!("wasm only support owned instance"),
-                AppType::Native => panic!("native only support owned instance"),
+                AppType::Wasm => unreachable!("wasm only support owned instance"),
             }
         });
 

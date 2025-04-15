@@ -1,6 +1,3 @@
-use crate::general::app::app_owned::wasm_host_funcs;
-use crate::general::app::instance::m_instance_manager::InstanceManager;
-use crate::general::app::m_executor::Executor;
 use crate::{
     config::NodesConfig,
     general::{
@@ -12,12 +9,14 @@ use crate::{
         m_os::OperatingSystem,
         network::{http_handler::HttpHandlerDispatch, m_p2p::P2PModule},
     },
-    master::{
-        app::m_app_master::MasterAppMgmt, data::m_data_master::DataMaster, m_master::Master,
-        m_metric_observor::MetricObservor,
-    },
+    master::{m_data_master::DataMaster, m_master::Master, m_metric_observor::MetricObservor},
     modules_global_bridge, util,
-    worker::{m_kv_user_client::KvUserClient, m_worker::WorkerCore},
+    worker::{
+        func::{m_instance_manager::InstanceManager, wasm_host_funcs},
+        m_executor::Executor,
+        m_kv_user_client::KvUserClient,
+        m_worker::WorkerCore,
+    },
 };
 use crate::{result::WSResult, util::JoinHandleWrapper};
 use async_trait::async_trait;
@@ -331,11 +330,7 @@ start_modules!(
         http_handler,
         HttpHandlerDispatch,
         dist_lock,
-        DistLock,
-        instance_manager,
-        InstanceManager,
-        executor,
-        Executor
+        DistLock
     ],
     [
         metric_observor,
@@ -347,9 +342,20 @@ start_modules!(
         // master_kv,
         // MasterKv,
         data_master,
-        DataMaster,
-        app_master,
-        MasterAppMgmt
+        DataMaster
     ],
-    [worker, WorkerCore, kv_user_client, KvUserClient]
+    [
+        worker,
+        WorkerCore,
+        kv_user_client,
+        KvUserClient,
+        instance_manager,
+        InstanceManager,
+        // worker_http,
+        // WorkerHttpHandler,
+        // kv_storage,
+        // KvStorage,
+        executor,
+        Executor
+    ]
 );

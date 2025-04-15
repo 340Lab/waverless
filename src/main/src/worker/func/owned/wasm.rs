@@ -1,9 +1,9 @@
-use crate::general::app::app_owned::wasm_host_funcs;
-use crate::general::app::instance::InstanceTrait;
-use crate::general::app::instance::OwnedInstance;
-use crate::general::app::m_executor::{EventCtx, FnExeCtx};
-use crate::result::{WSResult, WsFuncError};
+use crate::{
+    result::{WSResult, WsFuncError},
+    worker::func::{wasm_host_funcs, EventCtx, FnExeCtx, InstanceTrait, OwnedInstance},
+};
 use async_trait::async_trait;
+
 use std::{mem::ManuallyDrop, path::Path};
 use wasmedge_sdk::{
     config::{CommonConfigOptions, ConfigBuilder, HostRegistrationConfigOptions},

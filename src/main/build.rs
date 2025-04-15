@@ -8,7 +8,7 @@ fn main() -> Result<()> {
             "src/general/network/proto_src/metric.proto",
             "src/general/network/proto_src/remote_sys.proto",
             "src/general/network/proto_src/data.proto",
-            "src/general/app/app_shared/process_rpc_proto.proto",
+            "src/worker/func/shared/process_rpc_proto.proto",
         ],
         &["src/"],
     )?;

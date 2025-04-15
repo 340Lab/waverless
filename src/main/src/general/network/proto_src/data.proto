@@ -78,9 +78,9 @@ message DataVersionScheduleResponse {
   // required
   // split of each data part
   // DataCachePlan cache_plan = 2;
+
   repeated uint32 cache_mode=2;
   repeated DataSplit split = 3;
-  repeated uint32 cache_nodes=4;
 }
 
 message DataMetaUpdateRequest{
@@ -140,15 +140,10 @@ message OneDataMeta{
   string type=2;
 }
 
-message DataItemWithIdx{
-  uint32 idx=1;
-  DataItem data=2;
-}
-
 message WriteOneDataRequest {
   bytes unique_id = 1;
   uint64 version = 2;
-  repeated DataItemWithIdx data = 3;
+  repeated DataItem data = 3;
 }
 
 message WriteOneDataResponse {
