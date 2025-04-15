@@ -315,5 +315,132 @@ impl DataGeneral {
         }
     }
 
+    /// 处理批量数据请求
     
+    pub(super) async fn rpc_handle_batch_data(
+        &self,
+        responsor: RPCResponsor<proto::BatchDataRequest>,
+        req: proto::BatchDataRequest,
+    ) -> WSResult<()> {
+        // Step 1: 获取数据元信息
+        let meta = match self.view.get_metadata(&req.unique_id, false).await {
+            Ok(meta) => meta,
+            Err(err) => {
+                tracing::warn!("get data meta failed: {}", err);
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: false,
+                        error_message: format!("get data meta failed: {}", err),
+                        version: 0,
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Step 2: 复用 get_data 逻辑获取数据
+        let get_arg = GetOrDelDataArg {
+            meta: Some(meta.clone()),
+            unique_id: req.unique_id.clone(),
+            ty: GetOrDelDataArgType::All,
+        };
+        
+        let data_result = match self.get_or_del_data(get_arg).await {
+            Ok((_, data)) => data,
+            Err(err) => {
+                tracing::warn!("get data failed: {}", err);
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: false,
+                        error_message: format!("get data failed: {}", err),
+                        version: meta.version,
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Step 3: 创建数据分片并设置写入任务
+        let mut splits = Vec::new();
+        let mut offset = 0;
+        
+        for item in data_result.values() {
+            let size = item.size();
+            splits.push(offset..offset + size);
+            offset += size;
+        }
+
+        // 创建channel用于传输数据
+        let (tx, rx) = mpsc::channel(splits.len());
+        
+        // 发送数据到channel
+        for (idx, item) in data_result.into_iter() {
+            if let Err(err) = tx.send(Ok((idx as usize, item))).await {
+                tracing::error!("send data to channel failed: {}", err);
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: false,
+                        error_message: format!("internal error: {}", err),
+                        version: meta.version,
+                    })
+                    .await?;
+                return Ok(());
+            }
+        }
+        drop(tx); // 关闭发送端
+
+        // Step 4: 根据请求类型选择写入方式并执行
+        let task_group = match WriteSplitDataTaskGroup::new(
+            req.unique_id,
+            splits,
+            rx,
+            proto::BatchDataBlockType::from_i32(req.block_type).unwrap_or(proto::BatchDataBlockType::Memory),
+        )
+        .await
+        {
+            Ok(group) => group,
+            Err(err) => {
+                tracing::warn!("create write task group failed: {}", err);
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: false,
+                        error_message: format!("create write task group failed: {}", err),
+                        version: meta.version,
+                    })
+                    .await?;
+                return Ok(());
+            }
+        };
+
+        // Step 5: 等待所有写入任务完成
+        match task_group.join().await {
+            Ok(_) => {
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: true,
+                        error_message: String::new(),
+                        version: meta.version,
+                    })
+                    .await?;
+                Ok(())
+            }
+            Err(err) => {
+                tracing::warn!("write data failed: {}", err);
+                responsor
+                    .send_resp(proto::BatchDataResponse {
+                        request_id: req.request_id,
+                        success: false,
+                        error_message: format!("write data failed: {}", err),
+                        version: meta.version,
+                    })
+                    .await?;
+                Ok(())
+            }
+        }
+    }
 }

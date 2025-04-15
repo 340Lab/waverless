@@ -9,7 +9,6 @@ use crate::result::WsIoErr;
 use crate::result::WsRuntimeErr;
 use base64::Engine;
 use futures::future::join_all;
-use futures::stream::{FuturesUnordered, StreamExt};
 use std::collections::btree_set;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -137,300 +136,287 @@ pub fn new_shared_mem(splits: &Vec<Range<usize>>) -> (SharedMemHolder, Vec<Share
 
 pub enum WriteSplitDataTaskGroup {
     ToFile {
-        unique_id: UniqueId,
         file_path: PathBuf,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
-        expected_size: usize,
-        current_size: usize,
+        tasks: Vec<tokio::task::JoinHandle<WSResult<()>>>,
     },
     ToMem {
-        unique_id: UniqueId,
         shared_mem: SharedMemHolder,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-        rx: mpsc::Receiver<tokio::task::JoinHandle<()>>,
-        expected_size: usize,
-        current_size: usize,
+        tasks: Vec<tokio::task::JoinHandle<WSResult<()>>>,
     },
 }
 
 impl WriteSplitDataTaskGroup {
     pub async fn new(
-        unique_id: UniqueId,
+        unique_id: Vec<u8>,
         splits: Vec<Range<usize>>,
+        mut rx: tokio::sync::mpsc::Receiver<WSResult<(DataSplitIdx, proto::DataItem)>>,
         block_type: proto::BatchDataBlockType,
-        version: u64,
-    ) -> (Self, WriteSplitDataTaskHandle) {
-        let expected_size = splits.iter().map(|range| range.len()).sum();
-        let (tx, rx) = mpsc::channel(32);
+    ) -> WSResult<Self> {
+        tracing::debug!(
+            "new merge task group for uid({:?}), block_type({:?})",
+            unique_id,
+            block_type
+        );
+        if block_type == proto::BatchDataBlockType::File {
+            tracing::debug!("block_type is file");
+            // base64
+            // let file_path = PathBuf::from(format!("{:?}.data", unique_id));
+            let file_path = PathBuf::from(format!(
+                "{}.data",
+                base64::engine::general_purpose::STANDARD.encode(&unique_id)
+            ));
 
-        match block_type {
-            proto::BatchDataBlockType::File => {
-                let file_path = PathBuf::from(format!("{}.data", 
-                    base64::engine::general_purpose::STANDARD.encode(&unique_id)));
-                
-                let handle = WriteSplitDataTaskHandle {
-                    tx,
-                    write_type: WriteSplitDataType::File {
-                        path: file_path.clone(),
-                    },
-                    version,
-                };
-                
-                let group = Self::ToFile {
-                    unique_id,
-                    file_path,
-                    tasks: Vec::new(),
-                    rx,
-                    expected_size,
-                    current_size: 0,
-                };
-                
-                (group, handle)
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&file_path)?;
+            let file = std::sync::Arc::new(file);
+
+            let mut tasks = vec![];
+            for _ in 0..splits.len() {
+                let parital_data = rx.recv().await.unwrap();
+                match parital_data {
+                    Err(e) => {
+                        return Err(e);
+                    }
+                    Ok((splitidx, split_data_item)) => {
+                        let file = file.clone();
+                        let unique_id = unique_id.clone();
+                        let split_range = splits[splitidx as usize].clone();
+
+                        let task = tokio::task::spawn_blocking(move || {
+                            let Some(proto::FileData {
+                                file_content: split_data_bytes,
+                                ..
+                            }) = split_data_item.as_file_data()
+                            else {
+                                return Err(WsDataError::SplitDataItemNotFileData {
+                                    unique_id: unique_id.clone(),
+                                    splitidx,
+                                }
+                                .into());
+                            };
+
+                            if split_range.len() != split_data_bytes.len() {
+                                return Err(WsDataError::SplitLenMismatch {
+                                    unique_id,
+                                    splitidx,
+                                    expect: split_range.len(),
+                                    actual: split_data_bytes.len(),
+                                }
+                                .into());
+                            }
+                            // SAFETY: Each task writes to a different non-overlapping portion of the file
+                            use std::os::unix::fs::FileExt;
+                            if let Err(e) =
+                                file.write_at(split_data_bytes, split_range.start as u64)
+                            {
+                                return Err(WSError::WsIoErr(WsIoErr::Io(e)));
+                            }
+                            Ok(())
+                        });
+                        tasks.push(task);
+                    }
+                }
             }
-            _ => {
-                let shared_mem = new_shared_mem(&splits).unwrap_or_default();
-                
-                let handle = WriteSplitDataTaskHandle {
-                    tx,
-                    write_type: WriteSplitDataType::Mem {
-                        shared_mem: shared_mem.clone(),
-                    },
-                    version,
-                };
-                
-                let group = Self::ToMem {
-                    unique_id,
-                    shared_mem,
-                    tasks: Vec::new(),
-                    rx,
-                    expected_size,
-                    current_size: 0,
-                };
-                
-                (group, handle)
+            Ok(Self::ToFile { file_path, tasks })
+        } else if block_type == proto::BatchDataBlockType::Memory {
+            tracing::debug!("block_type is memory");
+            let (shared_mem, owned_accesses) = new_shared_mem(&splits);
+            let mut owned_accesses = owned_accesses
+                .into_iter()
+                .map(|access| Some(access))
+                .collect::<Vec<_>>();
+            let mut tasks = vec![];
+            for _ in 0..splits.len() {
+                let parital_data = rx.recv().await.unwrap();
+                match parital_data {
+                    Err(e) => {
+                        return Err(e);
+                    }
+                    Ok((splitidx, split_data_item)) => {
+                        let owned_access = owned_accesses[splitidx].take().unwrap();
+                        let unique_id = unique_id.clone();
+                        let task = tokio::spawn(async move {
+                            // write to shared memory
+                            let access = unsafe { owned_access.as_bytes_mut() };
+                            let Some(split_data_item) = split_data_item.as_raw_bytes() else {
+                                return Err(WsDataError::SplitDataItemNotRawBytes {
+                                    unique_id: unique_id.clone(),
+                                    splitidx,
+                                }
+                                .into());
+                            };
+                            if access.len() != split_data_item.len() {
+                                return Err(WsDataError::SplitLenMismatch {
+                                    unique_id: unique_id.clone(),
+                                    splitidx,
+                                    expect: access.len(),
+                                    actual: split_data_item.len(),
+                                }
+                                .into());
+                            }
+                            access.copy_from_slice(split_data_item);
+                            Ok(())
+                        });
+                        tasks.push(task);
+                    }
+                }
             }
+            Ok(Self::ToMem { shared_mem, tasks })
+        } else {
+            panic!("block_type should be file or memory");
         }
     }
 
-    async fn process_tasks(&mut self) -> WSResult<proto::DataItem> {
-        let mut pending_tasks = FuturesUnordered::new();
-        
+    pub async fn join(self) -> WSResult<proto::DataItem> {
         match self {
-            Self::ToFile { tasks, .. } |
-            Self::ToMem { tasks, .. } => {
-                for task in tasks.drain(..) {
-                    pending_tasks.push(task);
-                }
-            }
-        }
-
-        loop {
-            // 1. 检查完成状态
-            match self.try_complete()? {
-                Some(item) => return Ok(item),
-                None => {}  // 继续等待
-            }
-
-            // 2. 等待新任务或已有任务完成
-            tokio::select! {
-                Some(new_task) = match self {
-                    Self::ToFile { rx, .. } |
-                    Self::ToMem { rx, .. } => rx.recv()
-                } => {
-                    pending_tasks.push(new_task);
-                }
-                Some(completed_result) = pending_tasks.next() => {
-                    if let Err(e) = completed_result {
-                        tracing::error!("Task failed: {}", e);
-                        return Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-                            request_id: match self {
-                                Self::ToFile { unique_id, .. } |
-                                Self::ToMem { unique_id, .. } => unique_id.clone()
-                            },
-                            reason: format!("Task failed: {}", e)
+            WriteSplitDataTaskGroup::ToFile { file_path, tasks } => {
+                let taskress = join_all(tasks).await;
+                for res in taskress {
+                    if res.is_err() {
+                        return Err(WSError::from(WsRuntimeErr::TokioJoin {
+                            err: res.unwrap_err(),
+                            context: "write split data to file".to_owned(),
                         }));
                     }
-                    match self {
-                        Self::ToFile { current_size, .. } |
-                        Self::ToMem { current_size, .. } => {
-                            *current_size += DEFAULT_BLOCK_SIZE;  // 每个任务写入一个块
-                        }
+                    if res.as_ref().unwrap().is_err() {
+                        return Err(res.unwrap().unwrap_err());
                     }
                 }
-                None = match self {
-                    Self::ToFile { rx, .. } |
-                    Self::ToMem { rx, .. } => rx.recv()
-                } => {
-                    while let Some(completed_result) = pending_tasks.next().await {
-                        if let Err(e) = completed_result {
-                            tracing::error!("Task failed during cleanup: {}", e);
-                            return Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-                                request_id: match self {
-                                    Self::ToFile { unique_id, .. } |
-                                    Self::ToMem { unique_id, .. } => unique_id.clone()
-                                },
-                                reason: format!("Task failed during cleanup: {}", e)
-                            }));
-                        }
-                        match self {
-                            Self::ToFile { current_size, .. } |
-                            Self::ToMem { current_size, .. } => {
-                                *current_size += DEFAULT_BLOCK_SIZE;
-                            }
-                        }
+                Ok(proto::DataItem::new_file_data(file_path, false))
+            }
+            WriteSplitDataTaskGroup::ToMem {
+                shared_mem: shared_mems,
+                tasks,
+            } => {
+                let taskress = join_all(tasks).await;
+                for res in taskress {
+                    if res.is_err() {
+                        return Err(WSError::from(WsRuntimeErr::TokioJoin {
+                            err: res.unwrap_err(),
+                            context: "write split data to file".to_owned(),
+                        }));
                     }
-                    break;
+                    if res.as_ref().unwrap().is_err() {
+                        return Err(res.unwrap().unwrap_err());
+                    }
                 }
-            }
-        }
-
-        Err(WSError::WsDataError(WsDataError::BatchTransferFailed {
-            request_id: match self {
-                Self::ToFile { unique_id, .. } |
-                Self::ToMem { unique_id, .. } => unique_id.clone()
-            },
-            reason: "Channel closed".to_string()
-        }))
-    }
-
-    /// 检查写入完成状态
-    /// 
-    /// 返回:
-    /// - Ok(Some(item)) - 写入完成,返回数据项
-    /// - Ok(None) - 写入未完成
-    /// - Err(e) - 写入出错
-    fn try_complete(&self) -> WSResult<Option<proto::DataItem>> {
-        match self {
-            Self::ToFile { current_size, expected_size, file_path, unique_id, .. } => {
-                if *current_size > *expected_size {
-                    Err(WSError::WsDataError(WsDataError::BatchTransferError {
-                        request_id: unique_id.clone(),
-                        msg: format!("Written size {} exceeds expected size {}", current_size, expected_size)
-                    }))
-                } else if *current_size == *expected_size {
-                    Ok(Some(proto::DataItem::new_file_data(file_path.clone())))
-                } else {
-                    Ok(None)
-                }
-            }
-            Self::ToMem { current_size, expected_size, shared_mem, unique_id, .. } => {
-                if *current_size > *expected_size {
-                    Err(WSError::WsDataError(WsDataError::BatchTransferError {
-                        request_id: unique_id.clone(),
-                        msg: format!("Written size {} exceeds expected size {}", current_size, expected_size)
-                    }))
-                } else if *current_size == *expected_size {
-                    Ok(Some(proto::DataItem::new_mem_data(shared_mem.clone())))
-                } else {
-                    Ok(None)
-                }
+                // convert to dataitem
+                Ok(proto::DataItem::new_raw_bytes(
+                    shared_mems
+                        .try_take_data()
+                        .expect("shared_mems should be take when all partial task stoped"),
+                ))
             }
         }
     }
 }
 
-/// 写入分片任务的句柄
-/// 用于提交新的分片任务和等待任务完成
-pub struct WriteSplitDataTaskHandle {
-    /// 发送任务的通道
-    tx: mpsc::Sender<tokio::task::JoinHandle<()>>,
-    /// 写入类型(文件或内存)
-    write_type: WriteSplitDataType,
-    /// 数据版本号
-    /// 用于防止数据覆盖和保证数据一致性:
-    /// 1. 防止旧版本数据覆盖新版本数据
-    /// 2. 客户端可以通过比较版本号确认数据是否最新
-    version: u64,
-}
+// pub async fn read_splitdata_from_nodes_to_file<'a>(
+//     ty: &GetOrDelDataArgType,
+//     unique_id: &[u8],
+//     view: &DataGeneralView,
+//     meta: &DataSetMetaV2,
+//     each_node_data: HashMap<NodeID, proto::GetOneDataRequest>,
+// ) ->ReadSplitDataTask{
+//     // prepare file with meta size
+//     let file_path = format!("{}.data", unique_id);
+//     let file = File::create(file_path)?;
 
-impl WriteSplitDataTaskHandle {
-    /// 获取当前数据版本号
-    pub fn version(&self) -> u64 {
-        self.version
-    }
+//     // parallel read and write to position of file with pwrite
+//     let mut tasks = vec![];
+//     // get idxs, one idx one file
 
-    /// 提交新的分片任务
-    /// 
-    /// # 参数
-    /// * `idx` - 分片索引,表示数据在整体中的偏移位置
-    /// * `data` - 分片数据
-    /// 
-    /// # 返回
-    /// * `Ok(())` - 任务提交成功
-    /// * `Err(e)` - 任务提交失败,可能是通道已关闭
-    pub async fn submit_split(&self, idx: DataSplitIdx, data: proto::DataItem) -> WSResult<()> {
-        let task = match &self.write_type {
-            WriteSplitDataType::File { path } => {
-                let path = path.clone();
-                let offset = idx;
-                let data = data.as_bytes().to_vec();
-                // 启动异步任务写入文件
-                // 使用 spawn 是因为文件 IO 可能比较慢,不应该阻塞当前任务
-                tokio::spawn(async move {
-                    if let Err(e) = tokio::fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .open(&path)
-                        .await
-                        .and_then(|mut file| async move {
-                            use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-                            file.seek(std::io::SeekFrom::Start(offset as u64)).await?;
-                            file.write_all(&data).await
-                        })
-                        .await
-                    {
-                        tracing::error!("Failed to write file data at offset {}: {}", offset, e);
-                    }
-                })
-            }
-            WriteSplitDataType::Mem { shared_mem } => {
-                let mem = shared_mem.clone();
-                let offset = idx;
-                let data = data.as_bytes().to_vec();
-                // 启动异步任务写入内存
-                // 使用 spawn 是因为需要保证所有写入操作都在同一个线程上执行
-                // 避免多线程并发写入同一块内存导致的数据竞争
-                tokio::spawn(async move {
-                    unsafe {
-                        let slice = std::slice::from_raw_parts_mut(
-                            mem.data.as_ptr() as *mut u8,
-                            mem.data.len()
-                        );
-                        slice[offset..offset + data.len()].copy_from_slice(&data);
-                    }
-                })
-            }
-        };
+//     for (node_id, req) in each_node_data {
+//         let view = view.clone();
+//         let task = tokio::spawn(async move {
+//             let res = view
+//                 .data_general()
+//                 .rpc_call_get_data
+//                 .call(view.p2p(), node_id, req, Some(Duration::from_secs(30)))
+//                 .await;
+//             match res {
+//                 Err(err) => {
+//                     tracing::warn!("get/delete data failed {}", err);
+//                     vec![]
+//                 }
+//                 Ok(res) => {
+//                     res.
+//                     // get offset and size by meta with got
 
-        self.tx.send(task).await.map_err(|e| {
-            tracing::error!("Failed to submit task: channel closed, idx: {:?}", idx);
-            WSError::WsDataError(WsDataError::BatchTransferFailed {
-                request_id: idx.into(),
-                reason: "Failed to submit task: channel closed".to_string()
-            })
-        })
-    }
+//                     vec![]
+//                 },
+//             }
+//         });
+//         tasks.push(task);
+//     }
+//     Ok(HashMap::new())
+// }
 
-    /// 等待所有已提交的写入任务完成
-    /// 关闭发送端,不再接收新任务
-    pub async fn wait_all_tasks(self) -> WSResult<()> {
-        drop(self.tx);
-        Ok(())
-    }
-}
+// pub async fn read_splitdata_from_nodes_to_mem<'a>(
+//     ty: &GetOrDelDataArgType,
+//     unique_id: &[u8],
+//     view: &DataGeneralView,
+//     meta: &DataSetMetaV2,
+//     each_node_data: HashMap<NodeID, proto::GetOneDataRequest>,
+// ) -> ReadSplitDataTask {
+//     // read to mem
+//     let mut tasks = vec![];
+//     for (node_id, req) in each_node_data {
+//         let view = view.clone();
+//         let task = tokio::spawn(async move {
+//             let req_idxs = req.idxs.clone();
+//             tracing::debug!("rpc_call_get_data start, remote({})", node_id);
+//             let res = view
+//                 .data_general()
+//                 .rpc_call_get_data
+//                 .call(view.p2p(), node_id, req, Some(Duration::from_secs(30)))
+//                 .await;
+//             tracing::debug!("rpc_call_get_data returned, remote({})", node_id);
+//             let res: WSResult<Vec<(u32, proto::DataItem)>> = res.map(|response| {
+//                 if !response.success {
+//                     tracing::warn!("get/delete data failed {}", response.message);
+//                     vec![]
+//                 } else {
+//                     req_idxs.into_iter().zip(response.data).collect()
+//                 }
+//             });
+//             (node_id, res)
+//         });
+//         tasks.push(task);
+//     }
 
-/// 写入类型
-/// 支持写入文件或内存两种模式
-pub enum WriteSplitDataType {
-    /// 文件写入模式
-    File {
-        /// 目标文件路径
-        path: PathBuf,
-    },
-    /// 内存写入模式
-    Mem {
-        /// 共享内存区域
-        shared_mem: SharedMemHolder,
-    },
-}
+//     let mut node_partialdatas: HashMap<(NodeID, DataItemIdx), proto::DataItem> = HashMap::new();
+//     for tasks in tasks {
+//         let (node_id, partdata) = tasks.await.map_err(|err| {
+//             WSError::from(WsRuntimeErr::TokioJoin {
+//                 err,
+//                 context: "get_or_del_data - get_or_del ing remote data".to_owned(),
+//             })
+//         })?;
+
+//         match partdata {
+//             Err(err) => {
+//                 return Err(err);
+//             }
+//             Ok(partdata) => {
+//                 for (idx, data_item) in partdata {
+//                     let _ = node_partialdatas.insert((node_id, idx as u8), data_item);
+//                 }
+//             }
+//         }
+//     }
+
+//     let mut idx_2_data_item: HashMap<DataItemIdx, proto::DataItem> = HashMap::new();
+//     for idx in WantIdxIter::new(&ty) {
+//         let data_split = &meta.datas_splits[idx as usize];
+//         let data_item = data_split.recorver_data(unique_id, idx, &mut node_partialdatas)?;
+
+//         idx_2_data_item
+//             .insert(idx, proto::DataItem::new_raw_bytes(data_item))
+//             .expect("dataitem should be unique with idx");
+//     }
+
+//     Ok(idx_2_data_item)
+// }
