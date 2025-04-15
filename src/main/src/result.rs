@@ -31,9 +31,6 @@ pub enum WsNetworkLogicErr {
     DecodeError(DecodeError),
     MsgIdNotDispatchable(u32),
     InvaidNodeID(NodeID),
-    TaskJoinError {
-        err: tokio::task::JoinError
-    },
 }
 
 #[derive(Debug)]
@@ -127,7 +124,7 @@ pub enum WsPermissionErr {
 
 #[derive(Debug)]
 pub enum WsFuncError {
-    WasmError(Box<wasmedge_sdk::error::WasmEdgeError>),
+    WasmError(wasmedge_sdk::error::WasmEdgeError),
     AppNotFound {
         app: String,
     },
@@ -173,7 +170,6 @@ pub enum WsFuncError {
     InstanceJavaPidNotFound(String),
     InstanceProcessStartFailed(std::io::Error),
     InsranceVerifyFailed(String),
-    UnsupportedAppType,
 }
 
 #[derive(Debug)]
@@ -255,11 +251,6 @@ pub enum WsDataError {
         len: u8,
     },
     ItemIdxEmpty,
-    BatchTransferFailed {
-        node: NodeID,
-        batch: u32,
-        reason: String,
-    },
 }
 
 #[derive(Error, Debug)]
@@ -348,7 +339,7 @@ impl From<WsFuncError> for WSError {
 
 impl From<WasmEdgeError> for WSError {
     fn from(e: WasmEdgeError) -> Self {
-        WSError::WsFuncError(WsFuncError::WasmError(Box::new(e)))
+        WSError::WsFuncError(WsFuncError::WasmError(e))
     }
 }
 

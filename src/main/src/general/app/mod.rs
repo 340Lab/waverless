@@ -1,6 +1,7 @@
 pub mod app_native;
 pub mod app_owned;
 pub mod app_shared;
+pub mod fn_event;
 mod http;
 pub mod instance;
 pub mod m_executor;
@@ -10,7 +11,6 @@ use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataAr
 use crate::general::app::app_native::native_apps;
 use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::m_executor::Executor;
-use crate::general::app::m_executor::FnExeCtxAsyncAllowedType;
 use crate::general::app::v_os::AppMetaVisitOs;
 use crate::general::network::proto_ext::ProtoExtDataItem;
 use crate::util::VecExt;
@@ -35,14 +35,13 @@ use crate::{
     logical_module_view_impl,
     master::m_master::Master,
     result::{ErrCvt, WSResult, WsFuncError},
-    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
+    sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef},
     util::{self, JoinHandleWrapper},
 };
 use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
-use m_executor::FnExeCtxSyncAllowedType;
-use serde::{de::Error, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::{
     borrow::Borrow,
@@ -133,11 +132,9 @@ pub enum FnCallMeta {
 
 #[derive(Debug)]
 pub struct FnMetaYaml {
-    /// "sync" or "async"
-    pub sync: Option<String>,
+    /// key to operations
     pub calls: Vec<FnCallMeta>,
     pub kvs: Option<BTreeMap<String, Vec<serde_yaml::Value>>>,
-    pub affinity: Option<AffinityYaml>,
 }
 
 impl<'de> Deserialize<'de> for FnMetaYaml {
@@ -148,38 +145,39 @@ impl<'de> Deserialize<'de> for FnMetaYaml {
         let mut map = serde_yaml::Value::deserialize(deserializer)?;
         let map = map
             .as_mapping_mut()
-            .ok_or_else(|| D::Error::custom("not a map"))?;
-
+            .ok_or_else(|| serde::de::Error::custom("not a map"))?;
+        // let calls = map.remove("calls").ok_or_else(|| serde::de::Error::missing_field("calls"))?;
         let mut calls = vec![];
-
-        // Helper block for parsing HTTP call configuration from YAML
-        // This block encapsulates the logic for extracting and validating HTTP call parameters
-        let parse_http_call = |v: &serde_yaml::Value| -> Result<HttpCall, D::Error> {
-            let map = v
+        fn parse_http_call<'de, D: Deserializer<'de>>(
+            map: &serde_yaml::Value,
+        ) -> Result<HttpCall, D::Error> {
+            let map = map
                 .as_mapping()
-                .ok_or_else(|| D::Error::custom("not a map"))?;
+                .ok_or_else(|| serde::de::Error::custom("not a map"))?;
             let call = map
                 .get("call")
-                .ok_or_else(|| D::Error::missing_field("call"))?;
+                .ok_or_else(|| serde::de::Error::missing_field("call"))?;
             let call = call
                 .as_str()
-                .ok_or_else(|| D::Error::custom("not a string"))?;
-            match call {
-                "direct" => Ok(HttpCall::Direct),
-                "indirect" => Ok(HttpCall::Indirect),
-                _ => Err(D::Error::custom("invalid call type")),
-            }
-        };
-
+                .ok_or_else(|| serde::de::Error::custom("not a string"))?;
+            let call = if call == "direct" {
+                HttpCall::Direct
+            } else if call == "indirect" {
+                HttpCall::Indirect
+            } else {
+                return Err(serde::de::Error::custom("invalid call type"));
+            };
+            Ok(call)
+        }
         if let Some(v) = map.get("http.get") {
-            let call = parse_http_call(v)?;
+            let call = parse_http_call::<D>(v)?;
             calls.push(FnCallMeta::Http {
                 method: HttpMethod::Get,
                 call,
             });
         }
         if let Some(v) = map.get("http.post") {
-            let call = parse_http_call(v)?;
+            let call = parse_http_call::<D>(v)?;
             calls.push(FnCallMeta::Http {
                 method: HttpMethod::Post,
                 call,
@@ -191,37 +189,13 @@ impl<'de> Deserialize<'de> for FnMetaYaml {
 
         let kvs = map.remove("kvs");
         let kvs = if let Some(kvs) = kvs {
-            serde_yaml::from_value(kvs).map_err(|e| D::Error::custom(e.to_string()))?
-        } else {
-            None
-        };
-
-        let sync = if let Some(sync) = map.get("sync") {
-            let sync = sync
-                .as_str()
-                .ok_or_else(|| D::Error::custom("sync value must be a string"))?;
-            match sync {
-                "sync" | "async" => Some(sync.to_string()),
-                _ => return Err(D::Error::custom("sync value must be 'sync' or 'async'")),
-            }
-        } else {
-            None
-        };
-
-        let affinity = map.remove("affinity");
-        let affinity = if let Some(affinity) = affinity {
-            serde_yaml::from_value(affinity).map_err(|e| D::Error::custom(e.to_string()))?
+            serde_yaml::from_value(kvs).map_err(serde::de::Error::custom)?
         } else {
             None
         };
 
         tracing::debug!("FnMetaYaml constructed, calls:{:?}", calls);
-        Ok(Self {
-            calls,
-            kvs,
-            sync,
-            affinity,
-        })
+        Ok(Self { calls, kvs })
     }
 }
 
@@ -281,7 +255,6 @@ pub struct FnMeta {
     // pub event: Vec<FnEvent>,
     // pub args: Vec<FnArg>,
     pub data_accesses: Option<HashMap<KeyPattern, DataAccess>>,
-    pub affinity: Option<AffinityRule>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -317,15 +290,15 @@ impl AppMeta {
         app_name: &str,
         meta_fs: &AppMetaVisitOs,
     ) -> WSResult<Self> {
-        let app_type = meta_fs.get_app_type(app_name).await?;
         let fns = metayaml
             .fns
             .into_iter()
             .map(|(fnname, fnmeta)| {
-                let fnmeta = (app_type, fnmeta).into();
+                let fnmeta = fnmeta.into();
                 (fnname, fnmeta)
             })
             .collect();
+        let app_type = meta_fs.get_app_type(app_name).await?;
         Ok(Self {
             app_type,
             fns,
@@ -465,65 +438,9 @@ impl KeyPattern {
     // }
 }
 
-impl From<(AppType, FnMetaYaml)> for FnMeta {
-    fn from((app_type, yaml): (AppType, FnMetaYaml)) -> Self {
-        let sync_or_async = yaml.sync.as_deref().map(|s| s == "sync").unwrap_or(true);
-
-        // if sync but not allowed, set sync_or_async to false
-        let sync_or_async = if sync_or_async && FnExeCtxSyncAllowedType::try_from(app_type).is_err()
-        {
-            false
-        } else {
-            sync_or_async
-        };
-
-        // if async but not allowed, set sync_or_async to true
-        let sync_or_async =
-            if !sync_or_async && FnExeCtxAsyncAllowedType::try_from(app_type).is_err() {
-                true
-            } else {
-                sync_or_async
-            };
-
-        let sync_async = if sync_or_async {
-            FnSyncAsyncSupport::Sync
-        } else {
-            FnSyncAsyncSupport::Async
-        };
-
-        // 处理亲和性规则
-        let affinity = yaml.affinity.map(|affinity_yaml| {
-            let tags = affinity_yaml
-                .tags
-                .unwrap_or_else(|| vec!["worker".to_string()])
-                .into_iter()
-                .map(|tag| match tag.as_str() {
-                    "worker" => NodeTag::Worker,
-                    "master" => NodeTag::Master,
-                    custom => NodeTag::Custom(custom.to_string()),
-                })
-                .collect();
-
-            let nodes = match affinity_yaml.nodes {
-                Some(nodes_str) => {
-                    if nodes_str == "*" {
-                        AffinityPattern::All
-                    } else if let Ok(count) = nodes_str.parse::<usize>() {
-                        AffinityPattern::NodeCount(count)
-                    } else {
-                        AffinityPattern::List(
-                            nodes_str.split(',').map(|s| s.parse().unwrap()).collect(),
-                        )
-                    }
-                }
-                None => AffinityPattern::All,
-            };
-
-            AffinityRule { tags, nodes }
-        });
-
-        Self {
-            sync_async,
+impl From<FnMetaYaml> for FnMeta {
+    fn from(yaml: FnMetaYaml) -> Self {
+        let res = Self {
             calls: yaml.calls,
             data_accesses: if let Some(kvs) = yaml.kvs {
                 Some(
@@ -581,6 +498,13 @@ impl From<(AppType, FnMetaYaml)> for FnMeta {
                                     panic!("invalid op: {:?}", op);
                                 }
                             }
+                            // // TODO: check key pattern
+                            // KvMeta {
+                            //     delete,
+                            //     set,
+                            //     get,
+                            //     pattern: KeyPattern::new(key),
+                            // }
 
                             (
                                 KeyPattern::new(key),
@@ -597,8 +521,9 @@ impl From<(AppType, FnMetaYaml)> for FnMeta {
             } else {
                 None
             },
-            affinity,
-        }
+        };
+        // assert!(res.check_kv_valid());
+        res
     }
 }
 
@@ -1054,7 +979,8 @@ impl AppMetaManager {
             },
         ];
         tracing::debug!(
-            "app data size: {:?}",
+            "2broadcast meta and appfile, datasetid: {}, datas: {:?}",
+            write_data_id,
             write_datas
                 .iter()
                 .map(|v| v.to_string())
@@ -1065,6 +991,16 @@ impl AppMetaManager {
             .write_data(
                 write_data_id,
                 write_datas,
+                // vec![
+                //     DataMeta {
+                //         cache: DataModeCache::AlwaysInMem as i32,
+                //         distribute: DataModeDistribute::BroadcastRough as i32,
+                //     },
+                //     DataMeta {
+                //         cache: DataModeCache::AlwaysInFs as i32,
+                //         distribute: DataModeDistribute::BroadcastRough as i32,
+                //     },
+                // ],
                 Some((
                     self.view.p2p().nodes_config.this_node(),
                     proto::DataOpeType::Write,
@@ -1174,6 +1110,7 @@ impl AppMetaManager {
     //             },
     //             None,
     //         )
+    //         .await
     //     {
     //         Ok(res) => res,
     //         Err(e) => {
@@ -1252,6 +1189,7 @@ impl AppMetaManager {
     //             },
     //             Some(Duration::from_secs(10)),
     //         )
+    //         .await
     //     {
     //         Ok(res) => res,
     //         Err(err) => {
@@ -1273,39 +1211,6 @@ impl AppMetaManager {
 
     //     RunServiceActionResp::Succ { output: res.output }
     // }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NodeTag {
-    Worker,
-    Master,
-    Custom(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AffinityRule {
-    // 节点必须具有的标签列表,默认包含 worker
-    pub tags: Vec<NodeTag>,
-    // 节点 ID 匹配规则
-    pub nodes: AffinityPattern,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AffinityPattern {
-    // 匹配所有节点
-    All,
-    // 匹配指定节点列表
-    List(Vec<NodeID>),
-    // 限定节点数量
-    NodeCount(usize),
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AffinityYaml {
-    // 标签列表,使用字符串表示
-    pub tags: Option<Vec<String>>,
-    // 节点列表,使用 "*" 表示所有节点,数字表示节点数量,或节点 ID 列表 "1,2,3"
-    pub nodes: Option<String>,
 }
 
 #[cfg(test)]

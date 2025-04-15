@@ -42,7 +42,7 @@ impl<'a> WantIdxIter<'a> {
                 itercnt: 0,
                 len: itemcnt,
             },
-            GetOrDelDataArgType::PartialOne { idx } => Self::PartialOne { 
+            GetOrDelDataArgType::PartialOne { idx } => Self::PartialOne {
                 idx: *idx,
                 itercnt: 0,
             },
@@ -71,12 +71,12 @@ impl<'a> Iterator for WantIdxIter<'a> {
                         let ret = *itercnt;
                         *itercnt += 1;
                         Some(ret)
-        }
-    }
+                    }
+                }
                 GetOrDelDataArgType::PartialMany { .. }
                 | GetOrDelDataArgType::PartialOne { .. } => {
                     panic!("PartialMany should be handled by iter")
-}
+                }
             },
         }
     }

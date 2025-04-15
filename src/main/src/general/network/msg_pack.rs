@@ -132,9 +132,10 @@ define_msg_ids!(
             _ => false,
         }
     }),
-    (proto::kv::KvLockResponse, _pack, { true }),
-    (proto::sche::BatchDataRequest, _pack, { true }),
-    (proto::sche::BatchDataResponse, _pack, { true })
+    (proto::kv::KvLockResponse, _pack, { true }) // (proto::kv::KvLockWaitAcquireNotifyRequest, _pack, { true }),
+                                                 // (proto::kv::KvLockWaitAcquireNotifyResponse, _pack, { true })
+                                                 // (proto::DataDeleteRequest, _pack, { true }),
+                                                 // (proto::DataDeleteResponse, _pack, { true })
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -187,10 +188,6 @@ impl RPCReq for proto::GetOneDataRequest {
 
 impl RPCReq for proto::kv::KvLockRequest {
     type Resp = proto::kv::KvLockResponse;
-}
-
-impl RPCReq for proto::sche::BatchDataRequest {
-    type Resp = proto::sche::BatchDataResponse;
 }
 
 // impl RPCReq for proto::kv::KvLockWaitAcquireNotifyRequest {

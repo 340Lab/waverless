@@ -62,7 +62,6 @@ md-5.workspace = true
 path-absolutize.workspace = true
 dashmap.workspace = true
 base64.workspace = true
-hex = "0.4.3"
 
 [dependencies.uuid]
 version = "1.8.0"

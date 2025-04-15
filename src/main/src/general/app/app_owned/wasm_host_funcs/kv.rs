@@ -1,5 +1,4 @@
 use super::{utils, utils::m_kv_user_client, HostFuncRegister};
-use crate::general::app::m_executor::FnExeCtxBase;
 use crate::general::network::proto::{
     self,
     kv::{KeyRange, KvPair, KvRequest, KvRequests, KvResponses},
@@ -221,20 +220,20 @@ async fn kv_batch_ope<T>(
         }
     }
     // tracing::debug!("requests:{:?}", requests);
-    let prev_kv_opeid = func_ctx
-        .event_ctx_mut()
-        .take_prev_kv_opeid()
-        .map_or(-1, |v| v as i64);
     match m_kv_user_client()
         .kv_requests(
-            func_ctx.app(),
-            func_ctx.func(),
+            &func_ctx.app,
+            &func_ctx.func,
             KvRequests {
                 requests,
-                app: func_ctx.app().to_owned(),
-                func: func_ctx.func().to_owned(),
-                prev_kv_opeid,
+                app: func_ctx.app.clone(),
+                func: func_ctx.func.clone(),
+                prev_kv_opeid: func_ctx
+                    .event_ctx
+                    .take_prev_kv_opeid()
+                    .map_or(-1, |v| v as i64),
             },
+            // KvOptions::new(),
         )
         .await
     {
