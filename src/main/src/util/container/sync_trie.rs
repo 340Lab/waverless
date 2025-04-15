@@ -1,7 +1,9 @@
-use parking_lot::{RwLock};
+use parking_lot::{RwLock, RwLockReadGuard};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 pub struct TrieNode<T> {
     children: HashMap<char, Arc<RwLock<TrieNode<T>>>>,

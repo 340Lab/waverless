@@ -6,6 +6,7 @@ use crate::{
     general::m_os::{OperatingSystem, OsProcessType},
     result::{WSError, WSResult, WsFuncError},
 };
+use std::path::Path;
 
 use super::process::PID;
 

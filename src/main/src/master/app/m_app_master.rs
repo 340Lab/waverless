@@ -1,13 +1,20 @@
 use crate::general::app::m_executor::Executor;
 use crate::general::app::AppMetaManager;
+use crate::general::app::{AffinityPattern, AffinityRule, AppType, FnMeta, NodeTag};
 use crate::general::network::m_p2p::P2PModule;
+use crate::general::network::m_p2p::RPCCaller;
+use crate::general::network::proto::sche::{self, distribute_task_req::Trigger};
 use crate::logical_module_view_impl;
 use crate::master::app::fddg::FDDGMgmt;
-use crate::master::m_master::{Master};
-use crate::result::{WSResult};
+use crate::master::m_master::{FunctionTriggerContext, Master};
+use crate::result::{WSResult, WsFuncError};
+use crate::sys::NodeID;
 use crate::sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef};
 use crate::util::JoinHandleWrapper;
 use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(MasterAppMgmtView);

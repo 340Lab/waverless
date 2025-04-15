@@ -13,7 +13,7 @@ use result::ResultFuncsRegister;
 mod utils {
 
     use super::UnsafeFunctionCtx;
-    use crate::general::app::m_executor::{FnExeCtxAsync};
+    use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxBase};
     use crate::general::app::InstanceManager;
     use crate::{
         general::m_os::OperatingSystem, sys::LogicalModulesRef, util::SendNonNull,
