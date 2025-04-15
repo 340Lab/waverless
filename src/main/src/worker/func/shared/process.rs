@@ -1,6 +1,8 @@
 // process function just run in unique process
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
@@ -9,10 +11,9 @@ use tokio::{process::Command, sync::oneshot};
 
 use crate::{
     general::{
-        m_appmeta_manager::AppType,
+        m_appmeta_manager::{AppType},
         network::rpc_model::{self, HashValue},
     },
-    result::{WSError, WsIoErr},
     worker::func::{shared::java, InstanceTrait},
 };
 
@@ -68,8 +69,7 @@ impl ProcessInstance {
             let pid = p.id().unwrap();
             tracing::debug!("killing app {} on pid raw:{} check:{:?}", self.app, pid, id);
             // let pid = p.id().unwrap();
-            p.kill().await.unwrap();
-
+            p.kill().await;
             // cmd kill id
             if let Some(id) = id {
                 let _ = Command::new("kill")

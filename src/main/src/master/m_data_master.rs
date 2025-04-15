@@ -1,17 +1,19 @@
+
 use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::general::m_data_general::{
-    CacheModeVisitor, DataGeneral, DataSetMetaBuilder, DataSplit, EachNodeSplit,
+    CacheModeVisitor, DataGeneral, DataSetMetaBuilder, DataSplit,
+    EachNodeSplit,
 };
 use crate::general::m_kv_store_engine::{
     KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine,
 };
-use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor};
+use crate::general::network::m_p2p::{P2PModule, RPCHandler, RPCResponsor};
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
 };
-use crate::result::{WSResult, WSResultExt};
+use crate::result::WSResult;
 use crate::sys::{LogicalModulesRef, NodeID};
 use crate::util::JoinHandleWrapper;
 use crate::{
@@ -34,7 +36,6 @@ logical_module_view_impl!(DataMasterView, kv_store_engine, KvStoreEngine);
 pub struct DataMaster {
     view: DataMasterView,
     rpc_handler: RPCHandler<proto::DataVersionScheduleRequest>,
-    rpc_caller_data_meta_update: RPCCaller<proto::DataMetaUpdateRequest>,
 }
 
 #[async_trait]
@@ -46,7 +47,6 @@ impl LogicalModule for DataMaster {
         Self {
             rpc_handler: RPCHandler::new(),
             view: DataMasterView::new(args.logical_modules_ref.clone()),
-            rpc_caller_data_meta_update: RPCCaller::new(),
             // view: DataMasterView::new(args.logical_modules_ref.clone()),
         }
     }
@@ -57,7 +57,6 @@ impl LogicalModule for DataMaster {
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
         let view = self.view.clone();
-        self.rpc_caller_data_meta_update.regist(view.p2p());
         self.rpc_handler
             .regist(self.view.p2p(), move |responsor, req| {
                 let view = view.clone();
@@ -152,7 +151,6 @@ impl DataMaster {
                 }],
             });
         }
-        tracing::debug!("decide_each_data_split res: {:?}", datasplits);
         datasplits
     }
 
@@ -200,14 +198,8 @@ impl DataMaster {
                 },
             );
             // ##  update version local
-            tracing::debug!(
-                "update version local for data({:?}), the updated meta is {:?}",
-                req.unique_id,
-                set_meta
-            );
-            let _ = kv_store_engine
-                .set(KeyTypeDataSetMeta(&req.unique_id), &set_meta, true)
-                .unwrap();
+            tracing::debug!("update version local for data({:?})", req.unique_id);
+            kv_store_engine.set(KeyTypeDataSetMeta(&req.unique_id), &set_meta, true);
             kv_store_engine.flush();
             set_meta
         };
@@ -227,54 +219,21 @@ impl DataMaster {
 
         for need_notify_node in need_notify_nodes {
             let view = self.view.clone();
-            // let mut req = req.clone();
-            // req.version = new_meta.version;
+            let mut req = req.clone();
+            req.version = new_meta.version;
 
             // don't need to retry or wait
-            let serialized_meta = bincode::serialize(&new_meta).unwrap();
-            let unique_id = req.unique_id.clone();
-            let version = new_meta.version;
             let _call_task = tokio::spawn(async move {
                 let p2p = view.p2p();
                 tracing::debug!(
-                    "updating version for data({:?}) to node: {}, this_node:  {}",
-                    std::str::from_utf8(&unique_id).map_or_else(
-                        |_err| { format!("{:?}", unique_id) },
-                        |ok| { ok.to_owned() }
-                    ),
-                    need_notify_node,
-                    p2p.nodes_config.this_node()
-                );
-
-                tracing::debug!(
-                    "async notify `DataMetaUpdateRequest` to node {}",
+                    "updating version for data({:?}) to node: {}",
+                    req.unique_id,
                     need_notify_node
                 );
-                let resp = view
-                    .data_master()
-                    .rpc_caller_data_meta_update
-                    .call(
-                        p2p,
-                        need_notify_node,
-                        proto::DataMetaUpdateRequest {
-                            unique_id,
-                            version,
-                            serialized_meta,
-                        },
-                        Some(Duration::from_secs(60)),
-                    )
+                view.data_general()
+                    .rpc_call_data_version_schedule
+                    .call(p2p, need_notify_node, req, Some(Duration::from_secs(60)))
                     .await;
-                if let Err(err) = resp {
-                    tracing::error!(
-                        "notify `DataMetaUpdateRequest` to node {} failed: {}",
-                        need_notify_node,
-                        err
-                    );
-                } else if let Ok(ok) = resp {
-                    if ok.version != version {
-                        tracing::error!("notify `DataMetaUpdateRequest` to node {} failed: version mismatch, expect: {}, remote: {}", need_notify_node, version, ok.version);
-                    }
-                }
             });
         }
 
@@ -286,7 +245,7 @@ impl DataMaster {
         );
 
         tracing::debug!(
-            "data:{:?} version required({}) and schedule done, caller will do following thing after receive `DataVersionScheduleResponse`",
+            "data:{:?} version:{} require done, followers are waiting for new data",
             req.unique_id,
             new_meta.version
         );
@@ -304,8 +263,7 @@ impl DataMaster {
                     .map(|v| v.into())
                     .collect(),
             })
-            .await
-            .todo_handle();
+            .await;
         Ok(())
     }
     // async fn rpc_handler_dataversion_synced_on_node(
