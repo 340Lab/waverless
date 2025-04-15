@@ -335,7 +335,6 @@ impl DataMaster {
             new_meta.version
         );
 
-        //返回结果未处理   曾俊
         responsor
             .send_resp(DataVersionScheduleResponse {
                 version: new_meta.version,
@@ -348,8 +347,7 @@ impl DataMaster {
                 cache_nodes,
             })
             .await
-            //.todo_handle();
-            .todo_handle("This part of the code needs to be implemented.");
+            .todo_handle();
         Ok(())
     }
     // async fn rpc_handler_dataversion_synced_on_node(

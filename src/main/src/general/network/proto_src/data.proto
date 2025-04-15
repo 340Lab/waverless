@@ -175,6 +175,13 @@ message GetOneDataResponse{
   repeated DataItem data =2;
   string message=3;
 }
+
+enum BatchDataBlockType {
+    MEMORY = 0;    // 内存数据块
+    FILE = 1;      // 文件数据块
+    DIR=2;         // 目录数据块
+}
+
 message BatchRequestId {
     uint32 node_id = 1;               // 节点ID
     uint64 sequence = 2;              // 原子自增序列号
@@ -184,7 +191,7 @@ message BatchDataRequest {
     BatchRequestId request_id = 1;        // 请求唯一标识（节点ID + 序列号）
     bytes dataset_unique_id = 2;          // 数据集唯一标识
     uint32 data_item_idx = 3;            // 数据项索引
-    DataItem block_type = 4;    // 数据块类型（文件/内存）, 将数据留空
+    BatchDataBlockType block_type = 4;    // 数据块类型（文件/内存）
     uint32 block_index = 5;              // 数据块索引
     bytes data = 6;                      // 数据块内容
     DataOpeType operation = 7;           // 操作类型

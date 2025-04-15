@@ -96,12 +96,10 @@ impl DataGeneral {
                     }),
                     dataset_unique_id: unique_id.clone(),
                     data_item_idx: 0, // 因为是整体传输，所以使用0
-                    // block_type: match data.as_ref() {
-                    //     DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory as i32,
-                    //     DataItemSource::File { .. } => proto::BatchDataBlockType::File as i32,
-                    // },
-                    //原代码block_type: data.as_ref(),  类型不匹配，使用自定义的to_data_item函数转化     曾俊
-                    block_type: Some(data.to_data_item()),
+                    block_type: match data.as_ref() {
+                        DataItemSource::Memory { .. } => proto::BatchDataBlockType::Memory as i32,
+                        DataItemSource::File { .. } => proto::BatchDataBlockType::File as i32,
+                    },
                     block_index: block_idx as u32,
                     data: block_data,
                     operation: proto::DataOpeType::Write as i32,
