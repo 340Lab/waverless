@@ -1,9 +1,6 @@
 use std::io::Result;
 fn main() -> Result<()> {
-    let mut config = prost_build::Config::new();
-    config
-        .type_attribute("BatchRequestId", "#[derive(Eq, Hash)]");
-    config.compile_protos(
+    prost_build::compile_protos(
         &[
             "src/general/network/proto_src/kv.proto",
             "src/general/network/proto_src/raft.proto",
