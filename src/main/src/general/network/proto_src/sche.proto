@@ -22,44 +22,21 @@ package sche;
 //     uint32 data_target_node=2;
 // }
 
-message DistributeTaskReq {
-    message DataEventTriggerWrite {
-        bytes key = 1;
-        uint32 opeid = 2;
+message DistributeTaskReq{
+    message TriggerKvSet{
+        bytes key=1;
+        uint32 opeid=2;
     }
-
-    message DataEventTriggerNew {
-        bytes key = 1;
-        uint32 opeid = 2;
-    }
-
-    string app = 1;
-    string func = 2;
-    uint32 task_id = 3;
-    oneof trigger {
-        DataEventTriggerWrite event_write = 4;  // For Write/WriteWithCondition
-        DataEventTriggerNew event_new = 5;      // For New/NewWithCondition
+    string app=1;
+    string func=2;
+    uint32 task_id=3;
+    oneof trigger{
+        TriggerKvSet kv_set=4;
     }
 }
 
-message DistributeTaskResp {
-    bool success = 1;
-    string err_msg = 2;
-}
-
-message BatchDataRequest {
-    bytes unique_id = 1;
-    uint64 version = 2;
-    uint32 batch_id = 3;        // 当前批次ID
-    uint32 total_batches = 4;   // 总批次数
-    bytes data = 5;             // 当前批次的数据
-    uint32 data_item_idx = 6;   // 数据项索引
-    bool is_complete = 7;       // 是否是最后一个批次
-}
-
-message BatchDataResponse {
-    bool success = 1;
-    string error = 2;
-    uint32 batch_id = 3;
+message DistributeTaskResp{
+    bool success=1;
+    string err_msg=2;
 }
 
