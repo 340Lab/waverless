@@ -198,9 +198,9 @@ impl KvStoreEngine {
 
         let _ = db.insert(keybytes, vec).unwrap();
 
-        // if let Some(mut key_waitings) = self.key_waitings.get_mut(key) {
-        if let Some((_, key_waitings)) = self.key_waitings.remove(key) {
-            for wait_tx in key_waitings {
+        if let Some(mut key_waitings) = self.key_waitings.get_mut(key) {
+            // if let Some((_, key_waitings)) = self.key_waitings.remove(key) {
+            for wait_tx in key_waitings.drain(..) {
                 wait_tx
                     .send((kvversion, KvValue::RawData(value.clone())))
                     .unwrap_or_else(|_| panic!("send new key event failed"));
