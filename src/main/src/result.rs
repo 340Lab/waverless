@@ -246,10 +246,6 @@ pub enum WsDataError {
         expect: usize,
         actual: usize,
     },
-    SplitTaskFailed {
-        request_id: proto::BatchRequestId,
-        idx: DataSplitIdx,
-    },
     UnknownCacheMapMode {
         mode: u16,
     },
@@ -265,19 +261,24 @@ pub enum WsDataError {
     },
     ItemIdxEmpty,
     BatchTransferFailed {
-        request_id: proto::BatchRequestId,
+        node: NodeID,
+        batch: u32,
         reason: String,
     },
+
     BatchTransferNotFound {
-        request_id: proto::BatchRequestId,
+        node_id: u32,
+        sequence: u64,
     },
+
+    BatchBlockMissing {
+        unique_id: Vec<u8>,
+        block_index: u32,
+    },
+
     BatchTransferError {
-        request_id: proto::BatchRequestId,
+        unique_id: Vec<u8>,
         msg: String,
-    },
-    VersionMismatch {
-        expected: u64,
-        actual: u64,
     },
 }
 
