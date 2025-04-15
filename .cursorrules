@@ -1,262 +1,66 @@
-# Waverless 项目关键设计笔记
+# Waverless Project Rules
 
-## 1. 函数执行上下文设计
+## Code Style
+- 使用 Rust 2021 edition
+- 遵循标准 Rust 命名约定
+- 使用 4 空格缩进
+- 对于有意未使用的变量，使用下划线前缀（如 _pack）
+- 如果变量可能会被使用但目前未使用，保留原名
+- 如果确定不需要验证的参数，直接使用下划线前缀
 
-### 1.1 基础结构
-- `FnExeCtx`: 私有的基础结构体，包含函数执行的基本信息
-  ```rust
-  struct FnExeCtx {
-      pub app: String,
-      pub app_type: AppType,
-      pub func: String,
-      pub func_meta: FnMeta,
-      pub req_id: ReqId,
-      pub event_ctx: EventCtx,
-      pub res: Option<String>,
-      pub sub_waiters: Vec<JoinHandle<()>>,
-      _dummy_private: (),
-  }
-  ```
+## RPC Message Handling
+- 对于 RPC 消息的 Option 字段：
+  - 如果是必需字段（不能缺省），需要在 verify 中进行 is_some() 校验
+  - 如果是可选字段，使用 _pack 忽略变量，直接返回 true
+- 消息验证规则：
+  - 对于包含关键业务数据的请求（如 WriteOneDataRequest），必须验证所有必需字段
+  - 对于简单的状态同步或查询请求（如 BatchDataRequest），可以跳过验证
+- 验证函数实现：
+  - 需要验证时，使用 pack 并编写完整的验证逻辑
+  - 不需要验证时，使用 _pack 并直接返回 true
 
-### 1.2 公开特化类型
-- `FnExeCtxAsync` 和 `FnExeCtxSync`:
-  - 异步执行上下文支持 Jar、Wasm、Native 类型，包含子任务支持和完整的性能监控和日志。
-  - 同步执行上下文仅支持 Native 类型，不支持子任务，包含基本的性能监控和日志。
+## Error Handling
+- 使用 WSResult 作为错误返回类型
+- 顶层错误类型应该实现 std::error::Error trait
+- 子错误类型只需要实现 Debug trait
+- 使用 ? 运算符进行错误传播
 
-### 1.3 类型安全
-- `FnExeCtxAsyncAllowedType` 和 `FnExeCtxSyncAllowedType`:
-  - 异步允许的类型 (Jar, Wasm, Native)
-  - 同步允许的类型 (仅 Native)
-  - 通过 `TryFrom<AppType>` 在编译时强制类型安全
+## Type System
+- 为复杂的数据结构实现必要的 traits (Clone, Debug 等)
+- 使用强类型，避免类型转换
+- 为枚举类型实现必要的派生宏
 
-## 2. 实例管理设计
+## Development Process
+- 每解决一个问题后立即进行编译检查
+- 确保修改不会引入新的编译错误
+- 按优先级逐个解决编译错误
 
-### 2.1 实例类型与管理器
-- `Instance` 和 `InstanceManager`:
-  - `Instance` 包含 Owned、Shared 和 Native 类型。
-  - `InstanceManager` 管理应用实例和运行时函数上下文。
-  ```rust
-  pub enum Instance {
-      Owned(OwnedInstance),
-      Shared(SharedInstance),
-      Native(NativeAppInstance),
-  }
-  
-  pub struct InstanceManager {
-      pub app_instances: SkipMap<String, EachAppCache>,
-      pub instance_running_function: DashMap<String, UnsafeFunctionCtx>,
-  }
-  ```
+## Documentation
+- 为公共 API 提供文档注释
+- 使用中文注释说明复杂的业务逻辑
+- 包含示例代码说明用法
 
-### 2.2 运行时函数上下文
-- `UnsafeFunctionCtx`:
-  - 包含 Sync 和 Async 类型，分别对应 `FnExeCtxSync` 和 `FnExeCtxAsync`。
+## Performance
+- 避免不必要的克隆操作
+- 使用异步操作处理 I/O
+- 合理使用并发和并行
 
-## 3. 关键修改记录
+## Testing
+- 为公共 API 编写单元测试
+- 使用 cargo test 运行测试
+- 包含集成测试
 
-### 3.1 同步/异步执行流程优化与错误处理增强
-- 简化 `finish_using`，移除不必要的异步版本，统一使用同步实现。
-- 添加同步版本的 `load_instance_sync`，仅支持 Native 类型。
-- 优化 `execute_sync` 中的异步调用处理，统一性能监控和日志记录格式。
-- 添加 `UnsupportedAppType` 错误类型，完善同步执行时的类型检查。
+## Dependencies
+- 明确指定依赖版本
+- 最小化依赖数量
+- 及时更新依赖版本
 
-## 4. 待办事项
-- [x] 考虑添加同步版本的 `load_instance`
-- [ ] 优化 `execute_sync` 中的异步-同步转换
-- [ ] 完善错误处理和日志记录
+## Security
+- 不在代码中硬编码敏感信息
+- 使用安全的加密算法
+- 正确处理用户输入
 
-## 5. 核心设计原则
-
-### 5.1 基础原则与 View 模式设计规则
-- 同步/异步分离，类型安全，性能监控，资源管理。
-- View 生成：
-  - View 结构体和 `LogicalModule` trait 的实现由宏生成。
-  - 只需实现 `inner_new` 函数，使用 `logical_module_view_impl!` 生成访问函数。
-  - 每个需要访问的模块都需要单独的 impl 宏调用。
-
-### 5.2 去掉 #[derive(LogicalModule)] 的原因和注意事项
-- 实现特定功能：根据需求在 `DataGeneralView` 中实现特定功能，检查冲突。
-- `inner` 字段的管理：由宏管理，不能直接操作，通过宏生成的接口使用。
-- 错误分析：去掉派生后，仔细分析和解决可能出现的错误。
-
-## 6. msg_pack 消息封装
-
-### 6.1 基本原则与实现示例
-- 使用 `msg_pack.rs` 中的宏实现 trait，使用 `define_msg_ids!` 管理消息类型。
-- 通过 `RPCReq` trait 定义请求-响应关系。
-  ```rust
-  define_msg_ids!(
-      (proto::sche::BatchDataRequest, pack, { true }),
-      (proto::sche::BatchDataResponse, _pack, { true })
-  );
-  
-  impl RPCReq for proto::sche::BatchDataRequest {
-      type Resp = proto::sche::BatchDataResponse;
-  }
-  ```
-
-### 6.2 最佳实践
-- 新增消息类型时：在 `define_msg_ids!` 中添加定义，实现 `RPCReq` trait。
-- 使用消息时：使用 `RPCCaller` 和 `RPCHandler`，遵循统一的错误处理。
-
-## 7. Waverless 代码规范核心规则
-
-### 7.0 最高优先级规则
-- 在没有经过明确允许的情况下,不要擅自开始操作
-- 必须等待用户明确指示后再进行修改
-- 在进行任何修改前,先提出修改方案并等待确认
-- 有明确指令的情况下,不要擅自做其他操作
-- 删除代码时必须说明:
-  - 被删除代码的原有功能和作用
-  - 删除的具体原因
-  - 删除可能带来的影响
-- 修改代码时必须:
-  - 先提出完整的修改方案
-  - 说明每处修改的原因和影响
-  - 等待用户确认后再执行
-  - 严格按照确认的方案执行,不额外修改
-  - 如需额外修改,必须重新提出方案并确认
-- 修改规则文件时必须:
-  - 确认文件名必须是 `.cursorrules`
-  - 确认文件以 "# Waverless 项目关键设计笔记" 开头
-  - 确认包含完整的设计笔记结构
-  - 确认包含所有规则章节(1-7)
-  - 修改前使用搜索工具确认是正确的规则文件
-  - 修改前检查文件的完整内容
-  - 修改前确认修改的具体位置
-  - 只修改规则相关部分
-  - 保持其他内容不变
-  - 保持文档结构完整
-
-### 7.1 文档维护与代码组织原则
-- 文档压缩原则：保持无损压缩，合并重复内容，简化表述，重构文档结构。
-- 文档更新规则：确认信息完整性，保留技术细节，使用清晰结构展示信息。
-- 代码组织规则：宏生成的访问函数直接使用，非 pub 函数只在一个地方定义，View 负责核心实现，具体模块负责自己的功能，通过 View 访问其他模块。
-
-### 7.2 代码修改原则
-- 不随意删除或修改已有的正确实现
-- 不在多处实现同一功能
-- 保持代码结构清晰简单
-- 修改前先理解设计原则
-
-#### 异步任务处理原则
-- 分析生命周期和所有权需求
-- 避免盲目克隆，只克隆必要数据
-- 考虑类型特征（如 P2PModule 的轻量级 Clone）
-- 评估替代方案
-
-```rust
-// 反例：过度克隆
-let p2p = self.p2p().clone();        // 不必要，P2PModule 本身就是轻量级的
-let data_general = self.data_general().clone();  // 不必要，同上
-
-// 正例：按需克隆
-let split_info = split.clone();  // 必要，因为来自临时变量的引用
-```
-
-分析要点：
-- 使用场景：确认异步任务中的实际需求
-- 类型特征：检查是否已实现轻量级 Clone
-- 生命周期：特别关注临时变量引用
-- 替代方案：考虑其他实现方式
-
-### 7.3 错误与正确示例
-- 错误示例：手动实现已有的宏生成函数，在两个地方都实现同一个函数，过度修改已有代码结构，有损压缩文档内容。
-- 正确示例：使用宏生成的访问函数，在合适的位置添加新功能，遵循已有的代码组织方式，保持文档的完整性和准确性。
-
-### 7.4 异步任务变量处理规范
-
-#### 1. 变量分析原则
-- 生命周期分析：确定变量在异步任务中的生存期
-- 所有权需求：判断是否需要克隆或移动所有权
-- 类型特征：考虑变量的类型特性（如 Clone、Send、'static 等）
-- 数据共享：评估是否需要在多个任务间共享数据
-
-#### 2. 克隆策略
-必须克隆的情况：
-- 临时变量引用：`split_info.clone()`（来自迭代器）
-- 多任务共享：`unique_id.clone()`（多个任务需要）
-- 部分数据：`data_item.clone_split_range()`（只克隆需要的范围）
-
-不需要克隆的情况：
-- 值类型复制：`version`（直接复制即可）
-- 已实现 Copy：基本数据类型
-- 单一任务使用：不需要在多个任务间共享的数据
-
-#### 3. View 模式使用规范
-基本原则：
-- View 本身已经是完整引用：不需要额外的 view 字段
-- 异步任务中使用：`self.clone()`
-- 模块访问：通过 view 直接访问其他模块
-
-示例代码：
-```rust
-// 正确示例
-let view = self.clone();  // View 本身克隆
-let resp = view.data_general().rpc_call_write_once_data...
-
-// 错误示例
-let view = self.view.clone();  // 错误：不需要额外的 view 字段
-let data_general = self.data_general().clone();  // 错误：不需要单独克隆模块
-```
-
-#### 4. 异步任务数据处理检查清单
-- [ ] 是否只克隆必要的数据？
-- [ ] 临时变量是否正确处理？
-- [ ] View 的使用是否符合规范？
-- [ ] 是否避免了重复克隆？
-- [ ] 数据共享策略是否合理？
-
-#### 5. 常见场景示例
-
-1. 批量数据处理：
-```rust
-// 正确处理临时变量和部分数据
-let split_info = split_info.clone();  // 临时变量必须克隆
-let data_item = data_item.clone_split_range(range);  // 只克隆需要的部分
-let view = self.clone();  // View 克隆用于异步任务
-```
-
-2. 并发任务处理：
-```rust
-// 使用信号量和数据共享
-let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
-let view = self.clone();  // 一次克隆，多处使用
-for node_id in nodes {
-    let permit = semaphore.clone();
-    let view = view.clone();  // View 在任务间共享
-    tokio::spawn(async move { ... });
-}
-```
-
-### 7.3 变量类型难分辨的情况
-
-#### 7.3.1 Proto生成的Rust类型
-1. proto中的普通字段在Rust中的表现:
-   - proto中的 `string file_name_opt = 1` 生成的是普通 `String` 类型，而不是 `Option<String>`
-   - proto中的 `bool is_dir_opt = 2` 生成的是普通 `bool` 类型，而不是 `Option<bool>`
-   - 字段名带 `_opt` 后缀不代表它在Rust中是 `Option` 类型
-
-2. proto中的message嵌套在Rust中的表现:
-   - `DataItem` 中的 `oneof data_item_dispatch` 在Rust中是一个字段
-   - 访问路径是: `data.data_item_dispatch` 而不是 `data.data.data_item_dispatch`
-   - `Option<DataItem>` 需要先 `unwrap()` 才能访问其内部字段
-
-#### 7.3.2 容易混淆的类型转换
-1. proto生成的类型和标准库类型的关系:
-   - proto生成的 `String` 字段不能直接用 `unwrap_or_default()`
-   - proto生成的 `bool` 字段不能直接用 `unwrap_or()`
-
-### 7.5 思维方式原则
-- 思维优先于行动：
-  - 在开始任何操作前，先理解"为什么"而不是"怎么做"
-  - 确保完全理解当前上下文中的所有信息
-  - 避免机械性思维和跳过思考的行为模式
-- 内化规则：
-  - 把规则视为思维框架而不是外部约束
-  - 养成先检查当前上下文的习惯
-  - 避免在已有信息的情况下去外部搜索
-- 关注本质：
-  - 理解问题的根本原因比立即解决问题更重要
-  - 分析失误的思维模式而不是简单记住正确操作
-  - 把经验转化为思维方式而不是操作步骤
+## Logging
+- 使用 tracing 进行日志记录
+- 包含适当的日志级别
+- 记录关键操作和错误信息 
