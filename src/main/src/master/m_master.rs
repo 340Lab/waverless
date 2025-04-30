@@ -162,6 +162,7 @@ impl Master {
             .master()
             .rpc_caller_distribute_task
             .call(
+                //理解
                 self.view.p2p(),
                 self.select_node(),
                 DistributeTaskReq {
