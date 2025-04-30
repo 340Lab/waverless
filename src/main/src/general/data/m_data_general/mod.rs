@@ -50,6 +50,21 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinError;
 use ws_derive::LogicalModule;
 
+
+// 费新文
+// use crate::general::network::proto::sche::{DistributeTaskReq, DistributeTaskResp};
+// use crate::general::app::app_native::NativeAppInstance;
+// use crate::general::app::instance::InstanceTrait;
+// use crate::general::app::m_executor::{
+//     EventCtx,
+//     FnExeCtxSync,
+//     FnExeCtxAsyncAllowedType,
+// };
+
+
+
+
+
 logical_module_view_impl!(DataGeneralView);
 logical_module_view_impl!(DataGeneralView, p2p, P2PModule);
 logical_module_view_impl!(DataGeneralView, data_general, DataGeneral);
@@ -103,11 +118,19 @@ pub struct DataGeneral {
     rpc_call_get_data_meta: RPCCaller<proto::DataMetaGetRequest>,
     rpc_call_get_data: RPCCaller<proto::GetOneDataRequest>,
 
+    //费新文
+    // rpc_call_distribute_task: RPCCaller<DistributeTaskReq>,
+
+
     rpc_handler_write_once_data: RPCHandler<proto::WriteOneDataRequest>,
     rpc_handler_batch_data: RPCHandler<proto::BatchDataRequest>,
     rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
     rpc_handler_get_data_meta: RPCHandler<proto::DataMetaGetRequest>,
     rpc_handler_get_data: RPCHandler<proto::GetOneDataRequest>,
+
+    //费新文
+    // rpc_handler_distribute_task: RPCHandler<DistributeTaskReq>,
+
     
     // 批量数据接收状态管理
     batch_receive_states: AsyncInitMap<proto::BatchRequestId, Arc<BatchReceiveState>>,
@@ -122,12 +145,21 @@ impl DataGeneral {
             rpc_call_batch_data: RPCCaller::new(),
             rpc_call_get_data_meta: RPCCaller::new(),
             rpc_call_get_data: RPCCaller::new(),
+
+            //费新文
+            // rpc_call_distribute_task: RPCCaller::new(),
+
+
             rpc_handler_write_once_data: RPCHandler::new(),
             rpc_handler_batch_data: RPCHandler::new(),
             rpc_handler_data_meta_update: RPCHandler::new(),
             rpc_handler_get_data_meta: RPCHandler::new(),
             rpc_handler_get_data: RPCHandler::new(),
             batch_receive_states: AsyncInitMap::new(),
+
+            //费新文
+            // rpc_handler_distribute_task: RPCHandler::new(),
+ 
         }
     }
 
@@ -1161,6 +1193,79 @@ impl DataGeneral {
 
         Ok(())
     }
+
+
+
+    //费新文
+    // pub async fn distribute_task_to_worker(
+    //     &self,
+    //     worker_node: NodeID,
+    //     app_name: String,
+    //     func_name: String,
+    //     task_id: u32,
+    //     key: Option<Vec<u8>>,
+    //     is_write_trigger: bool,
+    // ) -> WSResult<DistributeTaskResp> {
+    //     let mut req = DistributeTaskReq {
+    //         app: app_name,
+    //         func: func_name,
+    //         task_id,
+    //         trigger: None,
+    //     };
+
+    //     if let Some(key_data) = key {
+    //         if is_write_trigger {
+    //             req.trigger = Some(proto::sche::distribute_task_req::Trigger::EventWrite(
+    //                 proto::sche::distribute_task_req::DataEventTriggerWrite {
+    //                     key: key_data,
+    //                     opeid: task_id,
+    //                 }
+    //             ));
+    //         } else {
+    //             req.trigger = Some(proto::sche::distribute_task_req::Trigger::EventNew(
+    //                 proto::sche::distribute_task_req::DataEventTriggerNew {
+    //                     key: key_data,
+    //                     opeid: task_id,
+    //                 }
+    //             ));
+    //         }
+    //     }
+
+    //     self.rpc_call_distribute_task
+    //         .call(
+    //             self.view.p2p(),
+    //             worker_node,
+    //             req,
+    //             Some(Duration::from_secs(30)),
+    //         )
+    //         .await
+    //         .map_err(|e| WsNetworkLogicErr::RPCErr {   //这里错误类型需要换
+    //             message: e.to_string(),
+    //         }.into())
+    // }
+
+    // async fn rpc_handle_distribute_task(
+    //     &self,
+    //     responsor: RPCResponsor<DistributeTaskReq>,
+    //     req: DistributeTaskReq,
+    // ) {
+    //     tracing::debug!("rpc_handle_distribute_task with req({:?})", req);
+        
+    //     // TODO: 这里需要实现具体的任务处理逻辑
+        
+    //     if let Err(e) = responsor
+    //         .send_resp(DistributeTaskResp {
+    //             success: true,
+    //             err_msg: String::new(),
+    //         })
+    //         .await {
+    //             tracing::error!("Failed to send distribute task response: {}", e);
+    //         }
+    // }
+
+    
+
+
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1542,6 +1647,11 @@ impl LogicalModule for DataGeneral {
             rpc_call_get_data_meta: RPCCaller::new(),
             rpc_call_get_data: RPCCaller::new(),
 
+            // //费新文
+            // rpc_call_distribute_task: RPCCaller::new(),
+            // rpc_handler_distribute_task: RPCHandler::new(),
+
+
             rpc_handler_write_once_data: RPCHandler::new(),
             rpc_handler_batch_data: RPCHandler::new(),
             rpc_handler_data_meta_update: RPCHandler::new(),
@@ -1564,10 +1674,30 @@ impl LogicalModule for DataGeneral {
             self.rpc_call_batch_data.regist(p2p);
             self.rpc_call_get_data_meta.regist(p2p);
             self.rpc_call_get_data.regist(p2p);
+
+
+            //费新文
+            // self.rpc_call_distribute_task.regist(p2p);
         }
 
         // register rpc handlers
         {
+
+            //费新文
+            // let view = self.view.clone();
+            // self.rpc_handler_distribute_task.regist(
+            //     p2p,
+            //     move |responsor: RPCResponsor<DistributeTaskReq>,
+            //           req: DistributeTaskReq| {
+            //         let view = view.clone();
+            //         let _ = tokio::spawn(async move {
+            //             view.data_general().rpc_handle_distribute_task(responsor, req).await;
+            //         });
+            //         Ok(())
+            //     },
+            // );
+            
+
             let view = self.view.clone();
             self.rpc_handler_write_once_data
                 .regist(p2p, move |responsor, req| {
