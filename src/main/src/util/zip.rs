@@ -4,7 +4,9 @@ use std::fs;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter, result::ZipError};
 use crate::result::{WSResult, WSError, WsIoErr};
-use std::os::unix::fs::PermissionsExt;      // 添加这一行以引入PermissionsExt trait 针对下方的.mode()报错   曾俊
+use std::os::unix::fs::PermissionsExt;
+
+use super::{non_null, SendNonNull};      // 添加这一行以引入PermissionsExt trait 针对下方的.mode()报错   曾俊
 
 pub fn unzip_data_2_path(p: impl AsRef<Path>, data: Vec<u8>) -> WSResult<()> {
     // remove old dir
@@ -118,7 +120,7 @@ pub fn zip_dir_2_mem(
 pub async fn zip_dir_2_file(
     src_dir: impl AsRef<Path>,
     method: zip::CompressionMethod,
-    mut dst_file: std::fs::File,
+   dst_file: &mut std::fs::File ,
 ) -> WSResult<()> {
     // // if !src_dir.is_dir() {    //泛型参数不会自动解引用    曾俊
     // if !src_dir.as_ref().is_dir() {
@@ -134,12 +136,13 @@ pub async fn zip_dir_2_file(
     let it = walkdir.into_iter();
 
     // 使用阻塞线程执行 zip 操作，因为 zip 库不支持异步 IO
+    let mut dst_file_ptr= unsafe{SendNonNull(non_null(dst_file))};
     tokio::task::spawn_blocking(move || {
         zip_dir(
             &mut it.filter_map(|e| e.ok()),
             // src_dir,          //泛型参数不会自动解引用    曾俊    
             src_dir.as_ref(),
-            &mut dst_file,
+            unsafe{dst_file_ptr.as_mut()},
             method,
         )
     }).await.map_err(|e| WsIoErr::Io(std::io::Error::new(
@@ -175,7 +178,7 @@ mod tests {
             zip_dir_2_file(
                 src_path,
                 zip::CompressionMethod::Stored,
-                output_file,
+                output_file.as_file_mut(),
                 // output_file.as_file_mut(),
             ).await
         })?;

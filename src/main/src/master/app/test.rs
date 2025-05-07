@@ -8,10 +8,10 @@ use crate::{
     config::{NodeConfig, NodesConfig}, general::app::View
 };
 
-#[cfg(test)]
+// #[cfg(test)]
 use crate::general::test_utils;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_app_upload()  -> Result<(), Box<dyn std::error::Error>> {
     
 
