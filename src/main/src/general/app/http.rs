@@ -114,6 +114,11 @@ async fn upload_app(mut multipart: Multipart) -> Response {
         // let content_type = field.content_type().unwrap().to_string();
         let data = field.bytes().await.unwrap();
 
+        #[cfg(test)]
+        if *view().appmeta_manager().test_http_app_uploaded.lock().unwrap() != data {
+            panic!("app_uploaded failed!");
+        }
+
         let name2 = name.clone();
         let task =
             tokio::spawn(async move { view().appmeta_manager().app_uploaded(name2, data).await });

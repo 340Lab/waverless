@@ -929,7 +929,7 @@ impl DataItemArgWrapper {
                 &filedata.file_name_opt,
                 //zip::CompressionMethod::Stored,
                 CompressionMethod::Stored,//（续）虞光勇修改，修改内容删除zip::
-                tmp_file.into_file(),
+                &mut tmp_file.into_file(),
             ).await?;
 
             self.tmpzipfile = DataItemZip::Directory {
