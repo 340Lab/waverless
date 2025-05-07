@@ -1,0 +1,49 @@
+comment: 存算融合的serverless计算平台
+
+# 嵌入式的安装脚本，上传到 teledeploy 公共fileserver
+local_values:
+  pack_py: 
+    read_from_file: template/pack.py # require output to prepare_cache
+  install_crac.py:
+    read_from_file: template/install_crac.py
+  install_wasmedge.py:
+    read_from_file: template/install_wasmedge.py
+
+prepare:
+  # 使用脚本预处理，将必要资源准备到 teledeploy，上传到 teledeploy 公共fileserver
+  - pyscript: ${pack_py}
+    trans:
+      - copy:
+        - run_node.py: teledeploy/waverless_entry_amd64
+        - wasm_serverless: teledeploy/waverless_amd64
+        - wasm_edge.py: teledeploy/install_wasmedge_inner.py
+        - jdk_crac.tar.gz: teledeploy/jdk_crac.tar.gz
+  # 下载wasmedge，上传到 teledeploy 公共fileserver
+  - url: https://github.com/WasmEdge/WasmEdge/releases/download/0.13.3/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+    trans:
+      - copy:
+        - WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz: teledeploy/WasmEdge-0.13.3-manylinux2014_x86_64.tar.gz
+  # 考虑到目前telego安装描述还不够，提供脚本安装能力
+  - filemap:
+      content: ${install_crac.py}
+      path: teledeploy/install_crac.py
+      mode: 755
+  # 脚本安装能力
+  - filemap:
+      content: ${install_wasmedge.py}
+      path: teledeploy/install_wasmedge.py
+      mode: 755
+
+bin:
+  # waverless 二进制本体
+  waverless:
+  # waverless 入口脚本
+  waverless_entry:
+  # wasmedge 安装脚本
+  wasmedge:
+    no_default_installer: true
+    py_installer: "install_wasmedge.py ${BIN_PRJ} ${MAIN_NODE_IP}"
+  # crac 安装脚本
+  crac:
+    no_default_installer: true
+    py_installer: "install_crac.py ${BIN_PRJ} ${MAIN_NODE_IP}"
