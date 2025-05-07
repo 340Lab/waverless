@@ -51,6 +51,7 @@ use std::{
     fs,
     io::Cursor,
     path::Path,
+    sync::Mutex,
 };
 use tokio::sync::RwLock;
 use ws_derive::LogicalModule;
@@ -631,6 +632,8 @@ pub struct AppMetaManager {
     view: View,
     pub native_apps: HashMap<String, AppMeta>,
     // app_meta_list_lock: Mutex<()>,
+    #[cfg(test)]
+    pub test_http_app_uploaded: Mutex<Bytes>,
 }
 
 #[async_trait]
