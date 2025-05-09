@@ -105,19 +105,19 @@ impl HttpHandler for MasterHttpHandler {
             return self.handle_prometheus();
         }
 
-        let view = self.view.clone();
-        if !view.p2p().nodes_config.this.1.is_master() {
-            tracing::debug!("this is_master");
-            match self.view.appmeta_manager().app_available(app).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return (StatusCode::NOT_FOUND, "app not found").into_response();
-                }
-                Err(e) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-                }
-            }
-        }
+        // let view = self.view.clone();
+        // if !view.p2p().nodes_config.this.1.is_master() {
+        //     tracing::debug!("this is_master");
+        //     match self.view.appmeta_manager().app_available(app).await {
+        //         Ok(true) => {}
+        //         Ok(false) => {
+        //             return (StatusCode::NOT_FOUND, "app not found").into_response();
+        //         }
+        //         Err(e) => {
+        //             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        //         }
+        //     }
+        // }
 
         // check app is available
         // match self.view.appmeta_manager().app_available(app).await {

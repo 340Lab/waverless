@@ -25,18 +25,21 @@
 ///
 /// For detailed implementation of the regular data interface, see the data.rs module.
 use super::*;
+use crate::general::data::m_data_general::batch_handler::DEFAULT_BLOCK_SIZE;
+use crate::general::data::m_data_general::dataitem::DataItemSource;
 use crate::general::network::proto;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
-use tokio::sync::Semaphore;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::general::data::m_data_general::dataitem::DataItemSource;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::sync::Semaphore;
 
 impl proto::DataItem {
     pub fn size(&self) -> usize {
         match &self.data_item_dispatch {
             Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => bytes.len(),
-            Some(proto::data_item::DataItemDispatch::File(file_data)) => file_data.file_content.len(),
+            Some(proto::data_item::DataItemDispatch::File(file_data)) => {
+                file_data.file_content.len()
+            }
             None => 0,
         }
     }
@@ -61,9 +64,7 @@ impl DataGeneral {
         ) -> WSResult<()> {
             let total_size = match data.as_ref() {
                 DataItemSource::Memory { data } => data.len(),
-                DataItemSource::File { path } => {
-                    tokio::fs::metadata(path).await?.len() as usize
-                }
+                DataItemSource::File { path } => tokio::fs::metadata(path).await?.len() as usize,
             };
             let total_blocks = (total_size + DEFAULT_BLOCK_SIZE - 1) / DEFAULT_BLOCK_SIZE;
             let semaphore = Arc::new(Semaphore::new(32));
@@ -114,7 +115,8 @@ impl DataGeneral {
                 let view = view.clone();
                 let handle = tokio::spawn(async move {
                     let _permit = permit; // 持有permit直到任务完成
-                    let resp = view.data_general()
+                    let resp = view
+                        .data_general()
                         .rpc_call_batch_data
                         .call(
                             view.p2p(),
@@ -123,7 +125,7 @@ impl DataGeneral {
                             Some(Duration::from_secs(30)),
                         )
                         .await?;
-                    
+
                     if !resp.success {
                         return Err(WsDataError::BatchTransferError {
                             request_id: proto::BatchRequestId {
@@ -131,7 +133,8 @@ impl DataGeneral {
                                 sequence: block_idx as u64, // 修复：使用 u64
                             },
                             msg: resp.error_message,
-                        }.into());
+                        }
+                        .into());
                     }
                     Ok(())
                 });

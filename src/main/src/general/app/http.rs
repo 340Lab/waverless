@@ -47,20 +47,6 @@ async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) ->
             .http_handler()
             .handle_request(&format!("{app}/{func}"), body)
             .await
-    } else if !view()
-        .appmeta_manager()
-        .app_available(&app)
-        .await
-        .map_or_else(
-            |e| {
-                tracing::debug!("failed to get app available, e:{:?}", e);
-                false
-            },
-            |v| v,
-        )
-    {
-        // # check app valid
-        StatusCode::BAD_REQUEST.into_response()
     } else {
         // # call instance run
         let req_arrive_time = SystemTime::now()
@@ -69,7 +55,7 @@ async fn call_app_fn(Path((app, func)): Path<(String, String)>, body: String) ->
             .as_millis() as u64;
         let res = view()
             .executor()
-            .handle_http_task(&format!("{app}/{func}"), body)
+            .handle_http_task(&app, &func, body)
             // .execute_http_app(FunctionCtxBuilder::new(
             //     app.to_owned(),
             //     self.local_req_id_allocator.alloc(),
@@ -115,9 +101,13 @@ async fn upload_app(mut multipart: Multipart) -> Response {
         let data = field.bytes().await.unwrap();
 
         #[cfg(test)]
-        if *view().appmeta_manager().test_http_app_uploaded.lock().unwrap() != data {
-            panic!("app_uploaded failed!");
+        {
+            *view().appmeta_manager().test_http_app_uploaded.lock() = data.clone();
         }
+
+        // if *view().appmeta_manager().test_http_app_uploaded.lock().unwrap() != data {
+        //     panic!("app_uploaded failed!");
+        // }
 
         let name2 = name.clone();
         let task =

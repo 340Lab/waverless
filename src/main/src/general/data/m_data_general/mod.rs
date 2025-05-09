@@ -1,15 +1,21 @@
 /// 缓存模式类型
 pub type CacheMode = u16;
 
-pub mod dataitem;
 pub mod batch;
 pub mod batch_handler;
+pub mod dataitem;
 
-use crate::general::data::m_data_general::dataitem::{calculate_splits, WantIdxIter, WriteSplitDataTaskGroup, DataItemSource};
-use crate::general::data::m_data_general::batch_handler::{BatchReceiveState, SharedWithBatchHandler};
+use crate::general::data::m_data_general::batch_handler::{
+    BatchReceiveState, SharedWithBatchHandler,
+};
+use crate::general::data::m_data_general::dataitem::{
+    calculate_splits, DataItemSource, WantIdxIter, WriteSplitDataTaskGroup,
+};
 use crate::general::network::proto::DataItem;
+use batch_handler::GetOrDelType;
 use dataitem::{DataItemArgWrapper, WriteSplitTaskResult};
-use tokio::io::{AsyncSeekExt, AsyncReadExt};
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::general::{
     data::m_kv_store_engine::{
@@ -18,21 +24,19 @@ use crate::general::{
     m_os::OperatingSystem,
     network::{
         m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCResponsor},
-        proto::{
-            self, DataMeta, WriteOneDataResponse,
-        },
+        proto::{self, DataMeta, WriteOneDataResponse},
         proto_ext::ProtoExtDataItem,
     },
 };
 use crate::{
     general::{
         data::m_kv_store_engine::{KeyLockGuard, KeyType},
-        network::{proto_ext::DataItemExt},
+        network::proto_ext::DataItemExt,
     },
     logical_module_view_impl,
-    result::{WSError, WSResult, WSResultExt, WsSerialErr, WsNetworkLogicErr},
+    result::{WSError, WSResult, WSResultExt, WsNetworkLogicErr, WsSerialErr},
     sys::{LogicalModule, LogicalModuleNewArgs, NodeID},
-    util::{JoinHandleWrapper, container::async_init_map::AsyncInitMap},
+    util::{container::async_init_map::AsyncInitMap, JoinHandleWrapper},
 };
 use crate::{result::WsDataError, sys::LogicalModulesRef};
 use async_trait::async_trait;
@@ -42,14 +46,13 @@ use core::str;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    sync::atomic::{AtomicU32, Ordering},
     sync::Arc,
     time::Duration,
-    sync::atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinError;
 use ws_derive::LogicalModule;
-
 
 // 费新文
 // use crate::general::network::proto::sche::{DistributeTaskReq, DistributeTaskResp};
@@ -60,10 +63,6 @@ use ws_derive::LogicalModule;
 //     FnExeCtxSync,
 //     FnExeCtxAsyncAllowedType,
 // };
-
-
-
-
 
 logical_module_view_impl!(DataGeneralView);
 logical_module_view_impl!(DataGeneralView, p2p, P2PModule);
@@ -76,9 +75,6 @@ pub type DataItemIdx = u8;
 
 pub const DATA_UID_PREFIX_APP_META: &str = "app";
 pub const DATA_UID_PREFIX_FN_KV: &str = "fkv";
-
-/// 默认数据块大小 (4MB)
-pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 
 pub const CACHE_MODE_TIME_MASK: u16 = 0xf000;
 pub const CACHE_MODE_TIME_FOREVER_MASK: u16 = 0x0fff;
@@ -120,8 +116,6 @@ pub struct DataGeneral {
 
     //费新文
     // rpc_call_distribute_task: RPCCaller<DistributeTaskReq>,
-
-
     rpc_handler_write_once_data: RPCHandler<proto::WriteOneDataRequest>,
     rpc_handler_batch_data: RPCHandler<proto::BatchDataRequest>,
     rpc_handler_data_meta_update: RPCHandler<proto::DataMetaUpdateRequest>,
@@ -131,7 +125,6 @@ pub struct DataGeneral {
     //费新文
     // rpc_handler_distribute_task: RPCHandler<DistributeTaskReq>,
 
-    
     // 批量数据接收状态管理
     batch_receive_states: AsyncInitMap<proto::BatchRequestId, Arc<BatchReceiveState>>,
 }
@@ -148,25 +141,15 @@ impl DataGeneral {
 
             //费新文
             // rpc_call_distribute_task: RPCCaller::new(),
-
-
             rpc_handler_write_once_data: RPCHandler::new(),
             rpc_handler_batch_data: RPCHandler::new(),
             rpc_handler_data_meta_update: RPCHandler::new(),
             rpc_handler_get_data_meta: RPCHandler::new(),
             rpc_handler_get_data: RPCHandler::new(),
             batch_receive_states: AsyncInitMap::new(),
-
             //费新文
             // rpc_handler_distribute_task: RPCHandler::new(),
- 
         }
-    }
-
-    #[allow(dead_code)]
-    fn next_batch_id(&self) -> u32 {
-        static NEXT_BATCH_ID: AtomicU32 = AtomicU32::new(1);  // 从1开始,保留0作为特殊值
-        NEXT_BATCH_ID.fetch_add(1, Ordering::Relaxed)
     }
 
     pub async fn write_data_batch(
@@ -188,49 +171,65 @@ impl DataGeneral {
         ) -> WSResult<()> {
             let (tx, mut rx) = tokio::sync::mpsc::channel(32);
             let mut handles = Vec::new();
-            
+
             let data_size = data.size().await?;
             let splits = calculate_splits(data_size);
-            
-            tracing::debug!("batch_transfer total size({}), splits: {:?}, to node {}", data_size, splits, target_node);
+
+            tracing::debug!(
+                "batch_transfer total size({}), splits: {:?}, to node {}",
+                data_size,
+                splits,
+                target_node
+            );
 
             for (block_idx, split_range) in splits.iter().enumerate() {
                 let block_data = match data.as_ref() {
                     DataItemSource::Memory { data } => data[split_range.clone()].to_vec(),
                     DataItemSource::File { path } => {
                         // 读取文件对应块的数据
-                        let mut file = tokio::fs::File::open(path).await.map_err(|e| WsDataError::BatchTransferFailed {
-                            request_id: proto::BatchRequestId {
-                                node_id: target_node as u32,
-                                sequence: block_idx as u64,
-                            },
-                            reason: format!("Failed to open file: {}", e),
+                        let mut file = tokio::fs::File::open(path).await.map_err(|e| {
+                            WsDataError::BatchTransferFailed {
+                                request_id: proto::BatchRequestId {
+                                    node_id: target_node as u32,
+                                    sequence: block_idx as u64,
+                                },
+                                reason: format!("Failed to open file: {}", e),
+                            }
                         })?;
                         let mut buffer = vec![0; split_range.len()];
                         // 验证seek结果
-                        let seek_pos = file.seek(std::io::SeekFrom::Start(split_range.start as u64)).await.map_err(|e| WsDataError::BatchTransferFailed {
-                            request_id: proto::BatchRequestId {
-                                node_id: target_node as u32,
-                                sequence: block_idx as u64,
-                            },
-                            reason: format!("Failed to seek file: {}", e),
-                        })?;
+                        let seek_pos = file
+                            .seek(std::io::SeekFrom::Start(split_range.start as u64))
+                            .await
+                            .map_err(|e| WsDataError::BatchTransferFailed {
+                                request_id: proto::BatchRequestId {
+                                    node_id: target_node as u32,
+                                    sequence: block_idx as u64,
+                                },
+                                reason: format!("Failed to seek file: {}", e),
+                            })?;
                         if seek_pos != split_range.start as u64 {
                             return Err(WsDataError::BatchTransferFailed {
                                 request_id: proto::BatchRequestId {
                                     node_id: target_node as u32,
                                     sequence: block_idx as u64,
                                 },
-                                reason: format!("Seek position mismatch: expected {}, got {}", split_range.start, seek_pos),
-                            }.into());
+                                reason: format!(
+                                    "Seek position mismatch: expected {}, got {}",
+                                    split_range.start, seek_pos
+                                ),
+                            }
+                            .into());
                         }
                         // read_exact保证读取指定长度的数据或返回错误
-                        let _ = file.read_exact(&mut buffer).await.map_err(|e| WsDataError::BatchTransferFailed {
-                            request_id: proto::BatchRequestId {
-                                node_id: target_node as u32,
-                                sequence: block_idx as u64,
-                            },
-                            reason: format!("Failed to read file: {}", e),
+                        let _ = file.read_exact(&mut buffer).await.map_err(|e| {
+                            WsDataError::BatchTransferFailed {
+                                request_id: proto::BatchRequestId {
+                                    node_id: target_node as u32,
+                                    sequence: block_idx as u64,
+                                },
+                                reason: format!("Failed to read file: {}", e),
+                            }
                         })?;
                         buffer
                     }
@@ -245,11 +244,19 @@ impl DataGeneral {
                     data_item_idx: data_item_idx as u32,
                     // 用空的 DataItem 代替
                     block_type: match data.as_ref() {
-                        DataItemSource::Memory { .. } => Some(proto::DataItem{
-                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(Vec::new())),
+                        DataItemSource::Memory { .. } => Some(proto::DataItem {
+                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(
+                                Vec::new(),
+                            )),
                         }),
-                        DataItemSource::File { .. } => Some(proto::DataItem{
-                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData { file_name_opt: String::new(), is_dir_opt: true, file_content: Vec::new() })),
+                        DataItemSource::File { .. } => Some(proto::DataItem {
+                            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(
+                                proto::FileData {
+                                    file_name_opt: String::new(),
+                                    is_dir_opt: true,
+                                    file_content: Vec::new(),
+                                },
+                            )),
                         }),
                     },
                     block_index: block_idx as u32,
@@ -259,12 +266,13 @@ impl DataGeneral {
                     version,
                     total_size: data_size as u64,
                 };
-    
+
                 let tx = tx.clone();
                 let view = view.clone();
-                
+
                 let handle = tokio::spawn(async move {
-                    let result = view.data_general()
+                    let result = view
+                        .data_general()
                         .rpc_call_batch_data
                         .call(
                             view.p2p(),
@@ -273,17 +281,17 @@ impl DataGeneral {
                             Some(Duration::from_secs(30)),
                         )
                         .await;
-                    
+
                     if let Err(e) = tx.send(result).await {
                         tracing::error!("Failed to send batch transfer result: {}", e);
                     }
                 });
-                
+
                 handles.push(handle);
             }
-            
+
             drop(tx);
-            
+
             while let Some(result) = rx.recv().await {
                 match result {
                     Ok(resp) if !resp.success => {
@@ -293,7 +301,8 @@ impl DataGeneral {
                                 sequence: 0, // TODO: Add proper sequence number
                             },
                             reason: resp.error_message,
-                        }.into());
+                        }
+                        .into());
                     }
                     Ok(_) => continue,
                     Err(e) => {
@@ -303,20 +312,19 @@ impl DataGeneral {
                                 sequence: 0,
                             },
                             reason: format!("RPC call failed: {}", e),
-                        }.into());
+                        }
+                        .into());
                     }
                 }
             }
 
             for handle in handles {
-                handle.await.map_err(|e| {
-                    WsDataError::BatchTransferFailed {
-                        request_id: proto::BatchRequestId {
-                            node_id: target_node as u32,
-                            sequence: 0,
-                        },
-                        reason: format!("Task join failed: {}", e),
-                    }
+                handle.await.map_err(|e| WsDataError::BatchTransferFailed {
+                    request_id: proto::BatchRequestId {
+                        node_id: target_node as u32,
+                        sequence: 0,
+                    },
+                    reason: format!("Task join failed: {}", e),
                 })?;
             }
 
@@ -324,16 +332,28 @@ impl DataGeneral {
         }
 
         let data = Arc::new(data.to_data_item_source());
-        batch_transfer(data_item_idx,unique_id, version, node_id, data, self.view.clone()).await
+        batch_transfer(
+            data_item_idx,
+            unique_id,
+            version,
+            node_id,
+            data,
+            self.view.clone(),
+        )
+        .await
     }
 
-    
     pub async fn get_or_del_datameta_from_master(
         &self,
         unique_id: &[u8],
         delete: bool,
     ) -> WSResult<DataSetMetaV2> {
-        tracing::debug!("get_or_del_datameta_from_master uid: {:?}, delete: {}, whoami: {}", unique_id, delete, self.view.p2p().nodes_config.this.0);
+        tracing::debug!(
+            "get_or_del_datameta_from_master uid: {:?}, delete: {}, whoami: {}",
+            unique_id,
+            delete,
+            self.view.p2p().nodes_config.this.0
+        );
         let p2p = self.view.p2p();
         // get meta from master
         let meta = self
@@ -365,7 +385,7 @@ impl DataGeneral {
         })
     }
 
-    pub async fn get_or_del_data(
+    pub async fn get_or_del_datas(
         &self,
         GetOrDelDataArg {
             meta,
@@ -373,8 +393,12 @@ impl DataGeneral {
             ty,
         }: GetOrDelDataArg,
     ) -> WSResult<(DataSetMetaV2, HashMap<DataItemIdx, proto::DataItem>)> {
-        tracing::debug!("get_or_del_data uid: {:?}, maybe with meta: {:?}", unique_id, meta);
-        let mut data_map = HashMap::new();
+        tracing::debug!(
+            "get_or_del_data uid: {:?}, maybe with meta: {:?}",
+            unique_id,
+            meta
+        );
+        // let mut data_map = HashMap::new();
 
         // get meta from master
         let meta = if let Some(meta) = meta {
@@ -384,144 +408,166 @@ impl DataGeneral {
                 .await?
         };
 
-        tracing::debug!("start get_or_del_data uid: {:?},meta: {:?}", unique_id, meta);
+        tracing::debug!(
+            "start get_or_del_data uid: {:?},meta: {:?}",
+            unique_id,
+            meta
+        );
 
-        // basical verify
-        for idx in 0..meta.data_item_cnt() {
-            let idx = idx as DataItemIdx;
-            let check_cache_map = |meta: &DataSetMetaV2| -> WSResult<()> {
-                if !meta.cache_mode_visitor(idx).is_map_common_kv()
-                    && !meta.cache_mode_visitor(idx).is_map_file()
-                {
-                    return Err(WsDataError::UnknownCacheMapMode {
-                        mode: meta.cache_mode_visitor(idx).0,
-                    }
-                    .into());
-                }
-                Ok(())
-            };
-            check_cache_map(&meta)?;
-        }
+        let idxs: Vec<u8> = WantIdxIter::new(&ty, meta.data_item_cnt() as u8).collect();
+        let res = self
+            .batch_get_or_del_data(
+                unique_id,
+                &meta,
+                &idxs,
+                if ty.is_delete() {
+                    GetOrDelType::DelReturnData
+                } else {
+                    GetOrDelType::Get
+                },
+            )
+            .await
+            .todo_handle("batch_get_or_del_data err")?
+            .expect("current we want the result all the time");
 
-        // get data
-        let p2p = self.view.p2p();
+        let resmap = idxs.into_iter().zip(res).collect();
+        Ok((meta, resmap))
+        // // basical verify
+        // for idx in 0..meta.data_item_cnt() {
+        //     let idx = idx as DataItemIdx;
+        //     let check_cache_map = |meta: &DataSetMetaV2| -> WSResult<()> {
+        //         if !meta.cache_mode_visitor(idx).is_map_common_kv()
+        //             && !meta.cache_mode_visitor(idx).is_map_file()
+        //         {
+        //             return Err(WsDataError::UnknownCacheMapMode {
+        //                 mode: meta.cache_mode_visitor(idx).0,
+        //             }
+        //             .into());
+        //         }
+        //         Ok(())
+        //     };
+        //     check_cache_map(&meta)?;
+        // }
 
-        match ty {
-            GetOrDelDataArgType::All => {
-                for idx in 0..meta.data_item_cnt() {
-                    let idx = idx as DataItemIdx;
-                    let resp = self
-                        .rpc_call_get_data
-                        .call(
-                            p2p,
-                            meta.get_data_node(idx),
-                            proto::GetOneDataRequest {
-                                unique_id: unique_id.to_vec(),
-                                idxs: vec![idx as u32],
-                                delete: false,
-                                return_data: true,
-                            },
-                            Some(Duration::from_secs(60)),
-                        )
-                        .await?;
+        // // get data
+        // let p2p = self.view.p2p();
 
-                    if !resp.success {
-                        return Err(WsDataError::GetDataFailed {
-                            unique_id: unique_id.to_vec(),
-                            msg: resp.message,
-                    }
-                    .into());
-                }
+        // match ty {
+        //     GetOrDelDataArgType::All => {
+        //         for idx in 0..meta.data_item_cnt() {
+        //             let idx = idx as DataItemIdx;
+        //             let resp = self
+        //                 .rpc_call_get_data
+        //                 .call(
+        //                     p2p,
+        //                     meta.get_data_node(idx),
+        //                     proto::GetOneDataRequest {
+        //                         unique_id: unique_id.to_vec(),
+        //                         idxs: vec![idx as u32],
+        //                         delete: false,
+        //                         return_data: true,
+        //                     },
+        //                     Some(Duration::from_secs(60)),
+        //                 )
+        //                 .await?;
 
-                    let _ = data_map.insert(idx, resp.data[0].clone());
-                }
-            }
-            GetOrDelDataArgType::Delete => {
-                for idx in 0..meta.data_item_cnt() {
-                    let idx = idx as DataItemIdx;
-                    let resp = self
-                        .rpc_call_get_data
-                        .call(
-                            p2p,
-                            meta.get_data_node(idx),
-                            proto::GetOneDataRequest {
-                                unique_id: unique_id.to_vec(),
-                                idxs: vec![idx as u32],
-                                delete: true,
-                                return_data: true,
-                            },
-                            Some(Duration::from_secs(60)),
-                        )
-                        .await?;
+        //             if !resp.success {
+        //                 return Err(WsDataError::GetDataFailed {
+        //                     unique_id: unique_id.to_vec(),
+        //                     msg: resp.message,
+        //                 }
+        //                 .into());
+        //             }
 
-                    if !resp.success {
-                        return Err(WsDataError::GetDataFailed {
-                            unique_id: unique_id.to_vec(),
-                            msg: resp.message,
-                    }
-                    .into());
-                }
+        //             let _ = data_map.insert(idx, resp.data[0].clone());
+        //         }
+        //     }
+        //     GetOrDelDataArgType::Delete => {
+        //         for idx in 0..meta.data_item_cnt() {
+        //             let idx = idx as DataItemIdx;
+        //             let resp = self
+        //                 .rpc_call_get_data
+        //                 .call(
+        //                     p2p,
+        //                     meta.get_data_node(idx),
+        //                     proto::GetOneDataRequest {
+        //                         unique_id: unique_id.to_vec(),
+        //                         idxs: vec![idx as u32],
+        //                         delete: true,
+        //                         return_data: true,
+        //                     },
+        //                     Some(Duration::from_secs(60)),
+        //                 )
+        //                 .await?;
 
-                    let _ = data_map.insert(idx, resp.data[0].clone());
-                }
-            }
-            GetOrDelDataArgType::PartialOne { idx } => {
-                let resp = self
-                    .rpc_call_get_data
-                    .call(
-                        p2p,
-                        meta.get_data_node(idx),
-                        proto::GetOneDataRequest {
-                            unique_id: unique_id.to_vec(),
-                            idxs: vec![idx as u32],
-                            delete: false,
-                            return_data: true,
-                        },
-                        Some(Duration::from_secs(60)),
-                    )
-                    .await?;
+        //             if !resp.success {
+        //                 return Err(WsDataError::GetDataFailed {
+        //                     unique_id: unique_id.to_vec(),
+        //                     msg: resp.message,
+        //                 }
+        //                 .into());
+        //             }
 
-                if !resp.success {
-                    return Err(WsDataError::GetDataFailed {
-                        unique_id: unique_id.to_vec(),
-                        msg: resp.message,
-                    }
-                    .into());
-                }
+        //             let _ = data_map.insert(idx, resp.data[0].clone());
+        //         }
+        //     }
+        //     GetOrDelDataArgType::PartialOne { idx } => {
+        //         let resp = self
+        //             .rpc_call_get_data
+        //             .call(
+        //                 p2p,
+        //                 meta.get_data_node(idx),
+        //                 proto::GetOneDataRequest {
+        //                     unique_id: unique_id.to_vec(),
+        //                     idxs: vec![idx as u32],
+        //                     delete: false,
+        //                     return_data: true,
+        //                 },
+        //                 Some(Duration::from_secs(60)),
+        //             )
+        //             .await?;
 
-                let _ = data_map.insert(idx, resp.data[0].clone());
-            }
-            GetOrDelDataArgType::PartialMany { idxs } => {
-                for idx in idxs {
-                    let resp = self
-                        .rpc_call_get_data
-                        .call(
-                            p2p,
-                            meta.get_data_node(idx),
-                            proto::GetOneDataRequest {
-                                unique_id: unique_id.to_vec(),
-                                idxs: vec![idx as u32],
-                                delete: false,
-                                return_data: true,
-                            },
-                            Some(Duration::from_secs(60)),
-                        )
-                        .await?;
+        //         if !resp.success {
+        //             return Err(WsDataError::GetDataFailed {
+        //                 unique_id: unique_id.to_vec(),
+        //                 msg: resp.message,
+        //             }
+        //             .into());
+        //         }
 
-                    if !resp.success {
-                        return Err(WsDataError::GetDataFailed {
-                            unique_id: unique_id.to_vec(),
-                            msg: resp.message,
-                    }
-                    .into());
-                }
+        //         let _ = data_map.insert(idx, resp.data[0].clone());
+        //     }
+        //     GetOrDelDataArgType::PartialMany { idxs } => {
+        //         for idx in idxs {
+        //             let resp = self
+        //                 .rpc_call_get_data
+        //                 .call(
+        //                     p2p,
+        //                     meta.get_data_node(idx),
+        //                     proto::GetOneDataRequest {
+        //                         unique_id: unique_id.to_vec(),
+        //                         idxs: vec![idx as u32],
+        //                         delete: false,
+        //                         return_data: true,
+        //                     },
+        //                     Some(Duration::from_secs(60)),
+        //                 )
+        //                 .await?;
 
-                    let _ = data_map.insert(idx, resp.data[0].clone());
-                }
-            }
-        }
+        //             if !resp.success {
+        //                 return Err(WsDataError::GetDataFailed {
+        //                     unique_id: unique_id.to_vec(),
+        //                     msg: resp.message,
+        //                 }
+        //                 .into());
+        //             }
 
-        Ok((meta, data_map))
+        //             let _ = data_map.insert(idx, resp.data[0].clone());
+        //         }
+        //     }
+        // }
+
+        // Ok((meta, data_map))
     }
 
     pub async fn write_data(
@@ -537,14 +583,16 @@ impl DataGeneral {
         let unique_id = unique_id.into();
         let log_tag = format!("[write_data({})]", String::from_utf8_lossy(&unique_id));
         tracing::debug!("{} start write data", log_tag);
-        
-        let mut data_transfer_sizes=Vec::new();
+
+        let mut data_transfer_sizes = Vec::new();
         data_transfer_sizes.reserve(datas.len());
-        for d in datas.iter_mut(){
-            data_transfer_sizes.push(d.transfer_size().await.map_err(|err|{
-                tracing::error!("{} transfer size error: {}", log_tag, err);
-                err
-            })?);
+        for d in datas.iter_mut() {
+            data_transfer_sizes.push(d.get_data_size(&self.view.os().file_path).await.map_err(
+                |err| {
+                    tracing::error!("{} transfer size error: {}", log_tag, err);
+                    err
+                },
+            )?);
         }
         // 获取数据调度计划
         let version_schedule_resp = self
@@ -557,7 +605,10 @@ impl DataGeneral {
                     context: context_openode_opetype_operole.map(|(node, ope, role)| {
                         proto::DataScheduleContext {
                             // each_data_sz_bytes: data_transfer_sizes,     原代码类型不匹配       曾俊
-                            each_data_sz_bytes: data_transfer_sizes.iter().map(|&x| x as u32).collect(),
+                            each_data_sz_bytes: data_transfer_sizes
+                                .iter()
+                                .map(|&x| x as u32)
+                                .collect(),
                             ope_node: node as i64,
                             ope_type: ope as i32,
                             ope_role: Some(role),
@@ -579,24 +630,47 @@ impl DataGeneral {
             let data_item: &DataItemArgWrapper = &mut datas[data_item_idx as usize];
             let split = &splits[data_item_idx as usize];
             let mut primary_tasks = Vec::new();
-            
+
             // 1. 并行写入所有主数据分片
-            let mut split_iter = WantIdxIter::new(&GetOrDelDataArgType::All, split.splits.len() as u8);
+            let mut split_iter =
+                WantIdxIter::new(&GetOrDelDataArgType::All, split.splits.len() as u8);
             while let Some(split_idx) = split_iter.next() {
                 let split_info = &split.splits[split_idx as usize];
-                tracing::debug!("{} creating split write task {}/{} for node {}, offset={}, size={}",
-                    log_tag, split_idx + 1, split.splits.len(), split_info.node_id, split_info.data_offset, split_info.data_size);
+                tracing::debug!(
+                    "{} creating split write task {}/{} for node {}, offset={}, size={}",
+                    log_tag,
+                    split_idx + 1,
+                    split.splits.len(),
+                    split_info.node_id,
+                    split_info.data_offset,
+                    split_info.data_size
+                );
                 let split_info = split_info.clone();
                 let unique_id_clone = unique_id.clone();
                 // let data_item_primary = data_item.clone_split_range(split_info.data_offset..split_info.data_offset+split_info.data_size);        类型不匹配     曾俊
                 // 生成一个复制的可变数据项
                 let mut data_item_clone = (*data_item).clone();
-                let data_item_primary = data_item_clone.clone_split_range(split_info.data_offset as usize..(split_info.data_offset+split_info.data_size)as usize).await.todo_handle("clone_split_range for write data err")?;
+                let data_item_primary = data_item_clone
+                    .clone_split_range(
+                        &self.view.os().file_path,
+                        split_info.data_offset as usize
+                            ..(split_info.data_offset + split_info.data_size) as usize,
+                    )
+                    .await
+                    .todo_handle("clone_split_range for write data err")?;
+
+                #[cfg(test)]
+                {
+                    tracing::debug!(
+                        "data_item_primary partial: {:?}",
+                        &data_item_primary.clone().into_data_bytes()[0..30]
+                    );
+                }
                 // let data_item_primary = data_item.clone_split_range(split_info.data_offset as usize..(split_info.data_offset+split_info.data_size)as usize).await.todo_handle("clone_split_range for write data err")?;
                 let view = self.view.clone();
                 let version_copy = version;
                 let task = tokio::spawn(async move {
-                                        view.data_general()
+                    view.data_general()
                         .rpc_call_write_once_data
                         .call(
                             view.p2p(),
@@ -618,50 +692,71 @@ impl DataGeneral {
             }
 
             // 2. 并行写入缓存数据（完整数据）
-            let visitor = CacheModeVisitor(version_schedule_resp.cache_mode[data_item_idx as usize] as u16);
-            let need_cache = visitor.is_map_common_kv() || visitor.is_map_file();
-            let cache_nodes: Vec<NodeID> = if need_cache {
-                split.splits.iter().map(|s| s.node_id).collect()
-            } else {
-                vec![]
-            };
+            // let visitor =
+            //     CacheModeVisitor(version_schedule_resp.cache_mode[data_item_idx as usize] as u16);
+            // let need_cache = visitor.is_map_common_kv() || visitor.is_map_file();
+            // let cache_nodes: Vec<NodeID> = if need_cache {
+            //     split.splits.iter().map(|s| s.node_id).collect()
+            // } else {
+            //     vec![]
+            // };
 
-            let mut cache_tasks = Vec::new();
-            if !cache_nodes.is_empty() {
-                tracing::debug!("{} found {} cache nodes: {:?}", log_tag, cache_nodes.len(), cache_nodes);
-                const MAX_CONCURRENT_TRANSFERS: usize = 3;
-                let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFERS));
-                
-                let mut cache_iter = WantIdxIter::new(&GetOrDelDataArgType::All, cache_nodes.len() as u8);
-                while let Some(cache_idx) = cache_iter.next() {
-                    let node_id = cache_nodes[cache_idx as usize];
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    tracing::debug!("{} creating cache write task {}/{} for node {}", log_tag, cache_idx + 1, cache_nodes.len(), node_id);
-                    let unique_id_clone = unique_id.clone();
-                    let data_item_cache = data_item.clone();
-                    let view = self.view.clone();
-                    let task = tokio::spawn(async move {
-                        let _permit = permit; // 持有permit直到任务完成
-                        view.data_general()
-                            // .write_data_batch(unique_id_clone.clone(), version, data_item_cache, data_item_idx, node_id)               //类型不匹配  曾俊
-                            .write_data_batch(unique_id_clone.clone(), version, data_item_cache.dataitem, data_item_idx, node_id)
-                            .await?;
-                        Ok::<proto::WriteOneDataResponse, WSError>(proto::WriteOneDataResponse {
-                            remote_version: version,
-                            success: true,
-                            message: String::new(),
-                        })
-                    });
-                    cache_tasks.push(task);
-                }
-            }
+            // let mut cache_tasks = Vec::new();
+            // if !cache_nodes.is_empty() {
+            //     tracing::debug!(
+            //         "{} found {} cache nodes: {:?}",
+            //         log_tag,
+            //         cache_nodes.len(),
+            //         cache_nodes
+            //     );
+            //     const MAX_CONCURRENT_TRANSFERS: usize = 3;
+            //     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFERS));
+
+            //     let mut cache_iter =
+            //         WantIdxIter::new(&GetOrDelDataArgType::All, cache_nodes.len() as u8);
+            //     while let Some(cache_idx) = cache_iter.next() {
+            //         let node_id = cache_nodes[cache_idx as usize];
+            //         let permit = semaphore.clone().acquire_owned().await.unwrap();
+            //         tracing::debug!(
+            //             "{} creating cache write task {}/{} for node {}",
+            //             log_tag,
+            //             cache_idx + 1,
+            //             cache_nodes.len(),
+            //             node_id
+            //         );
+            //         let unique_id_clone = unique_id.clone();
+            //         let data_item_cache = data_item.clone();
+            //         let view = self.view.clone();
+            //         let task = tokio::spawn(async move {
+            //             let _permit = permit; // 持有permit直到任务完成
+            //             view.data_general()
+            //                 // .write_data_batch(unique_id_clone.clone(), version, data_item_cache, data_item_idx, node_id)               //类型不匹配  曾俊
+            //                 .write_data_batch(
+            //                     unique_id_clone.clone(),
+            //                     version,
+            //                     data_item_cache.dataitem,
+            //                     data_item_idx,
+            //                     node_id,
+            //                 )
+            //                 .await?;
+            //             Ok::<proto::WriteOneDataResponse, WSError>(proto::WriteOneDataResponse {
+            //                 remote_version: version,
+            //                 success: true,
+            //                 message: String::new(),
+            //             })
+            //         });
+            //         cache_tasks.push(task);
+            //     }
+            // }
 
             let primary_results = futures::future::join_all(primary_tasks).await;
             tracing::debug!("{} primary_results: {:?}", log_tag, primary_results);
-            let cache_results = futures::future::join_all(cache_tasks).await;
-            tracing::debug!("{} cache_results: {:?}", log_tag, cache_results);
+            // let cache_results = futures::future::join_all(cache_tasks).await;
+            // tracing::debug!("{} cache_results: {:?}", log_tag, cache_results);
 
-            if primary_results.iter().any(|res| res.is_err()) || cache_results.iter().any(|res| res.is_err()) {
+            if primary_results.iter().any(|res| res.is_err())
+            // || cache_results.iter().any(|res| res.is_err())
+            {
                 let error_msg = format!("主节点或缓存节点数据写入失败");
                 tracing::error!("{}", error_msg);
                 return Err(WSError::WsDataError(WsDataError::WriteDataFailed {
@@ -691,31 +786,32 @@ impl DataGeneral {
             let fail_by_overwrite = || async {
                 let message = "New data version overwrite".to_owned();
                 tracing::warn!("{}", message);
-                
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+
+                if let Err(e) = responsor //返回结果未处理  曾俊
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
-                    .await{
-                        tracing::error!("Failed to send write one data response 1: {}", e);
-                    }
+                    .await
+                {
+                    tracing::error!("Failed to send write one data response 1: {}", e);
+                }
                 // .todo_handle("1 err_comment waitting to fill");
-
             };
             let fail_with_msg = |message: String| async {
                 tracing::warn!("{}", message);
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+                if let Err(e) = responsor //返回结果未处理  曾俊
                     .send_resp(WriteOneDataResponse {
                         remote_version: 0,
                         success: false,
                         message,
                     })
-                    .await {
-                        tracing::error!("Failed to send write one data response 2 : {}", e);
-                    }
-                    // .todo_handle("2 err_comment waitting to fill");
+                    .await
+                {
+                    tracing::error!("Failed to send write one data response 2 : {}", e);
+                }
+                // .todo_handle("2 err_comment waitting to fill");
             };
 
             loop {
@@ -816,7 +912,7 @@ impl DataGeneral {
             || check_meta.as_ref().unwrap().0 != required_meta.as_ref().unwrap().0
         {
             drop(guard);
-            if let Err(e) = responsor                    //返回结果未处理  曾俊
+            if let Err(e) = responsor //返回结果未处理  曾俊
                 .send_resp(WriteOneDataResponse {
                     remote_version: if check_meta.is_none() {
                         0
@@ -826,9 +922,10 @@ impl DataGeneral {
                     success: false,
                     message: "meta is updated again, cancel write".to_owned(),
                 })
-                .await{
-                    tracing::error!("Failed to send write one data response 3: {}", e);
-                }
+                .await
+            {
+                tracing::error!("Failed to send write one data response 3: {}", e);
+            }
             // .todo_handle("3 err_comment waitting to fill");
             return;
         }
@@ -836,14 +933,18 @@ impl DataGeneral {
         for data_with_idx in req.data.into_iter() {
             let proto::DataItemWithIdx { idx, data } = data_with_idx;
             let data = data.unwrap();
-            let data_source = data.to_data_item_source();
-            let data = Arc::new(data_source);
-            let serialize = data.as_ref().encode_persist();
+            // let data_source = data.to_data_item_source();
+            // let data = Arc::new(data_source);
+            let serialize = data.encode_persist();
             tracing::debug!(
-                "writing data part uid({:?}) idx({}) item({})",
+                "writing data partial({:?}) uid({:?}) idx({}) type({:?}) at node({}) with mem size {}",
+                &serialize[0..30],
                 req.unique_id,
                 idx,
-                data.to_debug_string()
+                data.get_data_type(),
+                // data.to_debug_string(),
+                self.view.p2p().nodes_config.this_node(),
+                data.inmem_size()
             );
             if let Err(err) = kv_store_engine.set(
                 KeyTypeDataSetItem {
@@ -855,19 +956,35 @@ impl DataGeneral {
             ) {
                 tracing::warn!("flush error: {}", err)
             }
+
+            #[cfg(test)]
+            {
+                // get data directly from kv store
+                let data = kv_store_engine.get(
+                    &KeyTypeDataSetItem {
+                        uid: req.unique_id.as_ref(),
+                        idx: idx as u8,
+                    },
+                    false,
+                    KvAdditionalConf {},
+                );
+
+                tracing::debug!("test read data partial({:?})", &data.unwrap().1[0..30]);
+            }
         }
         kv_store_engine.flush();
         drop(guard);
         tracing::debug!("data partial is written");
-        if let Err(e) = responsor               //返回结果未使用  曾俊
+        if let Err(e) = responsor //返回结果未使用  曾俊
             .send_resp(WriteOneDataResponse {
                 remote_version: req.version,
                 success: true,
                 message: "".to_owned(),
             })
-            .await{
-                tracing::error!("Failed to send write one data response 4: {}", e);
-            }
+            .await
+        {
+            tracing::error!("Failed to send write one data response 4: {}", e);
+        }
         // .todo_handle("4 err_comment waitting to fill");
     }
 
@@ -890,10 +1007,14 @@ impl DataGeneral {
 
         let key = KeyTypeDataSetMeta(&req.unique_id);
         let keybytes = key.make_key();
-        
+
         // test only log
         #[cfg(test)]
-        tracing::debug!("rpc_handle_data_meta_update {:?}\n    {:?}", req,bincode::deserialize::<DataSetMeta>(&req.serialized_meta));
+        tracing::debug!(
+            "rpc_handle_data_meta_update {:?}\n    {:?}",
+            req,
+            bincode::deserialize::<DataSetMeta>(&req.serialized_meta)
+        );
         // not test log
         #[cfg(not(test))]
         tracing::debug!("rpc_handle_data_meta_update {:?}", req);
@@ -902,35 +1023,44 @@ impl DataGeneral {
         let _kv_write_lock_guard = kv_lock.write();
 
         if let Some((_old_version, mut old_meta)) =
-            self.view.kv_store_engine().get(&key, true, KvAdditionalConf {})
+            self.view
+                .kv_store_engine()
+                .get(&key, true, KvAdditionalConf {})
         {
             if old_meta.version > req.version {
                 drop(_kv_write_lock_guard);
                 let err_msg = "New data version is smaller, failed update";
                 tracing::warn!("{}", err_msg);
-                if let Err(e) = responsor                //返回结果未处理  曾俊
+                if let Err(e) = responsor //返回结果未处理  曾俊
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: old_meta.version,
                         message: err_msg.to_owned(),
                     })
-                    .await{
-                        tracing::error!("Failed to send data meta update response 5: {}", e);
-                    }
+                    .await
+                {
+                    tracing::error!("Failed to send data meta update response 5: {}", e);
+                }
                 // .todo_handle("5 err_comment waitting to fill");
                 return;
             }
             old_meta.version = req.version;
             if req.serialized_meta.len() > 0 {
-                if let Err(e) = self.view.kv_store_engine()                  //返回结果未处理  曾俊
-                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true){
-                        tracing::error!("Failed to set raw data in kv store 6: {}", e);
-                    }
+                if let Err(e) = self
+                    .view
+                    .kv_store_engine() //返回结果未处理  曾俊
+                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
+                {
+                    tracing::error!("Failed to set raw data in kv store 6: {}", e);
+                }
                 // .todo_handle("6 err_comment waitting to fill");
             } else {
-                if let Err(e) = self.view.kv_store_engine()                  //返回结果未处理  曾俊
-                    .set(key, &old_meta, true){
-                        tracing::error!("Failed to set raw data in kv store 7: {}", e);
-                    }
+                if let Err(e) = self
+                    .view
+                    .kv_store_engine() //返回结果未处理  曾俊
+                    .set(key, &old_meta, true)
+                {
+                    tracing::error!("Failed to set raw data in kv store 7: {}", e);
+                }
                 // .todo_handle("7 err_comment waitting to fill");
             }
         } else {
@@ -939,37 +1069,42 @@ impl DataGeneral {
                     "set new meta data, {:?}",
                     bincode::deserialize::<DataSetMeta>(&req.serialized_meta)
                 );
-                if let Err(e) = self.view.kv_store_engine()                       //返回结果未处理  曾俊      
-                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true){
-                        tracing::error!("Failed to set raw data in kv store 8: {}", e);
-                    }
+                if let Err(e) = self
+                    .view
+                    .kv_store_engine() //返回结果未处理  曾俊
+                    .set_raw(&keybytes, std::mem::take(&mut req.serialized_meta), true)
+                {
+                    tracing::error!("Failed to set raw data in kv store 8: {}", e);
+                }
                 // .todo_handle("8 err_comment waitting to fill");
             } else {
                 drop(_kv_write_lock_guard);
                 let err_msg = "Old meta data not found and missing new meta";
                 tracing::warn!("{}", err_msg);
-                if let Err(e) = responsor                    //返回结果未处理  曾俊
+                if let Err(e) = responsor //返回结果未处理  曾俊
                     .send_resp(proto::DataMetaUpdateResponse {
                         version: 0,
                         message: err_msg.to_owned(),
                     })
-                    .await{
-                        tracing::error!("Failed to send data meta update response 9: {}", e);
-                    }
+                    .await
+                {
+                    tracing::error!("Failed to send data meta update response 9: {}", e);
+                }
                 // .todo_handle("9 err_comment waitting to fill");
                 return;
             }
         }
         drop(_kv_write_lock_guard);
         tracing::debug!("rpc_handle_data_meta_update success");
-        if let Err(e) = responsor                          //返回结果未处理  曾俊
+        if let Err(e) = responsor //返回结果未处理  曾俊
             .send_resp(proto::DataMetaUpdateResponse {
                 version: req.version,
                 message: "Update success".to_owned(),
             })
-            .await{
-                tracing::error!("Failed to send data meta update response 10: {}", e);
-            }
+            .await
+        {
+            tracing::error!("Failed to send data meta update response 10: {}", e);
+        }
         // .todo_handle("10 err_comment waitting to fill");
     }
 
@@ -1004,7 +1139,8 @@ impl DataGeneral {
         tracing::debug!("starting rpc_handle_get_one_data {:?}", req);
 
         let kv_store_engine = self.view.kv_store_engine();
-        let _ = self.view
+        let _ = self
+            .view
             .get_metadata(&req.unique_id, req.delete)
             .await
             .map_err(|err| {
@@ -1017,6 +1153,7 @@ impl DataGeneral {
 
         for idx in req.idxs {
             let value = if req.delete {
+                tracing::debug!("deleting data item at idx: {}", idx);
                 match kv_store_engine.del(
                     KeyTypeDataSetItem {
                         uid: req.unique_id.as_ref(),
@@ -1031,6 +1168,7 @@ impl DataGeneral {
                     }
                 }
             } else {
+                tracing::debug!("getting data item at idx: {}", idx);
                 kv_store_engine.get(
                     &KeyTypeDataSetItem {
                         uid: req.unique_id.as_ref(),
@@ -1051,20 +1189,58 @@ impl DataGeneral {
                 }
                 msg
             })
-        } else if got_or_deleted.iter().all(|v| v.is_some()) {
-            (true, "success".to_owned())
         } else {
-            tracing::warn!("some data not found");
-            (false, "some data not found".to_owned())
+            let notfound_idxs = got_or_deleted
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v.is_none())
+                .map(|(idx, _)| idx as u8)
+                .collect::<Vec<_>>();
+            if notfound_idxs.len() > 0 {
+                let msg = format!(
+                    "some data not found on node({}), idxs: {:?},",
+                    self.view.p2p().nodes_config.this_node(),
+                    notfound_idxs
+                );
+                tracing::warn!("{}", msg);
+                (false, msg)
+            } else {
+                (true, "success".to_owned())
+            }
         };
+        // if got_or_deleted.iter().all(|v| v.is_some()) {
+        //     (true, "success".to_owned())
+        // } else {
+        //     tracing::warn!("some data not found");
+        //     (false, "some data not found".to_owned())
+        // };
 
         let mut got_or_deleted_checked: Vec<proto::DataItem> = vec![];
         if success {
             for v in got_or_deleted {
+                #[cfg(test)]
+                {
+                    tracing::debug!(
+                        "test get one data partial({:?})",
+                        &v.clone().unwrap().1[0..30]
+                    );
+                }
                 let decode_res = proto::DataItem::decode_persist(v.unwrap().1);
                 match decode_res {
                     Ok(item) => {
-                        tracing::debug!("decoded data item: {:?}", item.to_string());
+                        tracing::debug!(
+                            "decoded data item: {:?} with mem len {}",
+                            item.to_string(),
+                            item.inmem_size()
+                        );
+
+                        #[cfg(test)]
+                        {
+                            tracing::debug!(
+                                "get one data decoded data item partial: {:?}",
+                                &item.clone().into_data_bytes()[0..30]
+                            );
+                        }
                         got_or_deleted_checked.push(item);
                     }
                     Err(e) => {
@@ -1087,114 +1263,6 @@ impl DataGeneral {
 
         Ok(())
     }
-
-    // 处理批量数据写入请求
-    pub async fn rpc_handle_batch_data(
-        &self,
-        responsor: RPCResponsor<proto::BatchDataRequest>,
-        req: proto::BatchDataRequest,
-    ) -> WSResult<()> {
-        tracing::debug!("rpc_handle_batch_data with batchid({:?})", req.request_id.clone().unwrap());
-        let batch_receive_states = self.batch_receive_states.clone();
-        // 预先克隆闭包外需要的字段
-        let block_index = req.block_index;
-        let data = req.data.clone();
-        let request_id = req.request_id.clone().unwrap();   
-
-        // 1. 查找或创建状态
-        let state = match self.batch_receive_states
-            .get_or_init(req.request_id.clone().unwrap(), async move {
-                // 创建任务组和句柄
-                let (mut group, handle) = match WriteSplitDataTaskGroup::new(    
-                    req.unique_id.clone(),
-                    req.total_size as usize,
-                    // req.block_type(),      类型错误    曾俊
-                    req.block_type.unwrap().data_item_dispatch.unwrap(),
-                    req.version,
-                ).await {
-                    Ok((group, handle)) => (group, handle),
-                    Err(e) => {
-                        tracing::error!("Failed to create task group: {:?}", e);
-                        return Err(e);
-                    }
-                };
-
-                // 再process之前订阅，避免通知先于订阅
-                let waiter = handle.get_all_tasks_waiter();
-
-                // 启动process_tasks
-                let _ = tokio::spawn(async move {
-                    match group.process_tasks().await {
-                        Ok(item) => Ok(item),
-                        Err(e) => {
-                            tracing::error!("Failed to process tasks: {}", e);
-                            Err(e)
-                        }
-                    }
-                });
-
-                let state = Arc::new(BatchReceiveState::new(handle, SharedWithBatchHandler::new()));
-                let state_clone = state.clone();
-
-                // response task
-                let _=tokio::spawn(async move {
-                    tracing::debug!("rpc_handle_batch_data response task started");
-                    // 等待所有任务完成
-                    if let Err(e) = waiter.wait().await {
-                        tracing::error!("Failed to wait for tasks: {}", e);
-                        todo!("use responsor to send error response");
-                        return;
-                    }
-
-                    tracing::debug!("rpc_handle_batch_data response task wait all tasks done");
-
-                    // 发送最终响应
-                    if let Some(final_responsor) = state_clone.shared.get_final_responsor().await {
-                        if let Err(e) = final_responsor.send_resp(proto::BatchDataResponse {
-                            request_id: Some(req.request_id.clone().unwrap()),
-                            success: true,
-                            error_message: String::new(),
-                            version: state_clone.handle.version(),
-                        }).await {
-                            tracing::error!("Failed to send final response: {}", e);
-                        }
-                    }
-
-                    // 清理状态
-                    let _=batch_receive_states.remove(&req.request_id.unwrap());
-                });
-
-                Ok(state)
-            })
-            .await {
-            Err(e) => return Err(WSError::WsDataError(WsDataError::BatchTransferError {
-                request_id,
-                msg: format!("Failed to initialize batch state: {}", e)
-            })),
-            Ok(state) => state,
-        };
-
-        tracing::debug!("rpc_handle_batch_data ready with write_split_data_task_group");
-
-        // 2. 提交分片数据
-        let data_item = proto::DataItem {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(data)),
-            ..Default::default()
-        };
-
-        tracing::debug!("submit_split with data split idx: {}, at node: {}", block_index, self.view.p2p().nodes_config.this_node());
-        state.handle.submit_split(
-            block_index as usize * DEFAULT_BLOCK_SIZE,
-            data_item,
-        ).await?;
-
-        // 3. 更新响应器
-        state.shared.update_responsor(responsor).await;
-
-        Ok(())
-    }
-
-
 
     //费新文
     // pub async fn distribute_task_to_worker(
@@ -1250,9 +1318,9 @@ impl DataGeneral {
     //     req: DistributeTaskReq,
     // ) {
     //     tracing::debug!("rpc_handle_distribute_task with req({:?})", req);
-        
+
     //     // TODO: 这里需要实现具体的任务处理逻辑
-        
+
     //     if let Err(e) = responsor
     //         .send_resp(DistributeTaskResp {
     //             success: true,
@@ -1262,10 +1330,6 @@ impl DataGeneral {
     //             tracing::error!("Failed to send distribute task response: {}", e);
     //         }
     // }
-
-    
-
-
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -1304,7 +1368,7 @@ pub struct DataSetMetaV1 {
 /// 注意：新建元信息请使用 `DataSetMetaBuilder`
 ///
 /// https://fvd360f8oos.feishu.cn/docx/XoFudWhAgox84MxKC3ccP1TcnUh#share-Tqqkdxubpokwi5xREincb1sFnLc
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataSetMetaV2 {
     // unique_id: Vec<u8>,
     api_version: u8,
@@ -1319,7 +1383,7 @@ impl DataSetMetaV2 {
     pub fn cache_mode_visitor(&self, idx: DataItemIdx) -> CacheModeVisitor {
         CacheModeVisitor(self.cache_mode[idx as usize])
     }
-    
+
     pub fn data_item_cnt(&self) -> usize {
         self.datas_splits.len()
     }
@@ -1343,7 +1407,7 @@ pub struct EachNodeSplit {
     pub node_id: NodeID,
     pub data_offset: u32,
     pub data_size: u32,
-    pub cache_mode: u32,  // 添加 cache_mode 字段
+    pub cache_mode: u32, // 添加 cache_mode 字段
 }
 
 impl EachNodeSplit {
@@ -1357,6 +1421,12 @@ impl EachNodeSplit {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataSplit {
     pub splits: Vec<EachNodeSplit>,
+}
+
+impl DataSplit {
+    pub fn total_size(&self) -> usize {
+        self.splits.iter().map(|s| s.data_size as usize).sum()
+    }
 }
 
 pub type DataSplitIdx = usize;
@@ -1587,6 +1657,11 @@ pub enum GetOrDelDataArgType {
     PartialOne { idx: DataItemIdx },
     PartialMany { idxs: BTreeSet<DataItemIdx> },
 }
+impl GetOrDelDataArgType {
+    pub fn is_delete(&self) -> bool {
+        matches!(self, Self::Delete)
+    }
+}
 
 impl DataGeneralView {
     fn get_data_meta_local(
@@ -1612,18 +1687,16 @@ impl DataGeneralView {
         Ok(meta_opt)
     }
 
-    pub async fn get_metadata(
-        &self,
-        unique_id: &[u8],
-        delete: bool,
-    ) -> WSResult<DataSetMetaV2> {
+    pub async fn get_metadata(&self, unique_id: &[u8], delete: bool) -> WSResult<DataSetMetaV2> {
         // 先尝试从本地获取
         if let Some((_version, meta)) = self.get_data_meta_local(unique_id, delete)? {
             return Ok(meta);
         }
 
         // 本地不存在，从 master 获取
-        self.data_general().get_or_del_datameta_from_master(unique_id, delete).await
+        self.data_general()
+            .get_or_del_datameta_from_master(unique_id, delete)
+            .await
     }
 }
 
@@ -1632,6 +1705,8 @@ impl From<JoinError> for WSError {
         WsNetworkLogicErr::TaskJoinError { err }.into()
     }
 }
+
+const DATA_TMP_DIR: &str = "data_tmp";
 
 #[async_trait]
 impl LogicalModule for DataGeneral {
@@ -1650,14 +1725,12 @@ impl LogicalModule for DataGeneral {
             // //费新文
             // rpc_call_distribute_task: RPCCaller::new(),
             // rpc_handler_distribute_task: RPCHandler::new(),
-
-
             rpc_handler_write_once_data: RPCHandler::new(),
             rpc_handler_batch_data: RPCHandler::new(),
             rpc_handler_data_meta_update: RPCHandler::new(),
             rpc_handler_get_data_meta: RPCHandler::new(),
             rpc_handler_get_data: RPCHandler::new(),
-            
+
             // 批量数据接收状态管理
             batch_receive_states: AsyncInitMap::new(),
         }
@@ -1665,6 +1738,8 @@ impl LogicalModule for DataGeneral {
 
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
+
+        fs::create_dir_all(self.view.os().file_path.join(DATA_TMP_DIR)).await?;
 
         let p2p = self.view.p2p();
         // register rpc callers
@@ -1675,14 +1750,12 @@ impl LogicalModule for DataGeneral {
             self.rpc_call_get_data_meta.regist(p2p);
             self.rpc_call_get_data.regist(p2p);
 
-
             //费新文
             // self.rpc_call_distribute_task.regist(p2p);
         }
 
         // register rpc handlers
         {
-
             //费新文
             // let view = self.view.clone();
             // self.rpc_handler_distribute_task.regist(
@@ -1696,14 +1769,15 @@ impl LogicalModule for DataGeneral {
             //         Ok(())
             //     },
             // );
-            
 
             let view = self.view.clone();
             self.rpc_handler_write_once_data
                 .regist(p2p, move |responsor, req| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        view.data_general().rpc_handle_write_one_data(responsor, req).await;
+                        view.data_general()
+                            .rpc_handle_write_one_data(responsor, req)
+                            .await;
                     });
                     Ok(())
                 });
@@ -1715,7 +1789,10 @@ impl LogicalModule for DataGeneral {
                       req: proto::BatchDataRequest| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        let _ = view.data_general().rpc_handle_batch_data(responsor, req).await;
+                        let _ = view
+                            .data_general()
+                            .rpc_handle_batch_data(responsor, req)
+                            .await;
                     });
                     Ok(())
                 },
@@ -1728,7 +1805,9 @@ impl LogicalModule for DataGeneral {
                       req: proto::DataMetaUpdateRequest| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        view.data_general().rpc_handle_data_meta_update(responsor, req).await
+                        view.data_general()
+                            .rpc_handle_data_meta_update(responsor, req)
+                            .await
                     });
                     Ok(())
                 },
@@ -1739,10 +1818,13 @@ impl LogicalModule for DataGeneral {
                 .regist(p2p, move |responsor, req| {
                     let view = view.clone();
                     let _ = tokio::spawn(async move {
-                        if let Err(e) = view.data_general().rpc_handle_get_data_meta(req, responsor)             //返回结果未处理    曾俊
-                            .await{
-                                tracing::error!("Failed to handle get data meta: {}", e);
-                            }
+                        if let Err(e) = view
+                            .data_general()
+                            .rpc_handle_get_data_meta(req, responsor) //返回结果未处理    曾俊
+                            .await
+                        {
+                            tracing::error!("Failed to handle get data meta: {}", e);
+                        }
                         // .todo_handle("rpc_handle_get_data_meta err");
                     });
                     Ok(())
@@ -1754,8 +1836,10 @@ impl LogicalModule for DataGeneral {
                 move |responsor: RPCResponsor<proto::GetOneDataRequest>,
                       req: proto::GetOneDataRequest| {
                     let view = view.clone();
-                    let _ = tokio::spawn(async move { 
-                        view.data_general().rpc_handle_get_one_data(responsor, req).await 
+                    let _ = tokio::spawn(async move {
+                        view.data_general()
+                            .rpc_handle_get_one_data(responsor, req)
+                            .await
                     });
                     Ok(())
                 },

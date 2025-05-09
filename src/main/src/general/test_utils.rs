@@ -14,6 +14,9 @@ lazy_static! {
         Mutex::new(None);
 }
 
+pub const TEST_SYS1_PORT: u16 = 2303;
+pub const TEST_SYS2_PORT: u16 = 2307;
+
 /// sys1 is the master, sys2 is the worker
 pub async fn get_test_sys<'a>() -> (
     tokio::sync::MutexGuard<
@@ -39,20 +42,22 @@ async fn start_2_node() -> ((Sys, LogicalModulesRef), (Sys, LogicalModulesRef)) 
     let _ = fs::remove_dir_all("test_temp_dir1");
     let _ = fs::remove_dir_all("test_temp_dir2");
 
-    let node0: NodeConfig = serde_yaml::from_str(
+    let node0: NodeConfig = serde_yaml::from_str(&format!(
         r#"
-addr: 127.0.0.1:2303
+addr: 127.0.0.1:{}
 spec: [meta,master]
 "#,
-    )
+        TEST_SYS1_PORT
+    ))
     .unwrap();
 
-    let node1: NodeConfig = serde_yaml::from_str(
+    let node1: NodeConfig = serde_yaml::from_str(&format!(
         r#"
-addr: 127.0.0.1:2307
+addr: 127.0.0.1:{}
 spec: [meta,worker]
 "#,
-    )
+        TEST_SYS2_PORT
+    ))
     .unwrap();
 
     let sys1 = Sys::new(NodesConfig {

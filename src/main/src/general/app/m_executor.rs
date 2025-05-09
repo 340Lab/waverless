@@ -451,7 +451,8 @@ impl Executor {
             //如果函数支持同步
             // construct sync fn exe ctx
             let ctx = FnExeCtxSync::new(
-                match FnExeCtxAsyncAllowedType::try_from(apptype) {  // 这里修正为 FnExeCtxAsyncAllowedType
+                match FnExeCtxAsyncAllowedType::try_from(apptype) {
+                    // 这里修正为 FnExeCtxAsyncAllowedType
                     Ok(v) => v,
                     Err(err) => {
                         let warn = format!("app type {:?} not supported, err: {}", apptype, err);
@@ -494,9 +495,6 @@ impl Executor {
                 tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
             }
             let _ = self.execute_sync(ctx);
-            
-
-            
         } else {
             //如果函数支持异步
             // construct async fn exe ctx
@@ -544,42 +542,19 @@ impl Executor {
                 tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
             }
             let _ = self.execute(ctx).await;
-
         }
-
-
-    
-
     }
 
-    pub async fn handle_http_task(&self, route: &str, text: String) -> WSResult<Option<String>> {
+    /// before call this, verify app and func exist
+    pub async fn handle_http_task(
+        &self,
+        appname: &str,
+        funcname: &str,
+        text: String,
+    ) -> WSResult<Option<String>> {
         let req_id: ReqId = self
             .next_req_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-
-        ////////////////////////////////////////////////////
-        // route format ////////////////////////////////////
-        // format route, remove last /
-        let route = if route.ends_with('/') {
-            &route[..route.len() - 1]
-        } else {
-            route
-        };
-        let split = route.split("/").into_iter().collect::<Vec<_>>();
-        // check path ok
-        if split.len() != 2 {
-            tracing::warn!(
-                "route {} not support, only support appname/funcname now",
-                route
-            );
-            return Err(WsFuncError::InvalidHttpUrl(route.to_owned()).into());
-        }
-
-        /////////////////////////////////////////////////
-        // existence ////////////////////////////////////
-        // trigger app
-        let appname = split[0];
-        let funcname = split[1];
 
         // check app exist
         tracing::debug!("calling get_app_meta to check app exist, app: {}", appname);
@@ -607,7 +582,11 @@ impl Executor {
             self.view
                 .appmeta_manager()
                 .load_app_file(appname, datameta)
-                .await?;
+                .await
+                .map_err(|e| {
+                    tracing::error!("load app file failed with err: {}", e);
+                    e
+                })?;
         }
 
         /////////////////////////////////////////////////

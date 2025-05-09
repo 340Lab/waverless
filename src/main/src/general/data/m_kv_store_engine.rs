@@ -569,7 +569,8 @@ mod test {
         let (_hold, _sys1, sys2) = test_utils::get_test_sys().await;
         let view = View::new(sys2);
         let key = "test_kv_store_engine_key";
-        view.kv_store_engine()
+        let _ = view
+            .kv_store_engine()
             .set(
                 KeyTypeDataSetMeta(key.as_bytes()),
                 &DataSetMetaBuilder::new()
