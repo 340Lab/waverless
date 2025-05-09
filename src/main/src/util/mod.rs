@@ -1,3 +1,4 @@
+pub mod command;
 pub mod container;
 pub mod zip;
 
@@ -180,6 +181,12 @@ unsafe impl<F> Send for FutureWrapper<F> where F: Future {}
 
 pub struct SendNonNull<T>(pub NonNull<T>);
 unsafe impl<T> Send for SendNonNull<T> {}
+
+impl<T> SendNonNull<T> {
+    pub fn as_mut(&self) -> &mut T {
+        unsafe { &mut *self.0.as_ptr() }
+    }
+}
 
 pub fn call_async_from_sync<Fut>(fut: Fut) -> Fut::Output
 where

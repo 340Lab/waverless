@@ -1,12 +1,12 @@
-use std::path::Path;
-use std::io::{self, Write, Seek, Cursor,Read};
+use crate::result::{WSError, WSResult, WsIoErr};
 use std::fs;
-use walkdir::WalkDir;
-use zip::{write::FileOptions, ZipWriter, result::ZipError};
-use crate::result::{WSResult, WSError, WsIoErr};
+use std::io::{self, Cursor, Read, Seek, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use walkdir::WalkDir;
+use zip::{result::ZipError, write::FileOptions, ZipWriter};
 
-use super::{non_null, SendNonNull};      // 添加这一行以引入PermissionsExt trait 针对下方的.mode()报错   曾俊
+use super::{non_null, SendNonNull}; // 添加这一行以引入PermissionsExt trait 针对下方的.mode()报错   曾俊
 
 pub fn unzip_data_2_path(p: impl AsRef<Path>, data: Vec<u8>) -> WSResult<()> {
     // remove old dir
@@ -66,7 +66,7 @@ where
                     .metadata()
                     .map_err(|e| WSError::from(e))?
                     .permissions()
-                    .mode(),         // 修改！！！   在文件上方导入了一个PermissionsExt trait     曾俊
+                    .mode(), // 修改！！！   在文件上方导入了一个PermissionsExt trait     曾俊
             );
 
         // Write file or directory explicitly
@@ -95,10 +95,7 @@ where
     Ok(())
 }
 
-pub fn zip_dir_2_mem(
-    src_dir: &Path,
-    method: zip::CompressionMethod,
-) -> WSResult<Vec<u8>> {
+pub fn zip_dir_2_mem(src_dir: &Path, method: zip::CompressionMethod) -> WSResult<Vec<u8>> {
     if !src_dir.is_dir() {
         return Err(WsIoErr::Zip2(ZipError::FileNotFound).into());
     }
@@ -120,7 +117,7 @@ pub fn zip_dir_2_mem(
 pub async fn zip_dir_2_file(
     src_dir: impl AsRef<Path>,
     method: zip::CompressionMethod,
-   dst_file: &mut std::fs::File ,
+    dst_file: &mut std::fs::File,
 ) -> WSResult<()> {
     // // if !src_dir.is_dir() {    //泛型参数不会自动解引用    曾俊
     // if !src_dir.as_ref().is_dir() {
@@ -136,19 +133,23 @@ pub async fn zip_dir_2_file(
     let it = walkdir.into_iter();
 
     // 使用阻塞线程执行 zip 操作，因为 zip 库不支持异步 IO
-    let mut dst_file_ptr= unsafe{SendNonNull(non_null(dst_file))};
+    let dst_file_ptr = unsafe { SendNonNull(non_null(dst_file)) };
     tokio::task::spawn_blocking(move || {
         zip_dir(
             &mut it.filter_map(|e| e.ok()),
-            // src_dir,          //泛型参数不会自动解引用    曾俊    
+            // src_dir,          //泛型参数不会自动解引用    曾俊
             src_dir.as_ref(),
-            unsafe{dst_file_ptr.as_mut()},
+            unsafe { dst_file_ptr.as_mut() },
             method,
         )
-    }).await.map_err(|e| WsIoErr::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("Failed to execute zip task: {}", e)
-    )))??;
+    })
+    .await
+    .map_err(|e| {
+        WsIoErr::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to execute zip task: {}", e),
+        ))
+    })??;
 
     Ok(())
 }
@@ -172,7 +173,7 @@ mod tests {
 
         // 创建临时输出文件
         let mut output_file = NamedTempFile::new()?;
-        
+
         // 执行压缩
         tokio::runtime::Runtime::new()?.block_on(async {
             zip_dir_2_file(
@@ -180,7 +181,8 @@ mod tests {
                 zip::CompressionMethod::Stored,
                 output_file.as_file_mut(),
                 // output_file.as_file_mut(),
-            ).await
+            )
+            .await
         })?;
 
         // 读取压缩后的数据
@@ -188,7 +190,7 @@ mod tests {
 
         // 创建临时解压目录
         let extract_dir = tempdir()?;
-        
+
         // 执行解压
         unzip_data_2_path(extract_dir.path(), zip_data)?;
 
@@ -224,14 +226,15 @@ mod tests {
 
         // 创建临时输出文件
         let mut output_file = NamedTempFile::new()?;
-        
+
         // 执行压缩
         tokio::runtime::Runtime::new()?.block_on(async {
             zip_dir_2_file(
                 src_path,
                 zip::CompressionMethod::Stored,
                 output_file.as_file_mut(),
-            ).await
+            )
+            .await
         })?;
 
         // 读取压缩后的数据
@@ -239,7 +242,7 @@ mod tests {
 
         // 创建临时解压目录
         let extract_dir = tempdir()?;
-        
+
         // 执行解压
         unzip_data_2_path(extract_dir.path(), zip_data)?;
 
@@ -256,17 +259,18 @@ mod tests {
     fn test_zip_empty_directory() -> WSResult<()> {
         // 创建空临时目录
         let src_dir = tempdir()?;
-        
+
         // 创建临时输出文件
         let mut output_file = NamedTempFile::new()?;
-        
+
         // 执行压缩
         tokio::runtime::Runtime::new()?.block_on(async {
             zip_dir_2_file(
                 src_dir.path(),
                 zip::CompressionMethod::Stored,
                 output_file.as_file_mut(),
-            ).await
+            )
+            .await
         })?;
 
         // 读取压缩后的数据
@@ -274,7 +278,7 @@ mod tests {
 
         // 创建临时解压目录
         let extract_dir = tempdir()?;
-        
+
         // 执行解压
         unzip_data_2_path(extract_dir.path(), zip_data)?;
 

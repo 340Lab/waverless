@@ -31,9 +31,7 @@ pub enum WsNetworkLogicErr {
     DecodeError(DecodeError),
     MsgIdNotDispatchable(u32),
     InvaidNodeID(NodeID),
-    TaskJoinError {
-        err: tokio::task::JoinError
-    },
+    TaskJoinError { err: tokio::task::JoinError },
 }
 
 #[derive(Debug)]
@@ -139,6 +137,11 @@ pub enum WsFuncError {
         app: String,
         func: String,
     },
+    AppPackLoadFailed {
+        app: String,
+        err: Option<Box<WSError>>,
+        context: String,
+    },
     InvalidHttpUrl(String),
     FuncHttpNotSupported {
         fname: String,
@@ -228,6 +231,9 @@ pub enum WsDataError {
         actual: proto::data_item::DataItemDispatch,
         context: String,
     },
+    FileNotFound {
+        path: PathBuf,
+    },
     FileMetadataErr {
         path: PathBuf,
         err: std::io::Error,
@@ -253,7 +259,7 @@ pub enum WsDataError {
         path: String,
         err: Infallible,
     },
-    UnzipErr{
+    UnzipErr {
         path: PathBuf,
         err: ZipExtractError,
     },
@@ -313,11 +319,11 @@ pub enum WsDataError {
         actual: u64,
     },
     SizeMismatch {
-        expected: usize,  // 预期的数据大小
-        actual: usize,    // 实际的数据大小
+        expected: usize, // 预期的数据大小
+        actual: usize,   // 实际的数据大小
     },
     ReadDataFailed {
-        path: PathBuf,     // 读取失败的文件路径
+        path: PathBuf, // 读取失败的文件路径
     },
     /// 数据分片任务错误
     DataSplitTaskError {
@@ -329,6 +335,22 @@ pub enum WsDataError {
         reason: String,
         /// 数据类型（用于调试）
         data_type: String,
+    },
+    /// 传输目录持久化tmp压缩文件失败
+    TransferDirCreateTmpFileFailed {
+        path: PathBuf,
+        err: std::io::Error,
+        context: String,
+    },
+    /// 传输目录保持tmp压缩文件失败
+    TransferDirPersistTmpFileKeepFailed {
+        path: PathBuf,
+        err: tempfile::PersistError,
+        context: String,
+    },
+    FileCreateErr {
+        path: PathBuf,
+        err: std::io::Error,
     },
 }
 
@@ -461,7 +483,7 @@ impl_err_convertor!(InitializeError, WsRaftErr, InitializeError);
 impl_err_convertor!(RaftError, WsRaftErr, RaftError);
 impl_err_convertor!(std::io::Error, WsIoErr, Io);
 
-pub trait WSResultExt :Sized {
+pub trait WSResultExt: Sized {
     fn todo_handle(self, err_comment: &str) -> Self;
 }
 
@@ -485,4 +507,3 @@ impl WSResultExt for WSError {
         self
     }
 }
-

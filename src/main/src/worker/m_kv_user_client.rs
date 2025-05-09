@@ -3,9 +3,8 @@ use crate::{
     general::{
         data::{
             m_data_general::{
-                new_data_unique_id_fn_kv, DataGeneral, DataItemIdx, DataSetMetaV2, GetOrDelDataArg,
-                GetOrDelDataArgType,
-                dataitem::DataItemArgWrapper
+                dataitem::DataItemArgWrapper, new_data_unique_id_fn_kv, DataGeneral, DataItemIdx,
+                DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType,
             },
             m_dist_lock::DistLock,
         },
@@ -218,8 +217,8 @@ impl KvUserClient {
                 // vec![proto::DataItem {
                 //     data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
                 // }],
-                //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊   
-             vec![DataItemArgWrapper::new(value)],
+                //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊
+                vec![DataItemArgWrapper::new(value)],
                 Some((
                     cur_node,
                     proto::DataOpeType::Write,
@@ -229,9 +228,10 @@ impl KvUserClient {
                     }),
                 )),
             )
-            .await{
-                tracing::error!("Failed to write data: {}", e);
-            }
+            .await
+        {
+            tracing::error!("Failed to write data: {}", e);
+        }
         // .todo_handle("This part of the code needs to be implemented.");
         KvResponse::new_common(vec![])
     }
@@ -242,7 +242,11 @@ impl KvUserClient {
         _meta: DataSetMetaV2,
         splits: HashMap<DataItemIdx, proto::DataItem>,
     ) -> WSResult<Vec<proto::kv::KvPair>> {
-        tracing::debug!("convert_get_data_res_to_kv_response uid: {:?}, split keys: {:?}", uid, splits.keys().collect::<Vec<_>>());
+        tracing::debug!(
+            "convert_get_data_res_to_kv_response uid: {:?}, split keys: {:?}",
+            uid,
+            splits.keys().collect::<Vec<_>>()
+        );
         if splits.len() != 1 {
             return Err(WSError::WsDataError(
                 WsDataError::KvGotWrongSplitCountAndIdx {
@@ -291,7 +295,7 @@ impl KvUserClient {
         let data_general = self.view.data_general();
         let uid = new_data_unique_id_fn_kv(&get.range.as_ref().unwrap().start);
         let got = data_general
-            .get_or_del_data(GetOrDelDataArg {
+            .get_or_del_datas(GetOrDelDataArg {
                 meta: None,
                 unique_id: uid.clone(),
                 ty: GetOrDelDataArgType::All,
@@ -328,7 +332,7 @@ impl KvUserClient {
         let data_general = self.view.data_general();
         let uid = new_data_unique_id_fn_kv(&delete.range.as_ref().unwrap().start);
         let deleted = data_general
-            .get_or_del_data(GetOrDelDataArg {
+            .get_or_del_datas(GetOrDelDataArg {
                 meta: None,
                 unique_id: uid.clone(),
                 ty: GetOrDelDataArgType::Delete,
@@ -428,8 +432,8 @@ impl KvUserClient {
 
 #[cfg(test)]
 mod test {
-    
-    use std::{time::Duration};
+
+    use std::time::Duration;
 
     use super::KvUserClientView;
     use crate::general::{

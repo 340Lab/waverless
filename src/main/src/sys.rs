@@ -37,11 +37,11 @@ impl Drop for Sys {
 
 impl Sys {
     pub fn new(config: NodesConfig) -> Sys {
-        
         // chdir to file_path
-        std::env::set_current_dir(&config.file_dir).unwrap();
-        tracing::info!("Running at dir: {:?}", std::env::current_dir());
-        
+        // std::env::set_current_dir(&config.file_dir)
+        //     .unwrap_or_else(|err| panic!("failed to start sys at {}", config.file_dir));
+        tracing::info!("Running at dir: {:?}", config.file_dir);
+
         Sys {
             logical_modules: LogicalModules::new(config),
             sub_tasks: Vec::new().into(),
@@ -51,7 +51,7 @@ impl Sys {
     pub fn new_logical_modules_ref(&self) -> LogicalModulesRef {
         LogicalModulesRef::new(self.logical_modules.clone())
     }
-    
+
     pub async fn wait_for_end(&mut self) {
         if let Err(err) = (*self.logical_modules).as_ref().unwrap().start(self).await {
             panic!("start logical nodes error: {:?}", err);
@@ -188,6 +188,9 @@ macro_rules! logical_module_view_impl {
         impl $module {
             pub fn new(inner: LogicalModulesRef) -> Self {
                 $module { inner }
+            }
+            pub fn copy_module_ref(&self) -> LogicalModulesRef {
+                self.inner.clone()
             }
             // fn setup(&mut self, modules: Arc<LogicalModules>) {
             //     self.inner.setup(modules);

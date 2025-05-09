@@ -6,7 +6,6 @@ pub mod instance;
 pub mod m_executor;
 pub mod v_os;
 
-use std::path::PathBuf;
 use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType};
 use super::m_os::APPS_REL_DIR;
 use crate::general::app::app_native::native_apps;
@@ -44,14 +43,15 @@ use async_trait::async_trait;
 use axum::body::Bytes;
 use enum_as_inner::EnumAsInner;
 use m_executor::FnExeCtxSyncAllowedType;
+use parking_lot::Mutex;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
+use std::path::PathBuf;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
     fs,
     io::Cursor,
     path::Path,
-    sync::Mutex,
 };
 use tokio::sync::RwLock;
 use ws_derive::LogicalModule;
@@ -659,7 +659,8 @@ impl LogicalModule for AppMetaManager {
             view,
             fs_layer,
             native_apps: native_apps(),
-            // app_meta_list_lock: Mutex::new(()),
+            #[cfg(test)]
+            test_http_app_uploaded: Mutex::new(Bytes::new()), // app_meta_list_lock: Mutex::new(()),
         }
     }
     async fn init(&self) -> WSResult<()> {
@@ -779,67 +780,67 @@ impl AppMetaManager {
         // TODO: Implement app loading logic
         Ok(())
     }
-    async fn construct_tmp_app(&self, tmpapp: &str) -> WSResult<AppMeta> {
-        // 1.meta
-        // let appdir = self.fs_layer.concat_app_dir(app);
-        let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
+    // async fn construct_tmp_app(&self, tmpapp: &str) -> WSResult<AppMeta> {
+    //     // 1.meta
+    //     // let appdir = self.fs_layer.concat_app_dir(app);
+    //     let appmeta = self.fs_layer.read_app_meta(tmpapp).await?;
 
-        // TODO: 2.check project dir
-        // 3. if java, take snapshot
-        if let AppType::Jar = appmeta.app_type {
-            let _ = self
-                .meta
-                .write()
-                .await
-                .tmp_app_metas
-                .insert(tmpapp.to_owned(), appmeta.clone());
-            tracing::debug!("record app meta to make checkpoint {}", tmpapp);
-            self.view
-                .instance_manager()
-                .make_checkpoint_for_app(tmpapp)
-                .await?;
-            self.view
-                .instance_manager()
-                .drap_app_instances(tmpapp)
-                .await;
-            // remove app_meta
-            tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
-            let _ = self
-                .meta
-                .write()
-                .await
-                .tmp_app_metas
-                .remove(tmpapp)
-                .unwrap_or_else(|| {
-                    panic!("remove app meta failed, app: {}", tmpapp);
-                });
-        }
+    //     // TODO: 2.check project dir
+    //     // 3. if java, take snapshot
+    //     if let AppType::Jar = appmeta.app_type {
+    //         let _ = self
+    //             .meta
+    //             .write()
+    //             .await
+    //             .tmp_app_metas
+    //             .insert(tmpapp.to_owned(), appmeta.clone());
+    //         tracing::debug!("record app meta to make checkpoint {}", tmpapp);
+    //         self.view
+    //             .instance_manager()
+    //             .make_checkpoint_for_app(tmpapp)
+    //             .await?;
+    //         self.view
+    //             .instance_manager()
+    //             .drap_app_instances(tmpapp)
+    //             .await;
+    //         // remove app_meta
+    //         tracing::debug!("checkpoint made, remove app meta {}", tmpapp);
+    //         let _ = self
+    //             .meta
+    //             .write()
+    //             .await
+    //             .tmp_app_metas
+    //             .remove(tmpapp)
+    //             .unwrap_or_else(|| {
+    //                 panic!("remove app meta failed, app: {}", tmpapp);
+    //             });
+    //     }
 
-        Ok(appmeta)
-    }
-    pub async fn app_available(&self, app: &str) -> WSResult<bool> {
-        match self
-            .view
-            .data_general()
-            .get_or_del_datameta_from_master(
-                format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(),
-                false,
-            )
-            .await
-        {
-            Err(err) => match err {
-                WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
-                    tracing::debug!(
-                        "app meta not found, app: {}",
-                        std::str::from_utf8(&*uniqueid).unwrap()
-                    );
-                    Ok(false)
-                }
-                _ => Err(err),
-            },
-            Ok(_) => Ok(true),
-        }
-    }
+    //     Ok(appmeta)
+    // }
+    // pub async fn app_available(&self, app: &str) -> WSResult<bool> {
+    //     match self
+    //         .view
+    //         .data_general()
+    //         .get_or_del_datameta_from_master(
+    //             format!("{}{}", DATA_UID_PREFIX_APP_META, app).as_bytes(),
+    //             false,
+    //         )
+    //         .await
+    //     {
+    //         Err(err) => match err {
+    //             WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
+    //                 tracing::debug!(
+    //                     "app meta not found, app: {}",
+    //                     std::str::from_utf8(&*uniqueid).unwrap()
+    //                 );
+    //                 Ok(false)
+    //             }
+    //             _ => Err(err),
+    //         },
+    //         Ok(_) => Ok(true),
+    //     }
+    // }
 
     /// get app by idx 1
     pub async fn load_app_file(&self, app: &str, datameta: DataSetMetaV2) -> WSResult<()> {
@@ -851,7 +852,7 @@ impl AppMetaManager {
         let mut data = match self
             .view
             .data_general()
-            .get_or_del_data(GetOrDelDataArg {
+            .get_or_del_datas(GetOrDelDataArg {
                 meta: Some(datameta),
                 unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
                 ty: GetOrDelDataArgType::PartialOne { idx: 1 },
@@ -866,7 +867,7 @@ impl AppMetaManager {
         };
 
         let proto::DataItem {
-            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(appfiledata)),
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(_)),
         } = data.remove(&1).unwrap()
         else {
             return Err(WsFuncError::InvalidAppMetaDataItem {
@@ -875,25 +876,37 @@ impl AppMetaManager {
             .into());
         };
 
-        // extract app file
-        let zipfilepath = appfiledata.file_name_opt;
+        // check app dir exists and app.yml exists
         let appdir = self.fs_layer.concat_app_dir(app);
-        let res = tokio::task::spawn_blocking(move || {
-            // remove old app dir
-            if appdir.exists() {
-                fs::remove_dir_all(&appdir).unwrap();
+        if !appdir.exists() {
+            tracing::warn!("app dir not exists, app: {}", app);
+            return Err(WsFuncError::AppPackLoadFailed {
+                app: app.to_owned(),
+                err: None,
+                context: "app dir not exists after get app data".to_owned(),
             }
-            // open zip file
-            let zipfile = std::fs::File::open(zipfilepath)?;
-            zip_extract::extract(zipfile, &appdir, false)
-        })
-        .await
-        .unwrap();
-
-        if let Err(err) = res {
-            tracing::warn!("extract app file failed, err: {:?}", err);
-            return Err(WsFuncError::AppPackFailedZip(err).into());
+            .into());
         }
+
+        // extract app file
+        // let zipfilepath = self.view.os().file_path.join(appfiledata.file_name_opt);
+        // let appdir = self.fs_layer.concat_app_dir(app);
+        // let res = tokio::task::spawn_blocking(move || {
+        //     // remove old app dir
+        //     if appdir.exists() {
+        //         fs::remove_dir_all(&appdir).unwrap();
+        //     }
+        //     // open zip file
+        //     let zipfile = std::fs::File::open(zipfilepath)?;
+        //     zip_extract::extract(zipfile, &appdir, false)
+        // })
+        // .await
+        // .unwrap();
+
+        // if let Err(err) = res {
+        //     tracing::warn!("extract app file failed, err: {:?}", err);
+        //     return Err(WsFuncError::AppPackFailedZip(err).into());
+        // }
 
         Ok(())
     }
@@ -912,7 +925,7 @@ impl AppMetaManager {
         tracing::debug!("calling get_or_del_data to get app meta, app: {}", app);
         let datameta = view()
             .data_general()
-            .get_or_del_data(GetOrDelDataArg {
+            .get_or_del_datas(GetOrDelDataArg {
                 meta: None,
                 unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
                 ty: GetOrDelDataArgType::PartialOne { idx: 0 },
@@ -1005,8 +1018,9 @@ impl AppMetaManager {
             }
         };
 
-        // 3. check meta
-        let res = self.construct_tmp_app(&tmpapp).await;
+        /////
+        // check meta by tmp app dir
+        let res = self.fs_layer.read_app_meta(&tmpapp).await; //self.construct_tmp_app(&tmpapp).await;
         let appmeta = match res {
             Err(e) => {
                 let _ = fs::remove_dir_all(&tmpappdir);
@@ -1016,27 +1030,19 @@ impl AppMetaManager {
             Ok(appmeta) => appmeta,
         };
 
-        // remove temp dir
-        // let _ = fs::remove_dir_all(&tmpappdir).map_err(|e| WSError::from(WsIoErr::Io(e)))?;
-
+        /////
         // mv temp app to formal app dir
         let rel_app_dir = format!("{}/{}", APPS_REL_DIR, appname);
-        // 修改前： let formal_app_dir = self.view.os().file_path.join(rel_app_dir);   rel_app_dir是字符串类型发生所有权转移，然而在下方还被使用了，选择修改为clone   曾俊
         let formal_app_dir = self.view.os().file_path.join(rel_app_dir.clone());
-        //let _ = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| WSError::from(WsDataError::FileOpenErr { path: (), err: () }));
-        //虞光勇修改：因为在调用 fs::rename 并处理其结果时遇到了类型不匹配的问题。具体来说，
-        // 在构造WsDataError::FileOpenErr 时，path 字段的类型不匹配：期望的是 PathBuf 类型，但实际传入的是 ()（即单元类型）。
-        //修改：
-        // let result = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| {  
-        // 这里result变量下方没有再使用 加了一个标志       曾俊
-        let _result = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| {
+        let _ = fs::rename(&tmpappdir, &formal_app_dir).map_err(|e| {
             WSError::from(WsDataError::FileOpenErr {
                 path: PathBuf::from(formal_app_dir.clone()),
                 err: e,
             })
-        });
+        })?;
 
-        // 3. broadcast meta and appfile
+        /////
+        // write data to whole system
         let write_data_id = format!("{}{}", DATA_UID_PREFIX_APP_META, appname);
         let write_datas = vec![
             DataItemArgWrapper::from_bytes(bincode::serialize(&appmeta).unwrap()),
@@ -1048,13 +1054,13 @@ impl AppMetaManager {
             //这里的 from_file 方法返回一个 Result<DataItemArgWrapper, WSError>，
             // 但你直接将其赋值给一个期望 DataItemArgWrapper 类型的变量或参数，导致类型不匹配。使用 ? 操作符
             //DataItemArgWrapper::from_file(rel_app_dir.into())?,
-            DataItemArgWrapper::from_file(rel_app_dir.into())?,
+            DataItemArgWrapper::from_file(self.view.copy_module_ref(), rel_app_dir.into())?,
         ];
         tracing::debug!(
             "app data size: {:?}",
             write_datas
                 .iter()
-                // 修改前：.map(|v| v.to_string())   去掉了这一行，为结构体派生了debug特征  曾俊  
+                // 修改前：.map(|v| v.to_string())   去掉了这一行，为结构体派生了debug特征  曾俊
                 .collect::<Vec<_>>()
         );
         self.view
@@ -1085,38 +1091,38 @@ impl AppMetaManager {
         //          .todo_handle("This part of the code needs to be implemented.");
 
         //修改后代码：对set函数的返回类型进行处理     曾俊
-        match self.view
-            .kv_store_engine()
-            .set(
-                KeyTypeServiceList,
-                &serde_json::to_string(&list).unwrap().into(),
-                false,
-            ) {
+        match self.view.kv_store_engine().set(
+            KeyTypeServiceList,
+            &serde_json::to_string(&list).unwrap().into(),
+            false,
+        ) {
             Ok((version, _)) => {
-                tracing::debug!("App meta list updated successfully, version: {}, list: {:?}", version, list);
-            },
+                tracing::debug!(
+                    "App meta list updated successfully, version: {}, list: {:?}",
+                    version,
+                    list
+                );
+            }
             Err(e) => {
                 tracing::error!("Failed to set app meta list: {:?}", e);
             }
+        }
     }
-}
 
-pub fn get_app_meta_list(&self) -> Vec<String> {
-    let res = self
-        .view
-        .kv_store_engine()
-        .get(&KeyTypeServiceList, false, KvAdditionalConf {})
-        .map(|(_version, list)| list)
-        .unwrap_or_else(|| {
-            return vec![];
-        });
-    serde_json::from_slice(&res).unwrap_or_else(|e| {
-        tracing::warn!("parse app meta list failed, err: {:?}", e);
-        vec![]
-    })
-}
-
-
+    pub fn get_app_meta_list(&self) -> Vec<String> {
+        let res = self
+            .view
+            .kv_store_engine()
+            .get(&KeyTypeServiceList, false, KvAdditionalConf {})
+            .map(|(_version, list)| list)
+            .unwrap_or_else(|| {
+                return vec![];
+            });
+        serde_json::from_slice(&res).unwrap_or_else(|e| {
+            tracing::warn!("parse app meta list failed, err: {:?}", e);
+            vec![]
+        })
+    }
 
     // pub fn get_app_meta_basicinfo_list(&self) -> Vec<ServiceBasic> {
     //     let apps = self.get_app_meta_list();
