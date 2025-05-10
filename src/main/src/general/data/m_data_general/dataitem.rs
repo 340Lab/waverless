@@ -1008,6 +1008,14 @@ pub struct DataItemArgWrapper {
 }
 
 impl DataItemArgWrapper {
+    pub fn filepath(&self) -> Option<String> {
+        match &self.dataitem.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::File(file_data)) => {
+                Some(file_data.file_name_opt.clone())
+            }
+            _ => None,
+        }
+    }
     // 根据传入的DataItem类型新建一个DataItemArgWrapper实例， tmpzipfile默认为Uninitialized。      曾俊
     pub fn new(value: Vec<u8>) -> Self {
         DataItemArgWrapper {

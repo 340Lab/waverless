@@ -231,45 +231,62 @@ impl Master {
         let opeid = self.ope_id_allocator.fetch_add(1, Ordering::Relaxed);
 
         // Create trigger using the ProtoExtDataEventTrigger trait
-        let trigger = DataEventTrigger::Write.into_proto_trigger(ctx.data_unique_id, opeid);
+        let trigger = DataEventTrigger::Write.into_proto_trigger(ctx.data_unique_id.clone(), opeid);
 
         // Create and send tasks to target nodes
+        let mut each_node_calling = vec![];
         for &node in &ctx.target_nodes {
-            // before trigger function, add wait target to src node
-            let _ = self
-                .rpc_caller_add_wait_target
-                .call(
-                    self.view.p2p(),
-                    ctx.src_task_id.call_node_id,
-                    proto::AddWaitTargetReq {
-                        src_task_id: ctx.src_task_id.task_id,
-                        sub_task_id: Some(task_id.clone()),
-                        task_run_node: node,
-                    },
-                    Some(ctx.timeout),
-                )
-                .await
-                .todo_handle("call add wait target rpc failed");
-            // ctx.src_task_id
+            let view = self.view.clone();
+            let ctx = ctx.clone();
+            let task_id = task_id.clone();
+            let trigger = trigger.clone();
+            // let src_task_id = ctx.src_task_id.clone();
+            // let timeout = ctx.timeout;
+            let t = tokio::spawn(async move {
+                // before trigger function, add wait target to src node
+                let _ = view
+                    .master()
+                    .rpc_caller_add_wait_target
+                    .call(
+                        view.p2p(),
+                        ctx.src_task_id.call_node_id,
+                        proto::AddWaitTargetReq {
+                            src_task_id: ctx.src_task_id.task_id,
+                            sub_task_id: Some(task_id.clone()),
+                            task_run_node: node,
+                        },
+                        Some(ctx.timeout),
+                    )
+                    .await
+                    .todo_handle("call add wait target rpc failed");
+                // ctx.src_task_id
 
-            let req = proto::DistributeTaskReq {
-                app: ctx.app_name.clone(),
-                func: ctx.fn_name.clone(),
-                task_id: Some(task_id.clone()),
-                trigger: Some(trigger.clone()),
-                trigger_src_task_id: Some(ctx.src_task_id.clone()),
-            };
+                let req = proto::DistributeTaskReq {
+                    app: ctx.app_name.clone(),
+                    func: ctx.fn_name.clone(),
+                    task_id: Some(task_id.clone()),
+                    trigger: Some(trigger.clone()),
+                    trigger_src_task_id: Some(ctx.src_task_id.clone()),
+                };
 
-            // Send request with timeout
-            // let _ = tokio::time::timeout(
-            //     ctx.timeout,
-            let _ = self
-                .rpc_caller_distribute_task
-                .call(self.view.p2p(), node, req, Some(ctx.timeout))
-                .await
-                .todo_handle("fddg trigger func call rpc failed");
+                // Send request with timeout
+                // let _ = tokio::time::timeout(
+                //     ctx.timeout,
+                let _ = view
+                    .master()
+                    .rpc_caller_distribute_task
+                    .call(view.p2p(), node, req, Some(ctx.timeout))
+                    .await
+                    .todo_handle("fddg trigger func call rpc failed");
+            });
+            each_node_calling.push(t);
             // )
             // .await;
+        }
+
+        for t in each_node_calling {
+            let _ = t.await;
+            // .todo_handle("fddg trigger func call rpc failed");
         }
 
         Ok(())

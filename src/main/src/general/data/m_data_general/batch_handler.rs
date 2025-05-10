@@ -4,8 +4,8 @@ use crate::{
         data::m_data_general::dataitem::WriteSplitDataTaskGroup,
         network::{
             m_p2p::RPCResponsor,
-            proto::{self, BatchDataRequest, BatchDataResponse},
-            proto_ext::DataItemExt,
+            proto::{self, BatchDataRequest, BatchDataResponse, DataItem},
+            proto_ext::{DataItemExt, ProtoExtDataItem},
         },
     },
     result::{WSError, WSResult, WSResultExt, WsDataError},
@@ -423,12 +423,75 @@ impl DataGeneral {
     ) -> WSResult<Option<Vec<proto::DataItem>>> {
         let mut waiters = Vec::new();
         for &idx in idxs {
+            // check cache first
+
             // allocate a batch request id
             let splits = &dataset_meta.datas_splits[idx as usize];
             let request_id = self.next_batch_id(self.view.p2p().nodes_config.this_node());
             let total_size = splits.total_size();
             let (responsor, waiter) = BatchInProcessResponsor::new_pair();
             waiters.push(waiter);
+            if let Some(fp_) = &dataset_meta.filepath[idx as usize] {
+                // try check the target file
+                let fp = self.view.os().file_path.join(fp_);
+                if fp.exists() {
+                    responsor
+                        .done(BatchDoneMsg::Done {
+                            version: dataset_meta.version,
+                            request_id: request_id.clone(),
+                            required_result: Some(DataItem::new_file_data(&*fp_, fp.is_dir())),
+                        })
+                        .await;
+                    tracing::debug!(
+                        "access cached file uid({:?}) idx({}) path({:?}) success",
+                        &unique_id,
+                        idx,
+                        fp
+                    );
+                    continue;
+                } else {
+                    tracing::debug!(
+                        "access cached file uid({:?}) idx({}) path({:?}) failed, will get from remote",
+                        &unique_id,
+                        idx,
+                        fp
+                    );
+                }
+                // if fp.is_dir() {
+                //     responsor
+                //         .done(BatchDoneMsg::Done {
+                //             version: dataset_meta.version,
+                //             request_id: request_id,
+                //             required_result: Some(DataItem::new_file_data(&*fp_, true)),
+                //         })
+                //         .await;
+                //     continue;
+                // } else {
+            } else {
+                // try check the cache
+                let cache_data = self.cache_in_memory.get(&unique_id);
+                if let Some(cache_data) = cache_data {
+                    responsor
+                        .done(BatchDoneMsg::Done {
+                            version: dataset_meta.version,
+                            request_id: request_id.clone(),
+                            required_result: Some(DataItem::new_mem_data(cache_data)),
+                        })
+                        .await;
+                    tracing::debug!(
+                        "access cached mem uid({:?}) idx({}) success",
+                        &unique_id,
+                        idx
+                    );
+                    continue;
+                } else {
+                    tracing::debug!(
+                        "access cached mem uid({:?}) idx({}) failed, will get from remote",
+                        &unique_id,
+                        idx
+                    );
+                }
+            }
 
             tracing::debug!(
                 "batch_get_or_del_data with receving uid({}) data idx({}) with length({})",

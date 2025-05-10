@@ -1,4 +1,5 @@
 use crate::general::app::m_executor::Executor;
+use crate::general::app::AffinityPattern;
 use crate::general::app::AppMetaManager;
 use crate::general::app::DataEventTrigger;
 use crate::general::data::m_data_general::CacheModeVisitor;
@@ -6,6 +7,7 @@ use crate::general::network::m_p2p::{P2PModule, RPCCaller, RPCHandler, RPCRespon
 use crate::general::network::proto::{
     self, DataVersionScheduleRequest, DataVersionScheduleResponse,
 };
+use crate::general::network::proto_ext::ProtoExtDataScheduleContext;
 use crate::master::m_master::{FunctionTriggerContext, Master};
 use crate::result::{WSResult, WSResultExt};
 use crate::sys::{LogicalModulesRef, NodeID};
@@ -97,7 +99,15 @@ impl DataMaster {
         // 如果不是有效的 UTF-8 字符串，直接返回空结果
         let data_unique_id_str = match std::str::from_utf8(data_unique_id) {
             Ok(s) => s,
-            Err(_) => return Ok((DataSetMetaBuilder::new().build().cache_mode, vec![], vec![])),
+            Err(_) => {
+                return Ok((
+                    DataSetMetaBuilder::new(context.filepath())
+                        .build()
+                        .cache_mode,
+                    vec![],
+                    vec![],
+                ))
+            }
         };
 
         // 获取绑定的函数
@@ -108,36 +118,61 @@ impl DataMaster {
             .get_binded_funcs(data_unique_id_str, func_trigger_type);
 
         // 收集所有调度节点作为缓存节点
-        let mut cache_nodes = HashSet::new();
+        let cache_nodes = HashSet::new();
 
         // 对每个绑定的函数进行调度
         for (app_name, (_, fn_names)) in &binded_funcs {
-            for (fn_name, _unused) in fn_names {
+            for (fn_name, fnmeta) in fn_names {
+                let target_nodes: Vec<NodeID> = if let Some(affinity) = fnmeta.affinity.clone() {
+                    match affinity.nodes {
+                        AffinityPattern::All => self
+                            .view
+                            .p2p()
+                            .nodes_config
+                            .all_nodes_iter()
+                            .filter(|(id, _)| {
+                                **id != self.view.p2p().nodes_config.get_master_node()
+                            })
+                            .map(|(id, _)| *id)
+                            .collect(),
+                        AffinityPattern::List(nodes) => nodes,
+                        AffinityPattern::NodeCount(_) => {
+                            todo!()
+                            // self.view
+                            //     .p2p()
+                            //     .nodes_config
+                            //     .all_nodes_iter()
+                            //     .filter(|(id, _)| id != self.view.p2p().nodes_config.get_master_node())
+                        }
+                    }
+                } else {
+                    vec![self.view.master().select_node()]
+                };
                 // 选择调度节点 (暂时不考虑亲和性规则)
-                let target_node = self.view.master().select_node();
+                // let target_node = ;
 
                 // 将调度节点加入缓存节点集合
-                let _ = cache_nodes.insert(target_node);
+                // let _ = cache_nodes.insert(target_node);
+
+                // 发送触发请求并处理可能的错误
+                tracing::debug!(
+                    "data {:?} write trigger function {}/{} on nodes {:?}",
+                    data_unique_id,
+                    app_name,
+                    fn_name,
+                    &target_nodes
+                );
 
                 // 创建函数触发上下文
                 let ctx = FunctionTriggerContext {
                     app_name: app_name.clone(),
                     fn_name: fn_name.clone(),
                     data_unique_id: data_unique_id.to_vec(),
-                    target_nodes: vec![target_node], // 只在选中的节点上触发
+                    target_nodes: target_nodes, // 只在选中的节点上触发
                     timeout: Duration::from_secs(60),
                     event_type: DataEventTrigger::Write, // 使用Write事件类型
                     src_task_id: context.src_task_id.clone().unwrap(),
                 };
-
-                // 发送触发请求并处理可能的错误
-                tracing::debug!(
-                    "data {:?} write trigger function {}/{} on node {}",
-                    data_unique_id,
-                    app_name,
-                    fn_name,
-                    target_node
-                );
 
                 // async call with unique task, don't block current task
                 let view = self.view.clone();
@@ -146,10 +181,9 @@ impl DataMaster {
                 let _ = tokio::spawn(async move {
                     if let Err(e) = view.master().trigger_func_call(ctx).await {
                         tracing::error!(
-                            "Failed to trigger function {}/{} on node {}: {:?}",
+                            "Failed to trigger function {}/{}: {:?}",
                             app_name,
                             fn_name,
-                            target_node,
                             e
                         );
                     }
@@ -228,7 +262,7 @@ impl DataMaster {
         }
 
         // 设置缓存模式
-        let mut builder = DataSetMetaBuilder::new();
+        let mut builder = DataSetMetaBuilder::new(context.filepath());
 
         // 设置数据分片
         let _ = builder.set_data_splits(splits.clone());
@@ -291,7 +325,7 @@ impl DataMaster {
                 builder.build()
             } else {
                 tracing::debug!("new dataset meta for data({:?})", req.unique_id);
-                let mut builder = DataSetMetaBuilder::new();
+                let mut builder = DataSetMetaBuilder::new(ctx.filepath());
                 // version
                 let _ = builder.version(1);
                 // data splits bf cache mod
