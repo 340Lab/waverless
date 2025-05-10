@@ -46,6 +46,7 @@ use m_executor::FnExeCtxSyncAllowedType;
 use parking_lot::Mutex;
 use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
+use std::time::Duration;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
@@ -298,7 +299,7 @@ pub enum AppType {
     Native,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppMeta {
     pub app_type: AppType,
     pub fns: HashMap<String, FnMeta>,
@@ -696,9 +697,9 @@ impl AppMetas {
     //     }
     // }
     // pub async fn set_tmp_appmeta(&self, )
-    fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
-        self.tmp_app_metas.get(app).cloned()
-    }
+    // fn get_tmp_app_meta(&self, app: &str) -> Option<AppMeta> {
+    //     self.tmp_app_metas.get(app).cloned()
+    // }
 
     pub fn get_pattern_triggers(
         &self,
@@ -849,23 +850,54 @@ impl AppMetaManager {
             app,
             datameta
         );
-        let mut data = match self
-            .view
-            .data_general()
-            .get_or_del_datas(GetOrDelDataArg {
-                meta: Some(datameta),
-                unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
-                ty: GetOrDelDataArgType::PartialOne { idx: 1 },
-            })
-            .await
-        {
-            Err(err) => {
-                tracing::warn!("get app file failed, err: {:?}", err);
-                return Err(err);
-            }
-            Ok((_datameta, data)) => data,
-        };
 
+        // 简易轮询实现，确保应用被完整上传到系统；后续增加数据ready等待能力
+        let mut data: Option<HashMap<u8, proto::DataItem>> = None;
+        for i in 0..10 {
+            match self
+                .view
+                .data_general()
+                .get_or_del_datas(GetOrDelDataArg {
+                    meta: Some(datameta.clone()),
+                    unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
+                    ty: GetOrDelDataArgType::PartialOne { idx: 1 },
+                })
+                .await
+            {
+                Err(err) => {
+                    tracing::warn!("get app file failed, err: {:?}", err);
+                    // return Err(err);
+                }
+                Ok((_datameta, data_items)) => {
+                    // data
+                    if data_items.len() == 1 {
+                        data = Some(data_items);
+                        break;
+                    }
+                    tracing::warn!(
+                        "get app file failed, data item not complete, count: {}",
+                        data_items.len()
+                    );
+                }
+            };
+            if i == 4 {
+                tracing::warn!(
+                    "get app file failed, stop retry",
+                    // data_items.len()
+                );
+            } else {
+                tracing::warn!("get app file failed, will retry for the {} time", i);
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        let Some(mut data) = data else {
+            return Err(WsFuncError::AppPackLoadFailed {
+                app: app.to_owned(),
+                err: None,
+                context: "app file not found".to_owned(),
+            }
+            .into());
+        };
         let proto::DataItem {
             data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(_)),
         } = data.remove(&1).unwrap()
@@ -910,6 +942,11 @@ impl AppMetaManager {
 
         Ok(())
     }
+
+    // fn get_native_app_meta(&self, app: &str) -> WSResult<Option<AppMeta>> {
+    //     Ok()
+    // }
+
     /// get app meta by idx 0
     /// None DataSetMetaV2 means temp app prepared
     /// Some DataSetMetaV2 means app from inner storage
@@ -917,9 +954,12 @@ impl AppMetaManager {
         &self,
         app: &str,
     ) -> WSResult<Option<(AppMeta, Option<DataSetMetaV2>)>> {
-        if let Some(res) = self.meta.read().await.get_tmp_app_meta(app) {
-            return Ok(Some((res, None)));
+        if let Some(nativeapp) = self.native_apps.get(app).cloned() {
+            return Ok(Some((nativeapp, None)));
         }
+        // if let Some(res) = self.meta.read().await.get_tmp_app_meta(app) {
+        //     return Ok(Some((res, None)));
+        // }
 
         // self.app_metas.get(app)
         tracing::debug!("calling get_or_del_data to get app meta, app: {}", app);

@@ -31,12 +31,12 @@ enum BatchDoneMsg {
         request_id: proto::BatchRequestId, // as the context index
         required_result: Option<proto::DataItem>,
     },
-    // Error {
-    //     version: u64,
-    //     error_message: String,
-    //     request_id: proto::BatchRequestId,
-    //     required_result: Option<proto::DataItem>,
-    // },
+    Error {
+        version: u64,
+        error_message: String,
+        request_id: proto::BatchRequestId,
+        //required_result: Option<proto::DataItem>,
+    },
     Replaced {
         version: u64,
         request_id: proto::BatchRequestId,
@@ -69,13 +69,14 @@ impl BatchDoneResponsor for BatchInProcessResponsor {
             BatchDoneMsg::Done {
                 required_result, ..
             } => self.tx.send(required_result).await.unwrap(),
-            // BatchDoneMsg::Error {
-            //     request_id,
-            //     error_message,
-            //     ..
-            // } => {
-            //     tracing::error!("batch one recev {:?} error: {}", request_id, error_message);
-            // }
+            BatchDoneMsg::Error {
+                request_id,
+                error_message,
+                ..
+            } => {
+                // drop the channel, so the receiver will know the error
+                panic!("batch one recev {:?} error: {}", request_id, error_message);
+            }
             BatchDoneMsg::Replaced { .. } => {}
         }
         // self.tx.send(()).await.unwrap();
@@ -91,12 +92,12 @@ impl BatchDoneResponsor for RPCResponsor<BatchDataRequest> {
                 version,
                 ..
             } => (request_id, true, String::new(), version),
-            // BatchDoneMsg::Error {
-            //     error_message,
-            //     request_id,
-            //     version,
-            //     ..
-            // } => (request_id, false, error_message, version),
+            BatchDoneMsg::Error {
+                error_message,
+                request_id,
+                version,
+                ..
+            } => (request_id, false, error_message, version),
             BatchDoneMsg::Replaced {
                 request_id,
                 version,
@@ -468,6 +469,27 @@ impl DataGeneral {
                             panic!("batch one recev {:?} error: {}", request_id, err);
                         });
 
+                    if partial_block.data.len() != 1 {
+                        tracing::warn!(
+                            "batch one recev partial_block wrong count, idx({}), count({})",
+                            idx,
+                            partial_block.data.len()
+                        );
+                        responsor
+                            .done(BatchDoneMsg::Error {
+                                version: version,
+                                error_message: format!(
+                                    "batch one recev partial_block wrong count, idx({}), count({})",
+                                    idx,
+                                    partial_block.data.len()
+                                ),
+                                request_id: request_id.clone(),
+                                // required_result: None,
+                            })
+                            .await;
+                        return;
+                    }
+
                     tracing::debug!(
                         "batch one recev partial_block, idx({}), type({:?}), size({})",
                         idx,
@@ -504,8 +526,18 @@ impl DataGeneral {
 
         let res = if opetype.return_data() {
             let mut results = Vec::new();
-            for mut waiter in waiters {
-                results.push(waiter.recv().await.unwrap().unwrap());
+            for (i, waiter) in waiters.iter_mut().enumerate() {
+                let Some(res) = waiter.recv().await else {
+                    tracing::error!(
+                        "batch one recev error, uid({:?}), idx({})",
+                        unique_id,
+                        idxs[i]
+                    );
+                    return Err(WSError::WsDataError(WsDataError::DataSplitTaskError {
+                        msg: format!("Failed to submit task: submit_split count to the end"),
+                    }));
+                };
+                results.push(res.unwrap());
             }
             Some(results)
         } else {

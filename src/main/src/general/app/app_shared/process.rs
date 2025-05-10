@@ -2,13 +2,14 @@
 
 use super::process_rpc::{self, proc_proto};
 use crate::general::app::app_shared::java;
+use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxBase, FnExeCtxSync};
 use crate::general::{
     app::AppType,
     network::rpc_model::{self, HashValue},
 };
-use crate::result::{WsFuncError};
+use crate::result::WsFuncError;
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
 use parking_lot::RwLock;
@@ -164,17 +165,19 @@ impl ProcessInstance {
             }
         };
         tracing::debug!("connecting, wait for verify");
-        waiter.await.expect(
+        let v = waiter.await.expect(
             "tx lives in ProcessInstanceStateInner::Connecting and 
             destroyed when { notify all the waiters then transfer to Connected }
             so it's impossible to drop the tx before the rx",
-        )
+        );
+        tracing::debug!("verify received");
         // let (tx, rx) = oneshot::channel();
         // let mut wating_verify = WATING_VERIFY.lock();
         // let wating = wating_verify.entry(self.app.clone()).or_insert_with(Vec::new);
         // wating.push(tx);
         // drop(wating_verify);
         // let _ = rx.await;
+        v
     }
     pub fn before_checkpoint(&self) {
         // state to starting
@@ -200,7 +203,11 @@ impl InstanceTrait for ProcessInstance {
     fn instance_name(&self) -> String {
         self.app.clone()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> crate::result::WSResult<Option<String>> {
+    async fn execute(
+        &self,
+        _instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> crate::result::WSResult<Option<String>> {
         let _ = self.wait_for_verify().await;
         tracing::debug!(
             "wait_for_verify done, call app:{}, func:{}",
@@ -216,7 +223,11 @@ impl InstanceTrait for ProcessInstance {
 
     /// Process instances don't support synchronous execution
     /// See [`FnExeCtxSyncAllowedType`] for supported types (currently only Native)
-    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> crate::result::WSResult<Option<String>> {
+    fn execute_sync(
+        &self,
+        _instman: &InstanceManager,
+        _fn_ctx: &mut FnExeCtxSync,
+    ) -> crate::result::WSResult<Option<String>> {
         Err(WsFuncError::UnsupportedAppType.into())
     }
 }

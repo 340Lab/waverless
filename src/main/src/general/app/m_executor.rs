@@ -146,6 +146,22 @@ impl FnExeCtxAsync {
     pub fn take_result(&mut self) -> Option<String> {
         self.inner.res.take()
     }
+
+    pub fn app_name(&self) -> &str {
+        &self.inner.app
+    }
+
+    pub fn func_name(&self) -> &str {
+        &self.inner.func
+    }
+
+    pub fn func_meta(&self) -> &FnMeta {
+        &self.inner._func_meta
+    }
+
+    pub fn event_ctx_mut(&mut self) -> &mut EventCtx {
+        &mut self.inner.event_ctx
+    }
 }
 
 pub enum FnExeCtxSyncAllowedType {
@@ -697,7 +713,7 @@ impl Executor {
             .as_millis() as u64;
 
         tracing::debug!("start execute sync");
-        let res = instance.execute_sync(&mut ctx)?;
+        let res = instance.execute_sync(self.view.instance_manager(), &mut ctx)?;
 
         let res = res.map(|v| {
             let mut res: serde_json::Value = serde_json::from_str(&*v).unwrap();
@@ -760,7 +776,9 @@ impl Executor {
             .as_millis() as u64;
 
         tracing::debug!("start execute");
-        let res = instance.execute(&mut fn_ctx).await;
+        let res = instance
+            .execute(self.view.instance_manager(), &mut fn_ctx)
+            .await;
 
         let res = res.map(|v| {
             v.map(|v| {

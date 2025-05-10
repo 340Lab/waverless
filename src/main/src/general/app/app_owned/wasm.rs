@@ -1,4 +1,5 @@
 use crate::general::app::app_owned::wasm_host_funcs;
+use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::instance::OwnedInstance;
 use crate::general::app::m_executor::{EventCtx, FnExeCtxAsync, FnExeCtxBase, FnExeCtxSync};
@@ -70,7 +71,11 @@ impl InstanceTrait for WasmInstance {
             .next()
             .unwrap()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>> {
+    async fn execute(
+        &self,
+        _instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> WSResult<Option<String>> {
         #[cfg(target_os = "linux")]
         {
             let mut final_err = None;
@@ -126,7 +131,11 @@ impl InstanceTrait for WasmInstance {
 
     /// WASM instances don't support synchronous execution
     /// See [`FnExeCtxSyncAllowedType`] for supported types (currently only Native)
-    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>> {
+    fn execute_sync(
+        &self,
+        _instman: &InstanceManager,
+        _fn_ctx: &mut FnExeCtxSync,
+    ) -> WSResult<Option<String>> {
         Err(WsFuncError::UnsupportedAppType.into())
     }
 }
