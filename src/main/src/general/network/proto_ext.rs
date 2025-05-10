@@ -2,7 +2,7 @@ use crate::general::app::DataEventTrigger;
 use crate::general::data::m_data_general::dataitem::DataItemSource;
 use crate::general::data::m_data_general::DataItemIdx;
 use crate::general::data::m_dist_lock::DistLockOpe;
-use crate::general::network::proto::sche::distribute_task_req::{
+use crate::general::network::proto::distribute_task_req::{
     DataEventTriggerNew, DataEventTriggerWrite, Trigger,
 };
 

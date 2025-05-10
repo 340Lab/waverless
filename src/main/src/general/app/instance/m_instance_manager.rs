@@ -8,9 +8,15 @@ use crate::general::app::m_executor::FnExeCtxAsync;
 use crate::general::app::m_executor::FnExeCtxSync;
 use crate::general::app::AppMetaManager;
 use crate::general::m_os::OperatingSystem;
+use crate::general::network::m_p2p::P2PModule;
+use crate::general::network::m_p2p::RPCCaller;
+use crate::general::network::m_p2p::RPCHandler;
+use crate::general::network::proto;
 use crate::general::network::rpc_model;
+use crate::result::WSResultExt;
 use crate::result::{WSError, WsFuncError};
 use crate::sys::LogicalModulesRef;
+use crate::sys::NodeID;
 use crate::{
     general::app::AppType, // worker::host_funcs,
     result::WSResult,
@@ -33,6 +39,7 @@ use std::{
     time::Duration,
 };
 use tokio::io::AsyncWriteExt;
+use tokio::sync::broadcast;
 use tokio::sync::Notify;
 use ws_derive::LogicalModule;
 
@@ -220,7 +227,9 @@ pub struct InstanceManager {
 
 logical_module_view_impl!(InstanceManagerView);
 logical_module_view_impl!(InstanceManagerView, os, OperatingSystem);
+logical_module_view_impl!(InstanceManagerView, p2p, P2PModule);
 logical_module_view_impl!(InstanceManagerView, appmeta_manager, AppMetaManager);
+logical_module_view_impl!(InstanceManagerView, instance_manager, InstanceManager);
 
 pub enum UnsafeFunctionCtx {
     Sync(NonNull<FnExeCtxSync>),

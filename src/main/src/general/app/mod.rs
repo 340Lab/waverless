@@ -1103,6 +1103,7 @@ impl AppMetaManager {
                 // 修改前：.map(|v| v.to_string())   去掉了这一行，为结构体派生了debug特征  曾俊
                 .collect::<Vec<_>>()
         );
+        let task = self.view.executor().register_sub_task();
         self.view
             .data_general()
             .write_data(
@@ -1112,10 +1113,13 @@ impl AppMetaManager {
                     self.view.p2p().nodes_config.this_node(),
                     proto::DataOpeType::Write,
                     OpeRole::UploadApp(DataOpeRoleUploadApp {}),
+                    task.clone(),
                 )),
             )
             .await?;
-        tracing::debug!("app uploaded");
+        // wait for sub task done(checkpoint)
+        self.view.executor().wait_for_subtasks(&task.task_id).await;
+        tracing::debug!("app uploaded, wait for sub task done");
         Ok(())
     }
 

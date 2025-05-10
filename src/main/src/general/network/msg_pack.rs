@@ -61,8 +61,8 @@ define_msg_ids!(
     (proto::raft::VoteResponse, _pack, { true }),
     (proto::raft::AppendEntriesRequest, _pack, { true }),
     (proto::raft::AppendEntriesResponse, _pack, { true }),
-    (proto::sche::DistributeTaskReq, _pack, { true }),
-    (proto::sche::DistributeTaskResp, _pack, { true }),
+    (proto::DistributeTaskReq, _pack, { true }),
+    (proto::DistributeTaskResp, _pack, { true }),
     (proto::metric::RscMetric, _pack, { true }),
     (proto::kv::KvRequests, pack, {
         for r in &pack.requests {
@@ -139,12 +139,20 @@ define_msg_ids!(
         // 2. unique_id 必须存在，标识数据集
         // 3. data 必须存在，实际数据内容
         let req = _pack;
-        match (req.request_id.is_some(), req.unique_id.is_empty(), req.data.is_empty()) {
+        match (
+            req.request_id.is_some(),
+            req.unique_id.is_empty(),
+            req.data.is_empty(),
+        ) {
             (true, false, false) => true,
-            _ => false
+            _ => false,
         }
     }),
-    (proto::BatchDataResponse, _pack, { true })
+    (proto::BatchDataResponse, _pack, { true }),
+    (proto::AddWaitTargetReq, _pack, { true }),
+    (proto::AddWaitTargetResp, _pack, { true }),
+    (proto::ListenForTaskDoneReq, _pack, { true }),
+    (proto::ListenForTaskDoneResp, _pack, { true })
 );
 
 pub trait RPCReq: MsgPack + Default {
@@ -159,8 +167,8 @@ impl RPCReq for proto::raft::AppendEntriesRequest {
     type Resp = proto::raft::AppendEntriesResponse;
 }
 
-impl RPCReq for proto::sche::DistributeTaskReq {
-    type Resp = proto::sche::DistributeTaskResp;
+impl RPCReq for proto::DistributeTaskReq {
+    type Resp = proto::DistributeTaskResp;
 }
 
 impl RPCReq for proto::kv::KvRequests {
@@ -201,6 +209,14 @@ impl RPCReq for proto::kv::KvLockRequest {
 
 impl RPCReq for proto::BatchDataRequest {
     type Resp = proto::BatchDataResponse;
+}
+
+impl RPCReq for proto::AddWaitTargetReq {
+    type Resp = proto::AddWaitTargetResp;
+}
+
+impl RPCReq for proto::ListenForTaskDoneReq {
+    type Resp = proto::ListenForTaskDoneResp;
 }
 
 // impl RPCReq for proto::kv::KvLockWaitAcquireNotifyRequest {

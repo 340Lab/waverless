@@ -1,5 +1,7 @@
 syntax = "proto3";
-package data;
+package proto;
+
+import "general/network/proto_src/sche.proto";
 
 enum DataOpeType{
   Read = 0;
@@ -46,6 +48,7 @@ message DataScheduleContext{
     // required
     DataOpeRoleFuncCall func_call = 5;
   }
+  proto.FnTaskId src_task_id=7;
 }
 
 message EachNodeSplit{

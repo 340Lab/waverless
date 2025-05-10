@@ -1,5 +1,5 @@
 syntax = "proto3";
-package sche;
+package proto;
 
 // import "network/proto_src/kv.proto";
 
@@ -35,11 +35,17 @@ message DistributeTaskReq {
 
     string app = 1;
     string func = 2;
-    uint32 task_id = 3;
+    FnTaskId task_id = 3;
+    FnTaskId trigger_src_task_id = 4;
     oneof trigger {
-        DataEventTriggerWrite event_write = 4;  // For Write/WriteWithCondition
-        DataEventTriggerNew event_new = 5;      // For New/NewWithCondition
+        DataEventTriggerWrite event_write = 5;  // For Write/WriteWithCondition
+        DataEventTriggerNew event_new = 6;      // For New/NewWithCondition
     }
+}
+
+message FnTaskId{
+    uint32 call_node_id=1;
+    uint32 task_id=2;
 }
 
 message DistributeTaskResp {
@@ -48,4 +54,24 @@ message DistributeTaskResp {
 }
 
 
+// after master scheduled
+// notify the src node task to wait for the target node task
+message AddWaitTargetReq{
+    uint32 src_task_id=1;
+    uint32 task_run_node=2;
+    FnTaskId sub_task_id=3;
+}
 
+message AddWaitTargetResp{
+    bool success=1;
+    string err_msg=2;
+}
+
+message ListenForTaskDoneReq{
+    FnTaskId task_id=1;
+}
+
+message ListenForTaskDoneResp{
+    bool success=1;
+    string err_msg=2;
+}

@@ -200,38 +200,42 @@ impl KvUserClient {
 
     async fn handle_kv_set(
         &self,
-        app_name: &str,
-        func_name: &str,
-        set: proto::kv::kv_request::KvPutRequest,
+        _app_name: &str,
+        _func_name: &str,
+        _set: proto::kv::kv_request::KvPutRequest,
     ) -> KvResponse {
-        let proto::kv::KvPair { key, value } = set.kv.unwrap();
-        let cur_node = self.view.p2p().nodes_config.this_node();
-        tracing::debug!("handle_kv_set: key: {:?}", key);
+        // let proto::kv::KvPair { key, value } = set.kv.unwrap();
+        // let cur_node = self.view.p2p().nodes_config.this_node();
+        // tracing::debug!("handle_kv_set: key: {:?}", key);
 
-        let data_general = self.view.data_general();
+        // let data_general = self.view.data_general();
         //返回结果未处理 曾俊
-        if let Err(e) = data_general
-            .write_data(
-                new_data_unique_id_fn_kv(&key),
-                //原代码：
-                // vec![proto::DataItem {
-                //     data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
-                // }],
-                //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊
-                vec![DataItemArgWrapper::new(value)],
-                Some((
-                    cur_node,
-                    proto::DataOpeType::Write,
-                    proto::data_schedule_context::OpeRole::FuncCall(proto::DataOpeRoleFuncCall {
-                        app_func: format!("{}/{}", app_name, func_name),
-                        node_id: cur_node,
-                    }),
-                )),
-            )
-            .await
         {
-            tracing::error!("Failed to write data: {}", e);
+            todo!()
+            //     if let Err(e) = data_general
+            //     .write_data(
+            //         new_data_unique_id_fn_kv(&key),
+            //         //原代码：
+            //         // vec![proto::DataItem {
+            //         //     data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
+            //         // }],
+            //         //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊
+            //         vec![DataItemArgWrapper::new(value)],
+            //         Some((
+            //             cur_node,
+            //             proto::DataOpeType::Write,
+            //             proto::data_schedule_context::OpeRole::FuncCall(proto::DataOpeRoleFuncCall {
+            //                 app_func: format!("{}/{}", app_name, func_name),
+            //                 node_id: cur_node,
+            //             }),
+            //         )),
+            //     )
+            //     .await
+            // {
+            //     tracing::error!("Failed to write data: {}", e);
+            // }
         }
+
         // .todo_handle("This part of the code needs to be implemented.");
         KvResponse::new_common(vec![])
     }
