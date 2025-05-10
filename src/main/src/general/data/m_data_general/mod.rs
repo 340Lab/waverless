@@ -139,31 +139,12 @@ pub struct DataGeneral {
 
     // 批量数据接收状态管理
     batch_receive_states: AsyncInitMap<proto::BatchRequestId, Arc<BatchReceiveState>>,
+
+    // cache in memory
+    cache_in_memory: moka::sync::Cache<UniqueId, Vec<u8>>,
 }
 
 impl DataGeneral {
-    pub fn inner_new(args: LogicalModuleNewArgs) -> Self {
-        Self {
-            view: DataGeneralView::new(args.logical_modules_ref.clone()),
-            rpc_call_data_version_schedule: RPCCaller::new(),
-            rpc_call_write_once_data: RPCCaller::new(),
-            rpc_call_batch_data: RPCCaller::new(),
-            rpc_call_get_data_meta: RPCCaller::new(),
-            rpc_call_get_data: RPCCaller::new(),
-
-            //费新文
-            // rpc_call_distribute_task: RPCCaller::new(),
-            rpc_handler_write_once_data: RPCHandler::new(),
-            rpc_handler_batch_data: RPCHandler::new(),
-            rpc_handler_data_meta_update: RPCHandler::new(),
-            rpc_handler_get_data_meta: RPCHandler::new(),
-            rpc_handler_get_data: RPCHandler::new(),
-            batch_receive_states: AsyncInitMap::new(),
-            //费新文
-            // rpc_handler_distribute_task: RPCHandler::new(),
-        }
-    }
-
     pub async fn write_data_batch(
         &self,
         unique_id: UniqueId,
@@ -627,6 +608,10 @@ impl DataGeneral {
                                 ope_type: ope as i32,
                                 ope_role: Some(role),
                                 src_task_id: Some(src_task_id),
+                                filepaths: datas
+                                    .iter()
+                                    .map(|d| d.filepath().unwrap_or_default())
+                                    .collect(),
                             }
                         },
                     ),
@@ -1393,6 +1378,7 @@ pub struct DataSetMetaV2 {
     pub data_metas: Vec<DataMetaSys>,
     pub synced_nodes: HashSet<NodeID>,
     pub cache_mode: Vec<CacheMode>,
+    pub filepath: Vec<Option<String>>,
 }
 
 impl DataSetMetaV2 {
@@ -1542,7 +1528,7 @@ macro_rules! generate_cache_mode_methods {
             impl DataSetMetaBuilder {
                 $(
                     pub fn [<cache_mode_ $group _ $mode>](&mut self, idx: DataItemIdx) -> &mut Self {
-                        self.assert_cache_mode_len();
+                        self.assert_len();
                         self.building.as_mut().unwrap().cache_mode[idx as usize] =
                             (self.building.as_mut().unwrap().cache_mode[idx as usize] & ![<CACHE_MODE_ $group:upper _MASK>]) |
                             ([<CACHE_MODE_ $group:upper _ $mode:upper _MASK>] & [<CACHE_MODE_ $group:upper _MASK>]);
@@ -1580,7 +1566,7 @@ fn test_cache_mode_visitor() {
 
     // test builder
 
-    let meta = DataSetMetaBuilder::new()
+    let meta = DataSetMetaBuilder::new(vec![None])
         .set_data_splits(vec![DataSplit { splits: vec![] }])
         .cache_mode_map_file(0)
         .cache_mode_time_forever(0)
@@ -1589,7 +1575,7 @@ fn test_cache_mode_visitor() {
     assert!(!meta.cache_mode_visitor(0).is_map_common_kv());
     assert!(meta.cache_mode_visitor(0).is_time_forever());
     assert!(!meta.cache_mode_visitor(0).is_time_auto());
-    let meta = DataSetMetaBuilder::new()
+    let meta = DataSetMetaBuilder::new(vec![None])
         .set_data_splits(vec![DataSplit { splits: vec![] }])
         .cache_mode_map_common_kv(0)
         .cache_mode_time_forever(0)
@@ -1609,7 +1595,7 @@ impl From<DataSetMetaV2> for DataSetMetaBuilder {
     }
 }
 impl DataSetMetaBuilder {
-    pub fn new() -> Self {
+    pub fn new(filepath: Vec<Option<String>>) -> Self {
         Self {
             building: Some(DataSetMetaV2 {
                 version: 0,
@@ -1618,12 +1604,23 @@ impl DataSetMetaBuilder {
                 api_version: 2,
                 synced_nodes: HashSet::new(),
                 cache_mode: vec![],
+                filepath: filepath,
             }),
         }
     }
-    fn assert_cache_mode_len(&self) {
+    // pub fn filepath(&mut self, ) -> &mut Self {
+    //     self.building.as_mut().unwrap().filepath = filepath;
+    //     self
+    // }
+    fn assert_len(&self) {
         if self.building.as_ref().unwrap().cache_mode.len() == 0 {
             panic!("please set_data_splits before set_cache_mode");
+        }
+        // filepath 和 cache_mode 长度必须相等
+        if self.building.as_ref().unwrap().cache_mode.len()
+            != self.building.as_ref().unwrap().filepath.len()
+        {
+            panic!("cache_mode and filepath length must be equal");
         }
     }
 
@@ -1749,6 +1746,11 @@ impl LogicalModule for DataGeneral {
 
             // 批量数据接收状态管理
             batch_receive_states: AsyncInitMap::new(),
+            cache_in_memory: moka::sync::Cache::builder()
+                .max_capacity(1024 * 1024 * 4)
+                .time_to_live(Duration::from_secs(5 * 60))
+                .weigher(|_, value: &Vec<u8>| value.len() as u32)
+                .build(),
         }
     }
 

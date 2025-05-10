@@ -160,7 +160,7 @@ worker:
 
     // wait for checkpoint
     tracing::debug!("test_app_upload wait 10s for checkpoint");
-    for i in 0..30 {
+    for i in 0..10 {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         tracing::debug!("test_app_upload waited {}s", i + 1);
     }

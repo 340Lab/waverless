@@ -43,6 +43,8 @@ pub trait ProtoExtDataItem: Sized {
         range: Range<usize>,
     ) -> WSResult<Self>;
     fn new_partial_raw_bytes(rawbytes: impl Into<Vec<u8>>, range: Range<usize>) -> WSResult<Self>;
+    fn new_file_data(path: &str, is_dir: bool) -> Self;
+    fn new_mem_data(mem: Vec<u8>) -> Self;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
@@ -60,6 +62,22 @@ impl ProtoExtDataItem for proto::DataItem {
                 bytes[range].to_vec(),
             )),
         })
+    }
+
+    fn new_file_data(path: &str, is_dir: bool) -> Self {
+        Self {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::File(proto::FileData {
+                file_name_opt: path.to_string(),
+                is_dir_opt: is_dir,
+                file_content: vec![],
+            })),
+        }
+    }
+
+    fn new_mem_data(mem: Vec<u8>) -> Self {
+        Self {
+            data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(mem)),
+        }
     }
 
     async fn new_partial_file_data(
@@ -476,11 +494,18 @@ impl ProtoExtDataEventTrigger for DataEventTrigger {
 
 pub trait ProtoExtDataScheduleContext {
     fn dataitem_cnt(&self) -> DataItemIdx;
+    fn filepath(&self) -> Vec<Option<String>>;
 }
 
 impl ProtoExtDataScheduleContext for proto::DataScheduleContext {
     fn dataitem_cnt(&self) -> DataItemIdx {
         self.each_data_sz_bytes.len() as DataItemIdx
+    }
+    fn filepath(&self) -> Vec<Option<String>> {
+        self.filepaths
+            .iter()
+            .map(|p| if p.is_empty() { None } else { Some(p.clone()) })
+            .collect()
     }
 }
 

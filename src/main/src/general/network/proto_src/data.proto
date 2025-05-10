@@ -48,6 +48,7 @@ message DataScheduleContext{
     // required
     DataOpeRoleFuncCall func_call = 5;
   }
+  repeated string filepaths=6;
   proto.FnTaskId src_task_id=7;
 }
 

@@ -573,7 +573,7 @@ mod test {
             .kv_store_engine()
             .set(
                 KeyTypeDataSetMeta(key.as_bytes()),
-                &DataSetMetaBuilder::new()
+                &DataSetMetaBuilder::new(vec![None])
                     .cache_mode_map_common_kv(0)
                     .cache_mode_pos_allnode(0)
                     .cache_mode_time_auto(0)
