@@ -9,12 +9,12 @@ use crate::{
 
 use super::process::PID;
 
-pub(super) struct JavaColdStart {
+pub(crate) struct JavaColdStart {
     _dummy_private: (),
 }
 
 impl JavaColdStart {
-    pub(super) async fn mksure_checkpoint(appdir: PathBuf) -> Self {
+    pub(crate) async fn mksure_checkpoint(appdir: PathBuf) -> Self {
         let mut i = 0;
         loop {
             // if dir not exist, continue
@@ -63,7 +63,7 @@ impl JavaColdStart {
         Self { _dummy_private: () }
     }
 
-    pub(super) fn cold_start(self, app: &str, os: &OperatingSystem) -> WSResult<process::Child> {
+    pub(crate) fn cold_start(self, app: &str, os: &OperatingSystem) -> WSResult<process::Child> {
         tracing::debug!("java cold start {}", app);
         let p = os.start_process(OsProcessType::JavaApp(app.to_owned()));
         Ok(p)
@@ -96,7 +96,7 @@ pub(super) async fn find_pid(app: &str) -> WSResult<PID> {
     Ok(pid)
 }
 
-pub(super) async fn take_snapshot(app: &str, os: &OperatingSystem) {
+pub async fn take_snapshot(app: &str, os: &OperatingSystem) {
     let res = os
         .start_process(OsProcessType::JavaCheckpoints(app.to_owned()))
         .wait()

@@ -11,8 +11,8 @@ use zip_extract::ZipExtractError;
 
 use crate::{
     general::{
-        app::FnMeta,
-        data::m_data_general::{DataItemIdx, DataSplitIdx, EachNodeSplit},
+        app::{m_executor::EventCtx, AppMeta, FnMeta},
+        data::m_data_general::{DataItemIdx, DataSetMetaV2, DataSplitIdx, EachNodeSplit},
         network::{proto, rpc_model::HashValue},
     },
     sys::NodeID,
@@ -155,6 +155,13 @@ pub enum WsFuncError {
         func: String,
         http_err: reqwest::Error,
     },
+    FuncTriggerAppInvalid {
+        key: Vec<u8>,
+        /// only when parse success
+        // app: Option<String>,
+        appmeta: Option<(String, Option<(AppMeta, Option<DataSetMetaV2>)>)>,
+        context: String,
+    },
     AppPackFailedZip(ZipExtractError),
     AppPackNoExe,
     AppPackExeName(String),
@@ -178,6 +185,11 @@ pub enum WsFuncError {
     InstanceProcessStartFailed(std::io::Error),
     InsranceVerifyFailed(String),
     UnsupportedAppType,
+    InvalidTriggerForAppFunction {
+        app: String,
+        func: String,
+        trigger_type: EventCtx,
+    },
 }
 
 #[derive(Debug)]

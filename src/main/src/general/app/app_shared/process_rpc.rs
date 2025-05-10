@@ -4,6 +4,7 @@ pub mod proc_proto {
 
 use self::proc_proto::{FuncCallReq, FuncCallResp};
 use super::SharedInstance;
+use crate::general::app;
 use crate::general::app::app_shared::process_rpc::proc_proto::AppStarted;
 use crate::{
     general::network::rpc_model::{self, HashValue, MsgIdBind, ReqMsg, RpcCustom},
@@ -14,6 +15,7 @@ use crate::{
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use prost::Message;
+use std::sync::Arc;
 use std::{collections::HashMap, path::Path, time::Duration};
 use tokio::sync::oneshot;
 
@@ -23,7 +25,16 @@ fn clean_sock_file(path: impl AsRef<Path>) {
     let _ = std::fs::remove_file(path);
 }
 
-pub struct ProcessRpc;
+// pub struct ProcessRpcInner();
+
+#[derive(Clone)]
+pub struct ProcessRpc(Arc<app::View>);
+
+impl ProcessRpc {
+    pub fn new(app: app::View) -> Self {
+        ProcessRpc(Arc::new(app))
+    }
+}
 
 lazy_static::lazy_static! {
     static ref WATING_VERIFY: Mutex<HashMap<String, Vec<oneshot::Sender<AppStarted>>>>=Mutex::new(HashMap::new());
@@ -49,7 +60,7 @@ impl RpcCustom for ProcessRpc {
     //     };
     // }
 
-    async fn verify(buf: &[u8]) -> Option<HashValue> {
+    async fn verify(&self, buf: &[u8]) -> Option<HashValue> {
         let res = proc_proto::AppStarted::decode(buf);
         let res: proc_proto::AppStarted = match res {
             Ok(res) => res,
@@ -86,11 +97,16 @@ impl RpcCustom for ProcessRpc {
             // }
 
             // update to the instance
-            let insman = ProcessRpc::global_m_instance_manager();
-            let instance = insman.app_instances.get(&res.appid).expect(&format!(
-                "instance should be inited before get the verify {}",
-                res.appid
-            ));
+            // let insman = ProcessRpc::global_m_instance_manager();
+            let instance = self
+                .0
+                .instance_manager()
+                .app_instances
+                .get(&res.appid)
+                .expect(&format!(
+                    "instance should be inited before get the verify {}",
+                    res.appid
+                ));
             let Some(s): Option<&SharedInstance> = instance.value().as_shared() else {
                 tracing::warn!("only receive the verify from the instance that is shared");
                 return None;

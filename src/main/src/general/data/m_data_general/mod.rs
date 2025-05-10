@@ -90,6 +90,18 @@ pub const CACHE_MODE_MAP_COMMON_KV_MASK: u16 = 0xff0f;
 pub const CACHE_MODE_MAP_FILE_MASK: u16 = 0xff1f;
 // const DATA_UID_PREFIX_OBJ: &str = "obj";
 
+pub fn parse_appname_from_data_uid(data_uid: &[u8]) -> Option<String> {
+    if data_uid.starts_with(DATA_UID_PREFIX_APP_META.as_bytes()) {
+        Some(
+            str::from_utf8(&data_uid[DATA_UID_PREFIX_APP_META.len()..])
+                .unwrap_or_default()
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 pub fn new_data_unique_id_app(app_name: &str) -> String {
     format!("{}{}", DATA_UID_PREFIX_APP_META, app_name)
 }

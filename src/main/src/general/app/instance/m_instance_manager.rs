@@ -1,3 +1,4 @@
+use crate::general::app;
 use crate::general::app::app_native::NativeAppInstance;
 use crate::general::app::app_owned::wasm;
 use crate::general::app::app_shared::process_rpc::ProcessRpc;
@@ -5,6 +6,7 @@ use crate::general::app::app_shared::SharedInstance;
 use crate::general::app::instance::Instance;
 use crate::general::app::m_executor::FnExeCtxAsync;
 use crate::general::app::m_executor::FnExeCtxSync;
+use crate::general::app::AppMetaManager;
 use crate::general::m_os::OperatingSystem;
 use crate::general::network::rpc_model;
 use crate::result::{WSError, WsFuncError};
@@ -218,6 +220,7 @@ pub struct InstanceManager {
 
 logical_module_view_impl!(InstanceManagerView);
 logical_module_view_impl!(InstanceManagerView, os, OperatingSystem);
+logical_module_view_impl!(InstanceManagerView, appmeta_manager, AppMetaManager);
 
 pub enum UnsafeFunctionCtx {
     Sync(NonNull<FnExeCtxSync>),
@@ -289,6 +292,7 @@ action: close",
 
         // start process rpc
         Ok(vec![rpc_model::spawn::<ProcessRpc>(
+            ProcessRpc::new(app::View::new(self.view.copy_module_ref())),
             self.file_dir
                 .join("agent.sock")
                 .to_str()

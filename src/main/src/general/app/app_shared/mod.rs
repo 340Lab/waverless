@@ -7,6 +7,8 @@ use crate::general::app::instance::InstanceTrait;
 use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxSync};
 use async_trait::async_trait;
 
+use super::instance::m_instance_manager::InstanceManager;
+
 pub struct SharedInstance(pub process::ProcessInstance);
 
 impl From<process::ProcessInstance> for SharedInstance {
@@ -20,10 +22,18 @@ impl InstanceTrait for SharedInstance {
     fn instance_name(&self) -> String {
         self.0.instance_name()
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> crate::result::WSResult<Option<String>> {
-        self.0.execute(fn_ctx).await
+    async fn execute(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> crate::result::WSResult<Option<String>> {
+        self.0.execute(instman, fn_ctx).await
     }
-    fn execute_sync(&self, fn_ctx: &mut FnExeCtxSync) -> crate::result::WSResult<Option<String>> {
-        self.0.execute_sync(fn_ctx)
+    fn execute_sync(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxSync,
+    ) -> crate::result::WSResult<Option<String>> {
+        self.0.execute_sync(instman, fn_ctx)
     }
 }

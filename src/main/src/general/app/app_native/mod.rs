@@ -2,6 +2,7 @@ pub mod app_checkpoint;
 
 use std::collections::HashMap;
 
+use super::instance::m_instance_manager::InstanceManager;
 use super::{
     AffinityPattern, AffinityRule, AppMeta, AppType, DataAccess, DataEventTrigger, FnMeta,
     KeyPattern, NodeTag,
@@ -11,7 +12,15 @@ use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxSync};
 use crate::general::data::m_data_general::DATA_UID_PREFIX_APP_META;
 use crate::new_map;
 use crate::result::{WSResult, WsFuncError};
+use app_checkpoint::FunctionAppCheckpoint;
 use async_trait::async_trait;
+
+pub trait NativeAppFunc: Sized {
+    async fn execute(
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> WSResult<Option<String>>;
+}
 
 pub struct NativeAppInstance {
     _dummy_private: (), // avoid empty struct
@@ -29,12 +38,43 @@ impl InstanceTrait for NativeAppInstance {
     fn instance_name(&self) -> String {
         "native_app_dummy_instance".to_string()
     }
-    async fn execute(&self, _fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>> {
+    async fn execute(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> WSResult<Option<String>> {
         // Native apps don't support async execution
-        Err(WsFuncError::UnsupportedAppType.into())
+        // Err(WsFuncError::UnsupportedAppType.into())
+        let res = match fn_ctx.app_name() {
+            "app_checkpoint" => match fn_ctx.func_name() {
+                // "checkpointable" => app_checkpoint::checkpointable(fn_ctx),
+                "checkpoint" => Some(FunctionAppCheckpoint::execute(instman, fn_ctx).await?),
+                _ => None,
+            },
+            _ => {
+                return Err(WsFuncError::AppNotFound {
+                    app: fn_ctx.app_name().to_string(),
+                }
+                .into())
+            }
+        };
+
+        let Some(res) = res else {
+            return Err(WsFuncError::FuncNotFound {
+                app: fn_ctx.app_name().to_string(),
+                func: fn_ctx.func_name().to_string(),
+            }
+            .into());
+        };
+
+        Ok(res)
     }
 
-    fn execute_sync(&self, _fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>> {
+    fn execute_sync(
+        &self,
+        _instman: &InstanceManager,
+        _fn_ctx: &mut FnExeCtxSync,
+    ) -> WSResult<Option<String>> {
         // For now, just return None as native apps don't produce results
         todo!()
         // Ok(None)

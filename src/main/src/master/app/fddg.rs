@@ -1,9 +1,7 @@
 use crate::new_map;
 use crate::util::container::sync_trie::SyncedTrie;
 use crate::{
-    general::{
-        app::{AppType, FnMeta},
-    },
+    general::app::{AppType, FnMeta},
     result::WSResult,
 };
 use std::collections::HashMap;
@@ -34,19 +32,39 @@ impl FDDGMgmt {
     // return app_name -> (apptype, fn_name -> fn_meta)
     pub fn get_binded_funcs(
         &self,
-        _data_unique_id: &str,
+        data_unique_id: &str,
         _ope: FuncTriggerType,
     ) -> HashMap<String, (AppType, HashMap<String, FnMeta>)> {
         let mut binded_funcs = HashMap::new();
-        let binded_matchers = self.prefix_key_to_functions.match_partial(_data_unique_id);
+        let binded_matchers = self.prefix_key_to_functions.match_partial(data_unique_id);
         for matcher in binded_matchers {
+            tracing::debug!("match fddg data prefix len {:?}", matcher.0);
             let node = matcher.1.read();
-            for (app_name, (app_type, _fn_names)) in node.iter() {
-                let _ = binded_funcs
-                    .entry(app_name.to_string())
-                    .or_insert((*app_type, HashMap::new()));
+            for (app_name, (app_type, fn_names)) in node.iter() {
+                for (fn_name, fn_meta) in fn_names.iter() {
+                    let _ = binded_funcs
+                        .entry(app_name.to_string())
+                        .and_modify(|(_, fn_names): &mut (AppType, HashMap<String, FnMeta>)| {
+                            let _ = fn_names.insert(fn_name.to_string(), fn_meta.clone());
+                        })
+                        .or_insert_with(|| {
+                            (
+                                app_type.clone(),
+                                new_map! (HashMap {
+                                    fn_name.to_string() => fn_meta.clone(),
+                                }),
+                            )
+                        });
+                }
             }
+            // let _ = binded_funcs
+            //     .entry(app_name.to_string())
+            //     .and_modify(|(_, fn_names)| {
+
+            //     })
+            //     .or_insert((*app_type, HashMap::new()));
         }
+        tracing::debug!("binded_funcs get: {:?}", binded_funcs);
         binded_funcs
     }
 

@@ -69,7 +69,7 @@ worker:
     std::fs::write(&config_path, config_content).expect("Failed to write config file");
 
     //sleep 10s
-    tracing::debug!("test_app_upload sleep 10s for system to be ready");
+    tracing::debug!("test_app_upload sleep 4s for system to be ready");
     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
     // 获取配置文件的绝对路径
@@ -157,6 +157,14 @@ worker:
     assert!(app_meta.is_ok(), "Failed to get app meta");
     let app_meta = app_meta.unwrap();
     assert!(app_meta.is_some(), "App meta data not found");
+
+    // wait for checkpoint
+    tracing::debug!("test_app_upload wait 10s for checkpoint");
+    for i in 0..30 {
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tracing::debug!("test_app_upload waited {}s", i + 1);
+    }
+    // tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
     // 发起对函数的 http 请求校验应用是否运行
     tracing::debug!("test_app_upload try calling test app");

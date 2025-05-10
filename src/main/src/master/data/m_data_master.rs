@@ -13,8 +13,8 @@ use crate::util::JoinHandleWrapper;
 use crate::{
     general::data::{
         m_data_general::{
-            CacheMode, DataGeneral, DataSetMetaBuilder, DataSplit,
-            EachNodeSplit, CACHE_MODE_MAP_COMMON_KV_MASK, CACHE_MODE_TIME_FOREVER_MASK,
+            CacheMode, DataGeneral, DataSetMetaBuilder, DataSplit, EachNodeSplit,
+            CACHE_MODE_MAP_COMMON_KV_MASK, CACHE_MODE_TIME_FOREVER_MASK,
         },
         m_kv_store_engine::{KeyType, KeyTypeDataSetMeta, KvAdditionalConf, KvStoreEngine},
     },
@@ -129,15 +129,29 @@ impl DataMaster {
                 };
 
                 // 发送触发请求并处理可能的错误
-                if let Err(e) = self.view.master().trigger_func_call(ctx).await {
-                    tracing::error!(
-                        "Failed to trigger function {}/{} on node {}: {:?}",
-                        app_name,
-                        fn_name,
-                        target_node,
-                        e
-                    );
-                }
+                tracing::debug!(
+                    "data {:?} write trigger function {}/{} on node {}",
+                    data_unique_id,
+                    app_name,
+                    fn_name,
+                    target_node
+                );
+
+                // async call with unique task, don't block current task
+                let view = self.view.clone();
+                let app_name = app_name.clone();
+                let fn_name = fn_name.clone();
+                let _ = tokio::spawn(async move {
+                    if let Err(e) = view.master().trigger_func_call(ctx).await {
+                        tracing::error!(
+                            "Failed to trigger function {}/{} on node {}: {:?}",
+                            app_name,
+                            fn_name,
+                            target_node,
+                            e
+                        );
+                    }
+                });
             }
         }
 
@@ -191,12 +205,18 @@ impl DataMaster {
 
         // 设置数据分片
         let _ = builder.set_data_splits(splits.clone());
-        // 暂时用zui'lzuil        
+        // 暂时用zui'lzuil
         for idx in 0..splits.len() {
-            let _= builder.cache_mode_time_auto(idx as u8).cache_mode_pos_auto(idx as u8);
+            let _ = builder
+                .cache_mode_time_auto(idx as u8)
+                .cache_mode_pos_auto(idx as u8);
         }
-        let cache_modes=builder.build().cache_mode;
-        tracing::debug!("planned for write data({:?}) cache_modes: {:?}", data_unique_id, cache_modes);
+        let cache_modes = builder.build().cache_mode;
+        tracing::debug!(
+            "planned for write data({:?}) cache_modes: {:?}",
+            data_unique_id,
+            cache_modes
+        );
         Ok((cache_modes, splits, cache_nodes))
     }
 
@@ -267,7 +287,11 @@ impl DataMaster {
 
         // update version peers
         {
-            tracing::debug!("updating meta({:?}) to peers for data({:?})", new_meta, req.unique_id);
+            tracing::debug!(
+                "updating meta({:?}) to peers for data({:?})",
+                new_meta,
+                req.unique_id
+            );
             let need_notify_nodes = {
                 let mut need_notify_nodes = HashSet::new();
                 for one_data_splits in &new_meta.datas_splits {
@@ -327,7 +351,6 @@ impl DataMaster {
                 });
             }
         }
-    
 
         tracing::debug!(
             "data:{:?} version required({}) and schedule done, caller will do following thing after receive `DataVersionScheduleResponse`",
@@ -347,9 +370,10 @@ impl DataMaster {
                     .collect(),
                 cache_nodes,
             })
-            .await{
-                tracing::error!("Failed to send data version schedule response: {}", e);
-            }
+            .await
+        {
+            tracing::error!("Failed to send data version schedule response: {}", e);
+        }
         // .todo_handle("This part of the code needs to be implemented.");
         Ok(())
     }

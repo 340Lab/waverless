@@ -18,21 +18,21 @@ use crate::result::{WSResult, WsFuncError, WsRpcErr};
 
 // start from the begining
 #[async_trait]
-pub trait RpcCustom: Sized + 'static {
+pub trait RpcCustom: Clone + Sized + Send + 'static {
     type SpawnArgs: Send + 'static;
 
     fn bind(a: Self::SpawnArgs) -> UnixListener;
     // return true if the id matches remote call pack
     fn handle_remote_call(conn: &HashValue, id: u8, buf: &[u8]) -> bool;
-    async fn verify(buf: &[u8]) -> Option<HashValue>;
+    async fn verify(&self, buf: &[u8]) -> Option<HashValue>;
     // fn deserialize(id: u16, buf: &[u8]);
 }
 
-pub fn spawn<R: RpcCustom>(a: R::SpawnArgs) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(accept_task::<R>(a))
+pub fn spawn<R: RpcCustom>(r: R, a: R::SpawnArgs) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(accept_task::<R>(r, a))
 }
 
-async fn accept_task<R: RpcCustom>(a: R::SpawnArgs) {
+async fn accept_task<R: RpcCustom>(r: R, a: R::SpawnArgs) {
     // std::fs::remove_file(AGENT_SOCK_PATH).unwrap();
 
     // clean_sock_file(AGENT_SOCK_PATH);
@@ -41,7 +41,8 @@ async fn accept_task<R: RpcCustom>(a: R::SpawnArgs) {
     let listener = R::bind(a);
     loop {
         let (socket, _) = listener.accept().await.unwrap();
-        let _ = tokio::spawn(listen_task::<R>(socket));
+        let r = r.clone();
+        let _ = tokio::spawn(async move { listen_task::<R>(r, socket).await });
     }
 }
 
@@ -142,14 +143,14 @@ lazy_static! {
     static ref NEXT_TASK_ID: AtomicU32 = AtomicU32::new(0);
 }
 
-async fn listen_task<R: RpcCustom>(socket: tokio::net::UnixStream) -> WSResult<()> {
+async fn listen_task<R: RpcCustom>(r: R, socket: tokio::net::UnixStream) -> WSResult<()> {
     tracing::debug!("new connection: {:?}", socket.peer_addr().unwrap());
     let (mut sockrx, socktx) = socket.into_split();
 
     let mut buf = [0; 1024];
     let mut len = 0;
     let (conn, rx) =
-        match listen_task_ext::verify_remote::<R>(&mut sockrx, &mut len, &mut buf).await {
+        match listen_task_ext::verify_remote::<R>(r, &mut sockrx, &mut len, &mut buf).await {
             Ok((conn, rx)) => (conn, rx),
             Err(err) => {
                 tracing::debug!("verify failed {:?}", err);
@@ -182,11 +183,13 @@ pub(super) mod listen_task_ext {
     use super::{HashValue, RpcCustom, CALL_MAP, CONN_MAP};
 
     pub(super) async fn verify_remote<R: RpcCustom>(
+        r: R,
         sockrx: &mut OwnedReadHalf,
         len: &mut usize,
         buf: &mut [u8],
     ) -> WSResult<(HashValue, Receiver<Vec<u8>>)> {
         async fn verify_remote_inner<R: RpcCustom>(
+            r: R,
             sockrx: &mut OwnedReadHalf,
             len: &mut usize,
             buf: &mut [u8],
@@ -212,7 +215,7 @@ pub(super) mod listen_task_ext {
             }
             // println!("wait done");
 
-            let Some(id) = R::verify(&buf[4..4 + verify_msg_len]).await else {
+            let Some(id) = r.verify(&buf[4..4 + verify_msg_len]).await else {
                 tracing::warn!("verify failed");
                 return Err(WsFuncError::InsranceVerifyFailed("verify failed".to_string()).into());
             };
@@ -232,7 +235,7 @@ pub(super) mod listen_task_ext {
         }
         match tokio::time::timeout(
             Duration::from_secs(5),
-            verify_remote_inner::<R>(sockrx, len, buf),
+            verify_remote_inner::<R>(r, sockrx, len, buf),
         )
         .await
         {
@@ -281,7 +284,7 @@ pub(super) mod listen_task_ext {
                 }
 
                 if !R::handle_remote_call(&conn, msg_id, &buf[..msg_len]) {
-                    // call back
+                    tracing::debug!("msg id not remote call to sys, seen as sys call response");
                     let Some(cb) = CALL_MAP.write().remove(&taskid) else {
                         tracing::warn!(
                             "rd stream is not in correct format, taskid:{} msgid:{}",

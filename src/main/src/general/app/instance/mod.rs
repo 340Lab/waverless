@@ -8,6 +8,7 @@ use crate::general::app::app_shared::process::ProcessInstance;
 use crate::result::WSResult;
 use async_trait::async_trait;
 use enum_as_inner::EnumAsInner;
+use m_instance_manager::InstanceManager;
 
 #[derive(EnumAsInner)]
 pub enum OwnedInstance {
@@ -46,19 +47,27 @@ impl InstanceTrait for Instance {
             Instance::Native(v) => v.instance_name(),
         }
     }
-    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>> {
+    async fn execute(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> WSResult<Option<String>> {
         match self {
-            Instance::Owned(v) => v.execute(fn_ctx).await,
-            Instance::Shared(v) => v.execute(fn_ctx).await,
-            Instance::Native(v) => v.execute(fn_ctx).await,
+            Instance::Owned(v) => v.execute(instman, fn_ctx).await,
+            Instance::Shared(v) => v.execute(instman, fn_ctx).await,
+            Instance::Native(v) => v.execute(instman, fn_ctx).await,
         }
     }
 
-    fn execute_sync(&self, fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>> {
+    fn execute_sync(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxSync,
+    ) -> WSResult<Option<String>> {
         match self {
-            Instance::Owned(v) => v.execute_sync(fn_ctx),
-            Instance::Shared(v) => v.execute_sync(fn_ctx),
-            Instance::Native(v) => v.execute_sync(fn_ctx),
+            Instance::Owned(v) => v.execute_sync(instman, fn_ctx),
+            Instance::Shared(v) => v.execute_sync(instman, fn_ctx),
+            Instance::Native(v) => v.execute_sync(instman, fn_ctx),
         }
     }
 }
@@ -68,6 +77,14 @@ pub enum NewJavaInstanceConfig {}
 #[async_trait]
 pub trait InstanceTrait {
     fn instance_name(&self) -> String;
-    async fn execute(&self, fn_ctx: &mut FnExeCtxAsync) -> WSResult<Option<String>>;
-    fn execute_sync(&self, fn_ctx: &mut FnExeCtxSync) -> WSResult<Option<String>>;
+    async fn execute(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxAsync,
+    ) -> WSResult<Option<String>>;
+    fn execute_sync(
+        &self,
+        instman: &InstanceManager,
+        fn_ctx: &mut FnExeCtxSync,
+    ) -> WSResult<Option<String>>;
 }
