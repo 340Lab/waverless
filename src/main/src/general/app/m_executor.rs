@@ -3,7 +3,12 @@ use crate::general::app::instance::m_instance_manager::UnsafeFunctionCtx;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::AppType;
 use crate::general::app::FnMeta;
+use crate::general::network::m_p2p::RPCCaller;
+use crate::general::network::m_p2p::TaskId;
+use crate::general::network::proto::FnTaskId;
 use crate::result::WSError;
+use crate::result::WSResultExt;
+use crate::sys::NodeID;
 use crate::{
     general::{
         app::AppMetaManager,
@@ -11,8 +16,7 @@ use crate::{
             http_handler::ReqId,
             m_p2p::{P2PModule, RPCHandler, RPCResponsor},
             proto::{
-                self,
-                sche::{distribute_task_req, DistributeTaskResp},
+                self, {distribute_task_req, DistributeTaskResp},
             },
         },
     },
@@ -22,26 +26,33 @@ use crate::{
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
+use dashmap::DashMap;
+use std::time::Duration;
 use std::{
     ptr::NonNull,
     sync::atomic::{AtomicU32, AtomicUsize},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::broadcast;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 #[cfg(target_os = "linux")]
 use ws_derive::LogicalModule;
 
-pub type SubTaskId = u32;
+// pub type SubTaskId = u32;
 
-pub type SubTaskNotifier = oneshot::Sender<bool>;
+// pub type SubTaskNotifier = oneshot::Sender<bool>;
 
-pub type SubTaskWaiter = oneshot::Receiver<bool>;
+// pub type SubTaskWaiter = oneshot::Receiver<bool>;
 
 #[derive(Clone, Debug)]
 pub enum EventCtx {
     Http(String),
-    KvSet { key: Vec<u8>, opeid: Option<u32> },
+    KvSet {
+        key: Vec<u8>,
+        opeid: Option<u32>,
+        src_task_id: proto::FnTaskId,
+    },
 }
 
 impl EventCtx {
@@ -58,11 +69,12 @@ struct FnExeCtx {
     pub app_type: AppType,
     pub func: String,
     pub _func_meta: FnMeta,
-    pub _req_id: ReqId,
+    // pub _req_id: ReqId,
+    pub task_id: FnTaskId,
     pub event_ctx: EventCtx,
     pub res: Option<String>,
     /// remote scheduling tasks
-    pub sub_waiters: Vec<JoinHandle<()>>, // pub trigger_node: NodeID,
+    // pub sub_waiters: Vec<JoinHandle<()>>, // pub trigger_node: NodeID,
     _dummy_private: (),
 }
 
@@ -103,22 +115,26 @@ impl FnExeCtxAsync {
         app: String,
         func: String,
         func_meta: FnMeta,
-        req_id: ReqId,
+        task_id: FnTaskId,
         event_ctx: EventCtx,
     ) -> Self {
         Self {
             inner: FnExeCtx {
                 app,
                 func,
-                _req_id: req_id,
+                task_id,
                 event_ctx,
                 res: None,
-                sub_waiters: vec![],
+                // sub_waiters: vec![],
                 app_type: apptype.into(),
                 _func_meta: func_meta,
                 _dummy_private: (),
             },
         }
+    }
+
+    pub fn task_id(&self) -> &FnTaskId {
+        &self.inner.task_id
     }
 
     pub fn event_ctx(&self) -> &EventCtx {
@@ -194,17 +210,18 @@ impl FnExeCtxSync {
         app: String,
         func: String,
         func_meta: FnMeta,
-        req_id: ReqId,
+        // req_id: ReqId,
+        task_id: FnTaskId,
         event_ctx: EventCtx,
     ) -> Self {
         Self {
             inner: FnExeCtx {
                 app,
                 func,
-                _req_id: req_id,
+                task_id,
                 event_ctx,
                 res: None,
-                sub_waiters: vec![],
+                // sub_waiters: vec![],
                 app_type: apptype.into(),
                 _func_meta: func_meta,
                 _dummy_private: (),
@@ -238,9 +255,19 @@ logical_module_view_impl!(ExecutorView, executor, Executor);
 #[derive(LogicalModule)]
 pub struct Executor {
     sub_task_id: AtomicU32,
-    rpc_handler_distribute_task: RPCHandler<proto::sche::DistributeTaskReq>,
-    next_req_id: AtomicUsize,
+    // next_req_id: AtomicUsize,
     view: ExecutorView,
+
+    // src task id -> [(task run node, task id)]
+    task_subwait_for: DashMap<u32, Vec<(NodeID, FnTaskId)>>,
+
+    // this runing task id -> src waiting rpc
+    task_subwait_by: DashMap<FnTaskId, broadcast::Sender<()>>,
+
+    rpc_handler_distribute_task: RPCHandler<proto::DistributeTaskReq>,
+    rpc_caller_listen_for_task_done: RPCCaller<proto::ListenForTaskDoneReq>,
+    rpc_handler_listen_for_task_done: RPCHandler<proto::ListenForTaskDoneReq>,
+    rpc_handler_add_wait_target: RPCHandler<proto::AddWaitTargetReq>,
 }
 
 /// Base trait for function execution contexts
@@ -285,6 +312,151 @@ impl FnExeCtxBase for FnExeCtxSync {
     }
 }
 
+impl Executor {
+    pub async fn wait_for_subtasks(&self, thistask: &u32) {
+        let mut done_tasks = vec![];
+        loop {
+            if !self.task_subwait_for.contains_key(&thistask) {
+                tracing::debug!(
+                    "src task {} wait_for_subtasks with {:?}",
+                    thistask,
+                    done_tasks
+                );
+                break;
+            }
+            let mut wait_tasks = Vec::new();
+            while let Some((_thistask, node_tasks)) = self.task_subwait_for.remove(&thistask) {
+                for (node, task) in node_tasks {
+                    done_tasks.push(task.clone());
+                    let view = self.view.clone();
+                    let wait_task = tokio::spawn(async move {
+                        let _ = view
+                            .executor()
+                            .rpc_caller_listen_for_task_done
+                            .call(
+                                view.p2p(),
+                                node,
+                                proto::ListenForTaskDoneReq {
+                                    task_id: Some(task),
+                                },
+                                Some(Duration::from_secs(180)),
+                            )
+                            .await;
+                    });
+                    wait_tasks.push(wait_task);
+                }
+            }
+            for wait_task in wait_tasks {
+                let _ = wait_task.await;
+            }
+        }
+    }
+    pub fn notify_subwait_done(&self, taskid: &FnTaskId) {
+        loop {
+            if let Some((_, sender)) = self.task_subwait_by.remove(&taskid) {
+                let _ = sender.send(());
+            }
+            return;
+        }
+    }
+    // pub fn take_subwaitings_for_task(&self, taskid: &FnTaskId) -> Option<broadcast::Sender<()>> {
+    //     self.task_subwait_by.remove(&taskid).map(|res| res.1)
+    // }
+    async fn start_rpc(&self) -> WSResult<()> {
+        self.rpc_caller_listen_for_task_done.regist(self.view.p2p());
+        {
+            let view = self.view.clone();
+            self.view.executor().rpc_handler_distribute_task.regist(
+                self.view.p2p(),
+                move |responser, r| {
+                    // tracing::info!("rpc recv: {:?}", r);
+                    let view = view.clone();
+                    let _ = tokio::spawn(async move {
+                        view.executor().handle_distribute_task(responser, r).await;
+
+                        // if let Err(err) = responser
+                        //     .send_resp(proto::sche::DistributeTaskResp {})
+                        //     .await
+                        // {
+                        //     tracing::error!("send sche resp failed with err: {}", err);
+                        // }
+                    });
+                    Ok(())
+                },
+            );
+        }
+        {
+            // after some function done, check the waiting list
+            // beingg the listen for task done caller
+            let view = self.view.clone();
+            let _ =
+                self.rpc_handler_add_wait_target
+                    .regist(self.view.p2p(), move |responsor, req| {
+                        let view = view.clone();
+                        let _ = tokio::spawn(async move {
+                            view.executor()
+                                .task_subwait_for
+                                .entry(req.src_task_id)
+                                .or_insert_with(|| vec![])
+                                .push((req.task_run_node, req.sub_task_id.unwrap()));
+                            // view.executor().handle_add_wait_target(responsor,req).await;
+                            let _ = responsor
+                                .send_resp(proto::AddWaitTargetResp {
+                                    success: true,
+                                    err_msg: "".to_owned(),
+                                })
+                                .await
+                                .todo_handle("add wait target");
+                        });
+                        Ok(())
+                    });
+        }
+        // {
+        //     self.rpc_caller_add_wait_target.regist(self.view.p2p());
+        // }
+        {
+            let view = self.view.clone();
+            self.rpc_handler_listen_for_task_done
+                .regist(self.view.p2p(), move |responsor, req| {
+                    let view = view.clone();
+                    let _ = tokio::spawn(async move {
+                        tracing::debug!("listen for task done: {:?}", req.task_id);
+                        let mut sub = {
+                            view.executor()
+                                .task_subwait_by
+                                .entry(req.task_id.unwrap())
+                                .or_insert_with(|| broadcast::channel(16).0)
+                                .subscribe()
+                        };
+                        let res = sub.recv().await;
+                        tracing::debug!("task is done: {:?}", res);
+                        if res.is_ok() {
+                            let _ = responsor
+                                .send_resp(proto::ListenForTaskDoneResp {
+                                    success: true,
+                                    err_msg: "".to_owned(),
+                                })
+                                .await
+                                .todo_handle("listen task done");
+                        } else {
+                            tracing::warn!("listen task done failed: {:?}", res);
+                            let _ = responsor
+                                .send_resp(proto::ListenForTaskDoneResp {
+                                    success: false,
+                                    err_msg: format!("err:{:?}", res),
+                                })
+                                .await
+                                .todo_handle("listen task done");
+                        }
+                    });
+                    Ok(())
+                });
+        }
+
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl LogicalModule for Executor {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
@@ -295,29 +467,17 @@ impl LogicalModule for Executor {
             rpc_handler_distribute_task: RPCHandler::default(),
             view: ExecutorView::new(args.logical_modules_ref.clone()),
             sub_task_id: AtomicU32::new(0),
-            next_req_id: AtomicUsize::new(0),
+            // next_req_id: AtomicUsize::new(0),
+            rpc_caller_listen_for_task_done: RPCCaller::new(),
+            rpc_handler_listen_for_task_done: RPCHandler::new(),
+            rpc_handler_add_wait_target: RPCHandler::new(),
+
+            task_subwait_by: DashMap::new(),
+            task_subwait_for: DashMap::new(),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
-        let view = self.view.clone();
-        self.view.executor().rpc_handler_distribute_task.regist(
-            self.view.p2p(),
-            move |responser, r| {
-                // tracing::info!("rpc recv: {:?}", r);
-                let view = view.clone();
-                let _ = tokio::spawn(async move {
-                    view.executor().handle_distribute_task(responser, r).await;
-
-                    // if let Err(err) = responser
-                    //     .send_resp(proto::sche::DistributeTaskResp {})
-                    //     .await
-                    // {
-                    //     tracing::error!("send sche resp failed with err: {}", err);
-                    // }
-                });
-                Ok(())
-            },
-        );
+        self.start_rpc().await?;
         // self.view
         //     .p2p()
         //     .regist_rpc::<proto::sche::ScheReq, _>();
@@ -326,11 +486,15 @@ impl LogicalModule for Executor {
 }
 
 impl Executor {
-    pub fn register_sub_task(&self) -> SubTaskId {
+    pub fn register_sub_task(&self) -> proto::FnTaskId {
         let taskid = self
             .sub_task_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        taskid
+        // (self.view.p2p().nodes_config.this_node(), taskid)
+        FnTaskId {
+            call_node_id: self.view.p2p().nodes_config.this_node(),
+            task_id: taskid,
+        }
     }
 
     pub async fn local_call_execute_async(&self, ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
@@ -343,10 +507,12 @@ impl Executor {
 
     pub async fn handle_distribute_task(
         &self,
-        resp: RPCResponsor<proto::sche::DistributeTaskReq>,
-        req: proto::sche::DistributeTaskReq,
+        resp: RPCResponsor<proto::DistributeTaskReq>,
+        req: proto::DistributeTaskReq,
     ) {
         tracing::debug!("receive distribute task: {:?}", req);
+        // alert src to wait for this task
+
         let app = req.app.to_owned();
         let func = req.func.to_owned();
         // todo
@@ -488,15 +654,17 @@ impl Executor {
                 req.app,
                 req.func,
                 fnmeta.clone(),
-                req.task_id as usize,
+                req.task_id.unwrap(), // as TaskId,
                 match req.trigger.unwrap() {
                     distribute_task_req::Trigger::EventNew(new) => EventCtx::KvSet {
                         key: new.key,
                         opeid: Some(new.opeid),
+                        src_task_id: req.trigger_src_task_id.unwrap(),
                     },
                     distribute_task_req::Trigger::EventWrite(write) => EventCtx::KvSet {
                         key: write.key,
                         opeid: Some(write.opeid),
+                        src_task_id: req.trigger_src_task_id.unwrap(),
                     },
                 },
             );
@@ -510,7 +678,9 @@ impl Executor {
             {
                 tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
             }
+            let taskid = ctx.inner.task_id.clone();
             let _ = self.execute_sync(ctx);
+            self.notify_subwait_done(&taskid);
         } else {
             //如果函数支持异步
             // construct async fn exe ctx
@@ -535,15 +705,17 @@ impl Executor {
                 req.app,
                 req.func,
                 fnmeta.clone(),
-                req.task_id as usize,
+                req.task_id.unwrap(),
                 match req.trigger.unwrap() {
                     distribute_task_req::Trigger::EventNew(new) => EventCtx::KvSet {
                         key: new.key,
                         opeid: Some(new.opeid),
+                        src_task_id: req.trigger_src_task_id.unwrap(),
                     },
                     distribute_task_req::Trigger::EventWrite(write) => EventCtx::KvSet {
                         key: write.key,
                         opeid: Some(write.opeid),
+                        src_task_id: req.trigger_src_task_id.unwrap(),
                     },
                 },
             );
@@ -557,7 +729,13 @@ impl Executor {
             {
                 tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
             }
+
+            let taskid = ctx.task_id().clone();
             let _ = self.execute(ctx).await;
+
+            // notify src task
+            self.notify_subwait_done(&taskid);
+            // self.take_subwaitings_for_task(&ctx.task_id())
         }
     }
 
@@ -568,9 +746,9 @@ impl Executor {
         funcname: &str,
         text: String,
     ) -> WSResult<Option<String>> {
-        let req_id: ReqId = self
-            .next_req_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // let req_id: ReqId = self
+        //     .next_req_id
+        //     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
         // check app exist
         tracing::debug!("calling get_app_meta to check app exist, app: {}", appname);
@@ -628,14 +806,15 @@ impl Executor {
 
         /////////////////////////////////////////////////
         // prepare ctx and run //////////////////////////
+        let task_id = self.register_sub_task();
 
-        if func.sync_async.asyncable() {
+        let res = if func.sync_async.asyncable() {
             let ctx = FnExeCtxAsync::new(
                 FnExeCtxAsyncAllowedType::try_from(appmeta.app_type.clone()).unwrap(),
                 appname.to_owned(),
                 funcname.to_owned(),
                 func.clone(),
-                req_id,
+                task_id.clone(),
                 EventCtx::Http(text),
             );
             self.execute(ctx).await
@@ -645,12 +824,17 @@ impl Executor {
                 appname.to_owned(),
                 funcname.to_owned(),
                 func.clone(),
-                req_id,
+                task_id.clone(),
                 EventCtx::Http(text),
             );
 
             self.execute_sync(ctx)
-        }
+        };
+
+        // wait for sub tasks done
+        self.wait_for_subtasks(&task_id.task_id).await;
+
+        res
     }
     // pub async fn execute_http_app(&self, fn_ctx_builder: FunctionCtxBuilder) {
     //     let app_meta_man = self.view.instance_manager().app_meta_manager.read().await;
@@ -804,9 +988,9 @@ impl Executor {
             res
         );
 
-        while let Some(t) = fn_ctx.inner.sub_waiters.pop() {
-            let _ = t.await.unwrap();
-        }
+        // while let Some(t) = fn_ctx.inner.sub_waiters.pop() {
+        //     let _ = t.await.unwrap();
+        // }
 
         self.view
             .instance_manager()

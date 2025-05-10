@@ -48,7 +48,6 @@ pub struct DataMaster {
     rpc_handler: RPCHandler<proto::DataVersionScheduleRequest>,
     rpc_caller_data_meta_update: RPCCaller<proto::DataMetaUpdateRequest>,
 }
-
 #[async_trait]
 impl LogicalModule for DataMaster {
     fn inner_new(args: LogicalModuleNewArgs) -> Self
@@ -59,6 +58,7 @@ impl LogicalModule for DataMaster {
             rpc_handler: RPCHandler::new(),
             view: DataMasterView::new(args.logical_modules_ref.clone()),
             rpc_caller_data_meta_update: RPCCaller::new(),
+            // rpc_caller_add_wait_target: RPCCaller::new(),
             // view: DataMasterView::new(args.logical_modules_ref.clone()),
         }
     }
@@ -70,6 +70,7 @@ impl LogicalModule for DataMaster {
         tracing::info!("start as master");
         let view = self.view.clone();
         let _ = self.rpc_caller_data_meta_update.regist(view.p2p());
+        // let _ = self.rpc_caller_add_wait_target.regist(view.p2p());
         let _ = self
             .rpc_handler
             .regist(self.view.p2p(), move |responsor, req| {
@@ -126,6 +127,7 @@ impl DataMaster {
                     target_nodes: vec![target_node], // 只在选中的节点上触发
                     timeout: Duration::from_secs(60),
                     event_type: DataEventTrigger::Write, // 使用Write事件类型
+                    src_task_id: context.src_task_id.clone().unwrap(),
                 };
 
                 // 发送触发请求并处理可能的错误
@@ -152,6 +154,31 @@ impl DataMaster {
                         );
                     }
                 });
+                // if let Err(e) = self
+                //     .rpc_caller_add_wait_target
+                //     .call(
+                //         self.view.p2p(),
+                //         context.src_node_id,
+                //         proto::AddWaitTargetReq {
+                //             task_id: context.src_task_id,
+                //         },
+                //         Some(Duration::from_secs(60)),
+                //     )
+                //     .await
+                // {
+                //     tracing::error!(
+                //         "Failed to add wait target for data({:?}) on node {}: {:?}",
+                //         data_unique_id,
+                //         context.src_node_id,
+                //         e
+                //     );
+                // } else {
+                //     tracing::debug!(
+                //         "add wait target for data({:?}) on node {} success",
+                //         data_unique_id,
+                //         context.src_node_id
+                //     );
+                // }
             }
         }
 

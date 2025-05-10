@@ -6,6 +6,7 @@ pub mod proto_ext;
 pub mod rpc_model;
 
 pub mod proto {
+
     pub mod kv {
         include!(concat!(env!("OUT_DIR"), "/kv.rs"));
     }
@@ -13,9 +14,9 @@ pub mod proto {
         include!(concat!(env!("OUT_DIR"), "/raft.rs"));
     }
 
-    pub mod sche {
-        include!(concat!(env!("OUT_DIR"), "/sche.rs"));
-    }
+    // pub mod sche {
+    include!(concat!(env!("OUT_DIR"), "/proto.rs"));
+    // }
 
     pub mod metric {
         include!(concat!(env!("OUT_DIR"), "/metric.rs"));
@@ -23,5 +24,5 @@ pub mod proto {
     pub mod remote_sys {
         include!(concat!(env!("OUT_DIR"), "/remote_sys.rs"));
     }
-    include!(concat!(env!("OUT_DIR"), "/data.rs"));
+    // include!(concat!(env!("OUT_DIR"), "/data.rs"));
 }

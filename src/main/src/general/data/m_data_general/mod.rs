@@ -11,7 +11,7 @@ use crate::general::data::m_data_general::batch_handler::{
 use crate::general::data::m_data_general::dataitem::{
     calculate_splits, DataItemSource, WantIdxIter, WriteSplitDataTaskGroup,
 };
-use crate::general::network::proto::DataItem;
+use crate::general::network::proto::{DataItem, FnTaskId};
 use batch_handler::GetOrDelType;
 use dataitem::{DataItemArgWrapper, WriteSplitTaskResult};
 use tokio::fs;
@@ -586,10 +586,11 @@ impl DataGeneral {
         &self,
         unique_id: impl Into<Vec<u8>>,
         mut datas: Vec<DataItemArgWrapper>,
-        context_openode_opetype_operole: Option<(
+        context_openode_opetype_operole_src: Option<(
             NodeID,
             proto::DataOpeType,
             proto::data_schedule_context::OpeRole,
+            proto::FnTaskId,
         )>,
     ) -> WSResult<()> {
         let unique_id = unique_id.into();
@@ -614,18 +615,21 @@ impl DataGeneral {
                 self.view.p2p().nodes_config.get_master_node(),
                 proto::DataVersionScheduleRequest {
                     unique_id: unique_id.clone(),
-                    context: context_openode_opetype_operole.map(|(node, ope, role)| {
-                        proto::DataScheduleContext {
-                            // each_data_sz_bytes: data_transfer_sizes,     原代码类型不匹配       曾俊
-                            each_data_sz_bytes: data_transfer_sizes
-                                .iter()
-                                .map(|&x| x as u32)
-                                .collect(),
-                            ope_node: node as i64,
-                            ope_type: ope as i32,
-                            ope_role: Some(role),
-                        }
-                    }),
+                    context: context_openode_opetype_operole_src.map(
+                        |(node, ope, role, src_task_id)| {
+                            proto::DataScheduleContext {
+                                // each_data_sz_bytes: data_transfer_sizes,     原代码类型不匹配       曾俊
+                                each_data_sz_bytes: data_transfer_sizes
+                                    .iter()
+                                    .map(|&x| x as u32)
+                                    .collect(),
+                                ope_node: node as i64,
+                                ope_type: ope as i32,
+                                ope_role: Some(role),
+                                src_task_id: Some(src_task_id),
+                            }
+                        },
+                    ),
                     version: 0,
                 },
                 Some(Duration::from_secs(60)),

@@ -1,6 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     hash::Hasher,
+    mem::take,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
 };
@@ -13,18 +14,15 @@ use ws_derive::LogicalModule;
 use crate::{
     config::NodesConfig,
     general::{
-        app::{AppMetaManager, DataEventTrigger},
+        app::{m_executor::Executor, AppMetaManager, DataEventTrigger},
         network::{
             m_p2p::{P2PModule, RPCCaller},
-            proto::{
-                self,
-                sche::{self, distribute_task_req::Trigger, DistributeTaskReq},
-            },
+            proto::{self, distribute_task_req::Trigger, DistributeTaskReq},
             proto_ext::ProtoExtDataEventTrigger,
         },
     },
     logical_module_view_impl,
-    result::{WSResult, WsFuncError},
+    result::{WSResult, WSResultExt, WsFuncError},
     sys::{LogicalModule, LogicalModuleNewArgs, LogicalModulesRef, NodeID},
     util::JoinHandleWrapper,
 };
@@ -86,6 +84,7 @@ logical_module_view_impl!(MasterView);
 logical_module_view_impl!(MasterView, p2p, P2PModule);
 logical_module_view_impl!(MasterView, master, Option<Master>);
 logical_module_view_impl!(MasterView, appmeta_manager, AppMetaManager);
+logical_module_view_impl!(MasterView, executor, Executor);
 
 #[derive(Clone)]
 pub struct FunctionTriggerContext {
@@ -95,13 +94,16 @@ pub struct FunctionTriggerContext {
     pub target_nodes: Vec<NodeID>,
     pub timeout: Duration,
     pub event_type: DataEventTrigger,
+    pub src_task_id: proto::FnTaskId,
 }
 
 #[derive(LogicalModule)]
 pub struct Master {
-    pub rpc_caller_distribute_task: RPCCaller<proto::sche::DistributeTaskReq>,
+    pub rpc_caller_distribute_task: RPCCaller<proto::DistributeTaskReq>,
+    rpc_caller_add_wait_target: RPCCaller<proto::AddWaitTargetReq>,
+
     view: MasterView,
-    task_id_allocator: AtomicU32,
+    // task_id_allocator: AtomicU32,
     ope_id_allocator: AtomicU32,
 }
 
@@ -114,13 +116,14 @@ impl LogicalModule for Master {
         Self {
             view: MasterView::new(args.logical_modules_ref.clone()),
             rpc_caller_distribute_task: RPCCaller::default(),
-            task_id_allocator: AtomicU32::new(0),
             ope_id_allocator: AtomicU32::new(0),
+            rpc_caller_add_wait_target: RPCCaller::default(),
         }
     }
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {
         tracing::info!("start as master");
         self.rpc_caller_distribute_task.regist(&self.view.p2p());
+        self.rpc_caller_add_wait_target.regist(&self.view.p2p());
 
         Ok(vec![])
     }
@@ -156,31 +159,31 @@ impl Master {
     pub async fn handle_http_schedule(&self, _app: &str) -> NodeID {
         self.select_node()
     }
-    pub async fn schedule_one_trigger(&self, app: String, func: String, trigger_data: Trigger) {
-        match self
-            .view
-            .master()
-            .rpc_caller_distribute_task
-            .call(
-                //理解
-                self.view.p2p(),
-                self.select_node(),
-                DistributeTaskReq {
-                    app,
-                    func,
-                    task_id: 0, // TODO: Context task id for one request
-                    trigger: Some(trigger_data),
-                },
-                Duration::from_secs(60).into(),
-            )
-            .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::error!("schedule_one_trigger err: {:?}", err);
-            }
-        }
-    }
+    // pub async fn schedule_one_trigger(&self, app: String, func: String, trigger_data: Trigger) {
+    //     match self
+    //         .view
+    //         .master()
+    //         .rpc_caller_distribute_task
+    //         .call(
+    //             //理解
+    //             self.view.p2p(),
+    //             self.select_node(),
+    //             DistributeTaskReq {
+    //                 app,
+    //                 func,
+    //                 task_id: 0, // TODO: Context task id for one request
+    //                 trigger: Some(trigger_data),
+    //             },
+    //             Duration::from_secs(60).into(),
+    //         )
+    //         .await
+    //     {
+    //         Ok(_) => {}
+    //         Err(err) => {
+    //             tracing::error!("schedule_one_trigger err: {:?}", err);
+    //         }
+    //     }
+    // }
     pub fn select_node(&self) -> NodeID {
         let workers = self.view.p2p().nodes_config.get_worker_nodes();
         let mut rng = rand::thread_rng();
@@ -224,7 +227,7 @@ impl Master {
         }
 
         // Generate task and operation IDs
-        let task_id = self.task_id_allocator.fetch_add(1, Ordering::Relaxed);
+        let task_id = self.view.executor().register_sub_task();
         let opeid = self.ope_id_allocator.fetch_add(1, Ordering::Relaxed);
 
         // Create trigger using the ProtoExtDataEventTrigger trait
@@ -232,20 +235,41 @@ impl Master {
 
         // Create and send tasks to target nodes
         for &node in &ctx.target_nodes {
-            let req = sche::DistributeTaskReq {
+            // before trigger function, add wait target to src node
+            let _ = self
+                .rpc_caller_add_wait_target
+                .call(
+                    self.view.p2p(),
+                    ctx.src_task_id.call_node_id,
+                    proto::AddWaitTargetReq {
+                        src_task_id: ctx.src_task_id.task_id,
+                        sub_task_id: Some(task_id.clone()),
+                        task_run_node: node,
+                    },
+                    Some(ctx.timeout),
+                )
+                .await
+                .todo_handle("call add wait target rpc failed");
+            // ctx.src_task_id
+
+            let req = proto::DistributeTaskReq {
                 app: ctx.app_name.clone(),
                 func: ctx.fn_name.clone(),
-                task_id,
+                task_id: Some(task_id.clone()),
                 trigger: Some(trigger.clone()),
+                trigger_src_task_id: Some(ctx.src_task_id.clone()),
             };
 
             // Send request with timeout
-            let _ = tokio::time::timeout(
-                ctx.timeout,
-                self.rpc_caller_distribute_task
-                    .call(self.view.p2p(), node, req, Some(ctx.timeout)),
-            )
-            .await;
+            // let _ = tokio::time::timeout(
+            //     ctx.timeout,
+            let _ = self
+                .rpc_caller_distribute_task
+                .call(self.view.p2p(), node, req, Some(ctx.timeout))
+                .await
+                .todo_handle("fddg trigger func call rpc failed");
+            // )
+            // .await;
         }
 
         Ok(())
