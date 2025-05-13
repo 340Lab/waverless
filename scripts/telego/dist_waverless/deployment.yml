@@ -22,7 +22,7 @@ dist:
       lab3: [3]
     # 安装脚本
     install: |
-      telego install --bin-prj bin_waverless2
+      telego install --bin-prj bin_waverless
     # 有状态服务备份
     state_backup: |
       # 调试模式，不存储任何东西

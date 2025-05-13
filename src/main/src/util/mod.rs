@@ -1,5 +1,6 @@
 pub mod command;
 pub mod container;
+pub mod syntactic_discipline;
 pub mod zip;
 
 use std::{

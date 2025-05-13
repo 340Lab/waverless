@@ -1017,11 +1017,9 @@ impl DataItemArgWrapper {
         }
     }
     // 根据传入的DataItem类型新建一个DataItemArgWrapper实例， tmpzipfile默认为Uninitialized。      曾俊
-    pub fn new(value: Vec<u8>) -> Self {
+    pub fn new(dataitem: proto::DataItem) -> Self {
         DataItemArgWrapper {
-            dataitem: proto::DataItem {
-                data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
-            },
+            dataitem: dataitem,
             tmpzipfile: DataItemZip::Uninitialized,
         }
     }

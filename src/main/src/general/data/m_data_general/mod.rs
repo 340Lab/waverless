@@ -1,16 +1,19 @@
-/// 缓存模式类型
-pub type CacheMode = u16;
-
 pub mod batch;
 pub mod batch_handler;
 pub mod dataitem;
+pub mod http;
 
+/// 缓存模式类型
+pub type CacheMode = u16;
+
+use crate::general::app::m_executor::Executor;
 use crate::general::data::m_data_general::batch_handler::{
     BatchReceiveState, SharedWithBatchHandler,
 };
 use crate::general::data::m_data_general::dataitem::{
     calculate_splits, DataItemSource, WantIdxIter, WriteSplitDataTaskGroup,
 };
+use crate::general::network::http_handler::HttpHandler;
 use crate::general::network::proto::{DataItem, FnTaskId};
 use batch_handler::GetOrDelType;
 use dataitem::{DataItemArgWrapper, WriteSplitTaskResult};
@@ -69,6 +72,8 @@ logical_module_view_impl!(DataGeneralView, p2p, P2PModule);
 logical_module_view_impl!(DataGeneralView, data_general, DataGeneral);
 logical_module_view_impl!(DataGeneralView, kv_store_engine, KvStoreEngine);
 logical_module_view_impl!(DataGeneralView, os, OperatingSystem);
+logical_module_view_impl!(DataGeneralView, http_handler, Box<dyn HttpHandler>);
+logical_module_view_impl!(DataGeneralView, executor, Executor);
 
 pub type DataVersion = u64;
 pub type DataItemIdx = u8;
@@ -1752,6 +1757,11 @@ impl LogicalModule for DataGeneral {
                 .weigher(|_, value: &Vec<u8>| value.len() as u32)
                 .build(),
         }
+    }
+
+    async fn init(&self) -> WSResult<()> {
+        self.register_http()?;
+        Ok(())
     }
 
     async fn start(&self) -> WSResult<Vec<JoinHandleWrapper>> {

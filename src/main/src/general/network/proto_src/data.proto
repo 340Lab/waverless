@@ -33,6 +33,8 @@ message DataOpeRoleFuncCall{
   uint32 node_id=2;
 }
 
+message DataOpeRoleUploadData{}
+
 
 
 message DataScheduleContext{
@@ -47,9 +49,11 @@ message DataScheduleContext{
     DataOpeRoleUploadApp upload_app = 4;
     // required
     DataOpeRoleFuncCall func_call = 5;
+    // required
+    DataOpeRoleUploadData upload_data = 6;
   }
-  repeated string filepaths=6;
-  proto.FnTaskId src_task_id=7;
+  repeated string filepaths=7;
+  proto.FnTaskId src_task_id=8;
 }
 
 message EachNodeSplit{

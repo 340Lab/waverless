@@ -19,7 +19,8 @@ def os_system_sure(command):
 
 
 if os.path.exists("apache-maven-3.9.6-bin.tar.gz"):
-    print("maven已存在，无需再次下载")
+    abspath=os.path.abspath("apache-maven-3.9.6-bin.tar.gz")
+    print(f"maven已存在，无需再次下载: {abspath}")
 else:
     os_system_sure("wget https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz")
 

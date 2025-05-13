@@ -1,3 +1,4 @@
+use crate::general::data::m_data_general::DATA_UID_PREFIX_FN_KV;
 use crate::new_map;
 use crate::util::container::sync_trie::SyncedTrie;
 use crate::{
@@ -78,9 +79,20 @@ impl FDDGMgmt {
                 let Some(_event) = data_access.event.as_ref() else {
                     continue;
                 };
+
+                let mut _hold = None;
+                let insert_key: &str = if app_type == AppType::Native {
+                    // without uid prefix
+                    &*key_pattern.0
+                } else {
+                    // with uid prefix
+                    _hold = Some(format!("{}{}", DATA_UID_PREFIX_FN_KV, key_pattern.0));
+                    &*_hold.as_ref().unwrap()
+                };
+
                 let node = self
                     .prefix_key_to_functions
-                    .search_or_insert(&key_pattern.0, || {
+                    .search_or_insert(&insert_key, || {
                         new_map! (HashMap {
                             app_name.to_string() => {
                                 (app_type, new_map! (HashMap {
