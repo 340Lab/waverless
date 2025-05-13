@@ -1,8 +1,10 @@
 use crate::general::network::http_handler::ApiHandlerImpl;
 use async_trait::async_trait;
-use axum::{http::StatusCode, routing::post, Json, Router};
+use axum::{http::StatusCode, routing::{post, get}, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+use crate::metrics::{HTTP_REQUESTS_TOTAL, metrics_handler};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeBasic {
@@ -149,7 +151,10 @@ pub trait ApiHandler {
 }
 
 pub fn add_routers(mut router: Router) -> Router {
+    
+
     async fn add_service(Json(req): Json<AddServiceReq>) -> (StatusCode, Json<Value>) {
+        HTTP_REQUESTS_TOTAL.inc();
         (
             StatusCode::OK,
             Json(ApiHandlerImpl.handle_add_service(req).await.serialize()),
@@ -158,7 +163,8 @@ pub fn add_routers(mut router: Router) -> Router {
     router = router.route("/add_service", post(add_service));
 
     async fn delete_service(Json(req): Json<DeleteServiceReq>) -> (StatusCode, Json<Value>) {
-        (
+        HTTP_REQUESTS_TOTAL.inc();
+        (      
             StatusCode::OK,
             Json(ApiHandlerImpl.handle_delete_service(req).await.serialize()),
         )
@@ -166,7 +172,8 @@ pub fn add_routers(mut router: Router) -> Router {
     router = router.route("/delete_service", post(delete_service));
 
     async fn get_service_list() -> (StatusCode, Json<Value>) {
-        (
+        HTTP_REQUESTS_TOTAL.inc();
+        (  
             StatusCode::OK,
             Json(ApiHandlerImpl.handle_get_service_list().await.serialize()),
         )
@@ -174,6 +181,7 @@ pub fn add_routers(mut router: Router) -> Router {
     router = router.route("/get_service_list", post(get_service_list));
 
     async fn run_service_action(Json(req): Json<RunServiceActionReq>) -> (StatusCode, Json<Value>) {
+        HTTP_REQUESTS_TOTAL.inc();
         (
             StatusCode::OK,
             Json(

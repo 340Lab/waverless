@@ -16,6 +16,9 @@
 use clap::Parser;
 use cmd_arg::CmdArgs;
 
+use axum::{Router, routing::get};
+use crate::metrics::metrics_handler;
+
 use sys::{LogicalModulesRef, Sys};
 use tracing::Level;
 use tracing_subscriber::{
@@ -34,6 +37,8 @@ pub mod result;
 pub mod sys;
 pub mod util;
 
+pub mod metrics;
+
 #[tokio::main]
 async fn main() {
     start_tracing();
@@ -45,6 +50,18 @@ async fn main() {
     let modules_ref=sys.new_logical_modules_ref();
     // modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;})   由于modules_ref_scope改为了异步函数，所以这里加上.await   曾俊
     modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;}).await;
+
+    let app = Router::new()
+        .route("/metrics", get(metrics_handler));
+        // 你可以在这里继续 .merge(其他路由) 或 .route(其他接口)
+
+    // 启动 axum 服务
+    //这里要更换端口为waverless对应的
+    axum::Server::bind(&"0.0.0.0:8080".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+
 }
 
 pub fn start_tracing() {

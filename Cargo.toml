@@ -63,6 +63,10 @@ base64 = "0.22.1"
 hex = "0.4.3"
 tempfile="3.8"
 
+prometheus = "0.22"
+#axum = "0.6"
+#sysinfo = "0.29"
+
 [profile.test]
 # 0: no optimizations
 # 1: basic optimizations

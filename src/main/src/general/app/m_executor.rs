@@ -9,6 +9,10 @@ use crate::general::network::proto::FnTaskId;
 use crate::result::WSError;
 use crate::result::WSResultExt;
 use crate::sys::NodeID;
+
+use crate::metrics::FUNCTION_CALLS_TOTAL;
+use crate::metrics::BATCH_TASKS_TOTAL;
+
 use crate::{
     general::{
         app::AppMetaManager,
@@ -498,10 +502,12 @@ impl Executor {
     }
 
     pub async fn local_call_execute_async(&self, ctx: FnExeCtxAsync) -> WSResult<Option<String>> {
+        FUNCTION_CALLS_TOTAL.inc();
         self.execute(ctx).await
     }
 
     pub fn local_call_execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {
+        FUNCTION_CALLS_TOTAL.inc();
         self.execute_sync(ctx)
     }
 
@@ -510,6 +516,7 @@ impl Executor {
         resp: RPCResponsor<proto::DistributeTaskReq>,
         req: proto::DistributeTaskReq,
     ) {
+        BATCH_TASKS_TOTAL.inc();
         tracing::debug!("receive distribute task: {:?}", req);
         // alert src to wait for this task
 
