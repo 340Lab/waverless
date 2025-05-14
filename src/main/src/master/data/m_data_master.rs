@@ -1,5 +1,6 @@
 use crate::general::app::m_executor::Executor;
 use crate::general::app::AffinityPattern;
+use crate::general::app::AppMeta;
 use crate::general::app::AppMetaManager;
 use crate::general::app::DataEventTrigger;
 use crate::general::data::m_data_general::CacheModeVisitor;
@@ -9,6 +10,7 @@ use crate::general::network::proto::{
 };
 use crate::general::network::proto_ext::ProtoExtDataScheduleContext;
 use crate::master::m_master::{FunctionTriggerContext, Master};
+use crate::result::WsDataError;
 use crate::result::{WSResult, WSResultExt};
 use crate::sys::{LogicalModulesRef, NodeID};
 use crate::util::JoinHandleWrapper;
@@ -346,6 +348,31 @@ impl DataMaster {
             (set_meta, cache_nodes)
         };
 
+        // if app meta data, update app master binded
+        {
+            let ctx = req.context.unwrap();
+            if let proto::data_schedule_context::OpeRole::UploadApp(proto::DataOpeRoleUploadApp {
+                app,
+                app_meta_encoded,
+            }) = ctx.ope_role.as_ref().unwrap()
+            {
+                let meta: AppMeta = bincode::deserialize(&app_meta_encoded).map_err(|e| {
+                    WsDataError::DataDecodeError {
+                        reason: format!("err: {:?}", e),
+                        data_type: "AppMeta in data schedule context".to_owned(),
+                    }
+                })?;
+                self.view
+                    .app_master()
+                    .update_app(app, &meta)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("update app meta failed when schedule app data: {:?}", e);
+                        e
+                    })?;
+            }
+        }
+
         // update version peers
         {
             tracing::debug!(
@@ -438,6 +465,7 @@ impl DataMaster {
         // .todo_handle("This part of the code needs to be implemented.");
         Ok(())
     }
+
     // async fn rpc_handler_dataversion_synced_on_node(
     //     &self,
     //     responsor: RPCResponsor<DataVersionScheduleRequest>,

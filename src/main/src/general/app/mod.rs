@@ -1083,9 +1083,10 @@ impl AppMetaManager {
 
         /////
         // write data to whole system
+        let appmeta_encoded = bincode::serialize(&appmeta).unwrap();
         let write_data_id = format!("{}{}", DATA_UID_PREFIX_APP_META, appname);
         let write_datas = vec![
-            DataItemArgWrapper::from_bytes(bincode::serialize(&appmeta).unwrap()),
+            DataItemArgWrapper::from_bytes(appmeta_encoded.clone()),
             //DataItemArgWrapper::from_file(rel_app_dir),
             //虞光勇修改，因为编译器提示在调用 DataItemArgWrapper::from_file 方法时，传递的参数类型不匹配。
             // 具体来说，from_file 方法期望的是一个 PathBuf 类型的参数，但你传递的是一个 String 类型。
@@ -1112,7 +1113,10 @@ impl AppMetaManager {
                 Some((
                     self.view.p2p().nodes_config.this_node(),
                     proto::DataOpeType::Write,
-                    OpeRole::UploadApp(DataOpeRoleUploadApp {}),
+                    OpeRole::UploadApp(DataOpeRoleUploadApp {
+                        app: appname.clone(),
+                        app_meta_encoded: appmeta_encoded,
+                    }),
                     task.clone(),
                 )),
             )

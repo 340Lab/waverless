@@ -26,7 +26,10 @@ message DataMeta{
 }
 
 
-message DataOpeRoleUploadApp{}
+message DataOpeRoleUploadApp{
+  string app=1;
+  bytes app_meta_encoded=2;
+}
 
 message DataOpeRoleFuncCall{
   string app_func=1;
