@@ -73,5 +73,5 @@ message ListenForTaskDoneReq{
 
 message ListenForTaskDoneResp{
     bool success=1;
-    string err_msg=2;
+    string response_or_errmsg=2;
 }
