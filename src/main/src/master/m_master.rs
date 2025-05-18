@@ -226,6 +226,8 @@ impl Master {
             .into());
         }
 
+        tracing::debug!("trigger func call for data({:?})", ctx.data_unique_id);
+
         // Generate task and operation IDs
         let task_id = self.view.executor().register_sub_task();
         let opeid = self.ope_id_allocator.fetch_add(1, Ordering::Relaxed);

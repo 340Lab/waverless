@@ -124,7 +124,7 @@ async fn kv_batch_ope<T>(
 ) -> Result<Vec<WasmValue>, HostFuncError> {
     let opes_arg_ptr = args[0].to_i32();
     let opes_arg_len = args[1].to_i32();
-    let opes_id = utils::mutref::<i32>(&caller, args[2].to_i32());
+    let _opes_id = utils::mutref::<i32>(&caller, args[2].to_i32());
     let args = utils::i32slice(&caller, opes_arg_ptr, opes_arg_len);
     let func_ctx = unsafe {
         #[cfg(feature = "unsafe-log")]
@@ -153,7 +153,7 @@ async fn kv_batch_ope<T>(
                         proto::kv::kv_request::KvPutRequest {
                             kv: Some(KvPair {
                                 key: key.to_owned(),
-                                value: value.to_owned(),
+                                values: vec![value.to_owned()],
                             }),
                         },
                     )),
@@ -167,6 +167,7 @@ async fn kv_batch_ope<T>(
                 requests.push(KvRequest {
                     op: Some(proto::kv::kv_request::Op::Get(
                         proto::kv::kv_request::KvGetRequest {
+                            idxs: vec![0],
                             range: Some(KeyRange {
                                 start: key.to_owned(),
                                 end: vec![],
@@ -221,69 +222,70 @@ async fn kv_batch_ope<T>(
         }
     }
     // tracing::debug!("requests:{:?}", requests);
-    let prev_kv_opeid = func_ctx
+    let _prev_kv_opeid = func_ctx
         .event_ctx_mut()
         .take_prev_kv_opeid()
         .map_or(-1, |v| v as i64);
     match m_kv_user_client()
         .kv_requests(
-            func_ctx.app(),
-            func_ctx.func(),
+            todo!("wasm kv is not updated for src wait"),
             KvRequests {
                 requests,
                 app: func_ctx.app().to_owned(),
                 func: func_ctx.func().to_owned(),
-                prev_kv_opeid,
+                prev_kv_opeid: _prev_kv_opeid,
             },
         )
         .await
     {
-        Ok(res) => {
-            let id = NEXT_CACHE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            // Write back the results to wasm runtime
-            let mut cur_idx = 1;
-            let mut resps = res.responses.iter();
-            // Construct the requests
-            for _ in 0..ope_cnt {
-                let ope_type = args[cur_idx];
-                match ope_type as usize {
-                    // set
-                    SET_ID => {
-                        let _ = resps.next().unwrap();
-                        cur_idx += 5;
-                    }
-                    // get
-                    GET_ID => {
-                        let kvs = resps.next().unwrap().common_kvs().unwrap();
-                        // get len
-                        *utils::mutref::<i32>(&caller, args[cur_idx + 3]) = if kvs.len() > 0 {
-                            kvs.get(0).unwrap().value.len() as i32
-                        } else {
-                            -1
-                        };
-                        cur_idx += 4;
-                    }
-                    // lock
-                    LOCK_ID => {
-                        if let Some(lockid) = resps.next().unwrap().lock_id() {
-                            // lock id is allocated by the remote when call the lock
-                            *utils::mutref::<u32>(&caller, args[cur_idx + 4]) = lockid;
-                        } else {
-                            // unlock, no response
-                        }
-                        cur_idx += 5;
-                    }
-                    DELETE_ID => {
-                        let _ = resps.next().unwrap();
-                        cur_idx += 3;
-                    }
-                    _ => {
-                        panic!("not implemented");
-                    }
-                }
-            }
-            RECENT_KV_CACHE.insert(id, res);
-            *opes_id = id;
+        Ok(_res) => {
+            // https://fvd360f8oos.feishu.cn/wiki/M4ubwJkvcichuHkiGhjc0miHn5f#share-FuaYd5qZboOkhZxYMc2cCV0fndh
+            todo!("wasm kv is not updated for multi value items (dataset)");
+            // let id = NEXT_CACHE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // // Write back the results to wasm runtime
+            // let mut cur_idx = 1;
+            // let mut resps = res.responses.iter();
+            // // Construct the requests
+            // for _ in 0..ope_cnt {
+            //     let ope_type = args[cur_idx];
+            //     match ope_type as usize {
+            //         // set
+            //         SET_ID => {
+            //             let _ = resps.next().unwrap();
+            //             cur_idx += 5;
+            //         }
+            //         // get
+            //         GET_ID => {
+            //             let get_resp = resps.next().unwrap().get_kvs().unwrap();
+            //             // get len
+            //             *utils::mutref::<i32>(&caller, args[cur_idx + 3]) = if get_resp.len() > 0 {
+            //                 kvs.get(0).unwrap().value.len() as i32
+            //             } else {
+            //                 -1
+            //             };
+            //             cur_idx += 4;
+            //         }
+            //         // lock
+            //         LOCK_ID => {
+            //             if let Some(lockid) = resps.next().unwrap().lock_id() {
+            //                 // lock id is allocated by the remote when call the lock
+            //                 *utils::mutref::<u32>(&caller, args[cur_idx + 4]) = lockid;
+            //             } else {
+            //                 // unlock, no response
+            //             }
+            //             cur_idx += 5;
+            //         }
+            //         DELETE_ID => {
+            //             let _ = resps.next().unwrap();
+            //             cur_idx += 3;
+            //         }
+            //         _ => {
+            //             panic!("not implemented");
+            //         }
+            //     }
+            // }
+            // RECENT_KV_CACHE.insert(id, res);
+            // *opes_id = id;
         }
         Err(err) => {
             tracing::error!("kv batch ope error:{}", err);
@@ -304,13 +306,18 @@ fn kv_batch_res(caller: Caller, args: Vec<WasmValue>) -> Result<Vec<WasmValue>, 
         while cur_idx < args.len() {
             let ope_idx = args[cur_idx];
             if let Some(res) = res.responses.get(ope_idx as usize) {
-                if let Some(kvs) = res.common_kvs() {
-                    if let Some(kv) = kvs.get(0) {
-                        let slice =
-                            utils::mutu8sclice(&caller, args[cur_idx + 1], kv.value.len() as i32)
-                                .unwrap();
-                        slice.copy_from_slice(kvs.get(0).unwrap().value.as_slice());
-                    }
+                if let Some(_kvs) = res.get_kvs() {
+                    // https://fvd360f8oos.feishu.cn/wiki/M4ubwJkvcichuHkiGhjc0miHn5f#share-FuaYd5qZboOkhZxYMc2cCV0fndh
+                    todo!("wasm kv is not updated for multi value items (dataset)");
+                    // if let Some(kv) = kvs.get(0) {
+                    //     let slice = utils::mutu8sclice(
+                    //         &caller,
+                    //         args[cur_idx + 1],
+                    //         kv.values[0].len() as i32,
+                    //     )
+                    //     .unwrap();
+                    //     slice.copy_from_slice(kv.values[0].as_slice());
+                    // }
                 } else if let Some(_lock_id) = res.lock_id() {
                     // do nothing
                 } else {

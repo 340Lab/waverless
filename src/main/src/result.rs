@@ -5,7 +5,7 @@ use camelpaste::paste;
 use prost::{DecodeError, Message};
 use qp2p::{EndpointError, SendError};
 use thiserror::Error;
-use tokio::task::JoinError;
+use tokio::{sync::mpsc, task::JoinError};
 use wasmedge_sdk::error::WasmEdgeError;
 use zip_extract::ZipExtractError;
 
@@ -124,6 +124,17 @@ pub enum WsPermissionErr {
     },
 }
 
+#[derive(Debug)]
+pub enum ProcRpcErr {
+    ConnIdNotFound {
+        conn: HashValue,
+        context: String,
+    },
+    SendRespFailed {
+        err: mpsc::error::SendError<Vec<u8>>,
+        context: String,
+    },
+}
 #[derive(Debug)]
 pub enum WsFuncError {
     WasmError(Box<wasmedge_sdk::error::WasmEdgeError>),
@@ -404,6 +415,9 @@ pub enum WSError {
     #[error("Runtime error: {0:?}")]
     WsRuntimeErr(WsRuntimeErr),
 
+    #[error("ProcRpc error: {0:?}")]
+    WsProcRpcErr(ProcRpcErr),
+
     #[error("Not Implemented")]
     NotImplemented,
 }
@@ -471,6 +485,12 @@ impl From<WsDataError> for WSError {
 impl From<WsRuntimeErr> for WSError {
     fn from(e: WsRuntimeErr) -> Self {
         WSError::WsRuntimeErr(e)
+    }
+}
+
+impl From<ProcRpcErr> for WSError {
+    fn from(e: ProcRpcErr) -> Self {
+        WSError::WsProcRpcErr(e)
     }
 }
 

@@ -47,9 +47,17 @@ pub trait ProtoExtDataItem: Sized {
     fn new_partial_raw_bytes(rawbytes: impl Into<Vec<u8>>, range: Range<usize>) -> WSResult<Self>;
     fn new_file_data(path: &str, is_dir: bool) -> Self;
     fn new_mem_data(mem: Vec<u8>) -> Self;
+    /// panic if not mem data
+    fn take_mem_data(&mut self) -> Vec<u8>;
 }
 
 impl ProtoExtDataItem for proto::DataItem {
+    fn take_mem_data(&mut self) -> Vec<u8> {
+        match &mut self.data_item_dispatch {
+            Some(proto::data_item::DataItemDispatch::RawBytes(bytes)) => std::mem::take(bytes),
+            _ => panic!("DataItem is not a mem data"),
+        }
+    }
     fn new_partial_raw_bytes(rawbytes: impl Into<Vec<u8>>, range: Range<usize>) -> WSResult<Self> {
         let bytes = rawbytes.into();
         if range.end > bytes.len() {
@@ -259,16 +267,27 @@ impl AsRef<[u8]> for proto::DataItem {
 
 pub trait ProtoExtKvResponse {
     fn new_lock(lock_id: u32) -> KvResponse;
-    fn new_common(kvs: Vec<proto::kv::KvPair>) -> KvResponse;
+    fn new_get(idxs: Vec<DataItemIdx>, values: Vec<Vec<u8>>) -> KvResponse;
+    fn new_put_or_del(kv: proto::kv::KvPair) -> KvResponse;
     fn lock_id(&self) -> Option<u32>;
-    fn common_kvs(&self) -> Option<&Vec<proto::kv::KvPair>>;
+    fn get_kvs(&self) -> Option<&proto::kv::kv_response::KvGetResponse>;
 }
 
 impl ProtoExtKvResponse for KvResponse {
-    fn new_common(kvs: Vec<proto::kv::KvPair>) -> KvResponse {
+    fn new_get(idxs: Vec<DataItemIdx>, values: Vec<Vec<u8>>) -> KvResponse {
         KvResponse {
-            resp: Some(proto::kv::kv_response::Resp::CommonResp(
-                proto::kv::kv_response::KvResponse { kvs },
+            resp: Some(proto::kv::kv_response::Resp::Get(
+                proto::kv::kv_response::KvGetResponse {
+                    idxs: idxs.iter().map(|v| *v as u32).collect(),
+                    values,
+                },
+            )),
+        }
+    }
+    fn new_put_or_del(kv: proto::kv::KvPair) -> KvResponse {
+        KvResponse {
+            resp: Some(proto::kv::kv_response::Resp::PutOrDel(
+                proto::kv::kv_response::KvPutOrDelResponse { kv: Some(kv) },
             )),
         }
     }
@@ -279,13 +298,16 @@ impl ProtoExtKvResponse for KvResponse {
     }
     fn lock_id(&self) -> Option<u32> {
         match self.resp.as_ref().unwrap() {
-            proto::kv::kv_response::Resp::CommonResp(_) => None,
+            proto::kv::kv_response::Resp::Get(_) | proto::kv::kv_response::Resp::PutOrDel(_) => {
+                None
+            }
             proto::kv::kv_response::Resp::LockId(id) => Some(*id),
         }
     }
-    fn common_kvs(&self) -> Option<&Vec<proto::kv::KvPair>> {
+    fn get_kvs(&self) -> Option<&proto::kv::kv_response::KvGetResponse> {
         match self.resp.as_ref().unwrap() {
-            proto::kv::kv_response::Resp::CommonResp(resp) => Some(&resp.kvs),
+            proto::kv::kv_response::Resp::Get(res) => Some(res),
+            proto::kv::kv_response::Resp::PutOrDel(_) => None,
             proto::kv::kv_response::Resp::LockId(_) => None,
         }
     }
@@ -293,7 +315,7 @@ impl ProtoExtKvResponse for KvResponse {
 
 pub trait KvRequestExt {
     fn new_set(kv: proto::kv::KvPair) -> Self;
-    fn new_get(key: Vec<u8>) -> Self;
+    fn new_get(key: Vec<u8>, idxs: Vec<DataItemIdx>) -> Self;
     fn new_delete(key: Vec<u8>) -> Self;
     fn new_lock(ope: DistLockOpe, key: Vec<u8>) -> Self;
 }
@@ -306,10 +328,11 @@ impl KvRequestExt for proto::kv::KvRequest {
             )),
         }
     }
-    fn new_get(key: Vec<u8>) -> Self {
+    fn new_get(key: Vec<u8>, idxs: Vec<DataItemIdx>) -> Self {
         proto::kv::KvRequest {
             op: Some(proto::kv::kv_request::Op::Get(
                 proto::kv::kv_request::KvGetRequest {
+                    idxs: idxs.iter().map(|v| *v as u32).collect(),
                     range: Some(proto::kv::KeyRange {
                         start: key,
                         end: vec![],

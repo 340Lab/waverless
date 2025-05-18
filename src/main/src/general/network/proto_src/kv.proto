@@ -6,9 +6,9 @@ message KeyRange {
   bytes end=2;
 }
 
-message KvPair {
+message KvPair{
   bytes key=1;
-  bytes value=2;
+  repeated bytes values=2;
 }
 
 
@@ -20,6 +20,8 @@ message KvRequest {
   message KvGetRequest{
     // required
     KeyRange range=1;
+    // required
+    repeated uint32 idxs=2;
   }
   message KvDeleteRequest{
     // required
@@ -63,13 +65,18 @@ message KvPairs{
 }
 
 message KvResponse{
-  message KvResponse{
-    repeated KvPair kvs=1;
+  message KvGetResponse{
+    repeated uint32 idxs=1;
+    repeated bytes values=2;
+  }
+  message KvPutOrDelResponse{
+    KvPair kv=1;
   }
   oneof resp {
-    KvResponse common_resp=1;
+    KvGetResponse get=1;
+    KvPutOrDelResponse put_or_del=2;
     // 0 is invalid lock id
-    uint32 lock_id=2;
+    uint32 lock_id=3;
   }
 }
 

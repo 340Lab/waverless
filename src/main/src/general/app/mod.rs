@@ -7,6 +7,7 @@ pub mod m_executor;
 pub mod v_os;
 
 use super::data::m_data_general::{DataSetMetaV2, GetOrDelDataArg, GetOrDelDataArgType};
+use super::data::m_kv_user_client::KvUserClient;
 use super::m_os::APPS_REL_DIR;
 use crate::general::app::app_native::native_apps;
 use crate::general::app::instance::m_instance_manager::InstanceManager;
@@ -67,6 +68,7 @@ logical_module_view_impl!(View, master, Option<Master>);
 logical_module_view_impl!(View, instance_manager, InstanceManager);
 logical_module_view_impl!(View, data_general, DataGeneral);
 logical_module_view_impl!(View, executor, Executor);
+logical_module_view_impl!(View, kv_user_client, KvUserClient);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]

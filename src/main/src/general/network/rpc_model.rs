@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::{net::UnixListener, sync::oneshot};
 
-use crate::result::{WSResult, WsFuncError, WsRpcErr};
+use crate::result::{ProcRpcErr, WSResult, WsFuncError, WsRpcErr};
 
 // start from the begining
 #[async_trait]
@@ -23,7 +23,13 @@ pub trait RpcCustom: Clone + Sized + Send + 'static {
 
     fn bind(a: Self::SpawnArgs) -> UnixListener;
     // return true if the id matches remote call pack
-    fn handle_remote_call(conn: &HashValue, id: u8, buf: &[u8]) -> bool;
+    fn handle_remote_call(
+        &self,
+        conn: &HashValue,
+        msgid: u8,
+        taskid: ProcRpcTaskId,
+        buf: &[u8],
+    ) -> bool;
     async fn verify(&self, buf: &[u8]) -> Option<HashValue>;
     // fn deserialize(id: u16, buf: &[u8]);
 }
@@ -46,6 +52,8 @@ async fn accept_task<R: RpcCustom>(r: R, a: R::SpawnArgs) {
     }
 }
 
+pub type ProcRpcTaskId = u32;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum HashValue {
     Int(i64),
@@ -64,6 +72,47 @@ pub fn close_conn(id: &HashValue) {
     // this will make the old receive loop to be closed
     let _ = CONN_MAP.write().remove(id);
 }
+
+pub async fn send_resp<Req: ReqMsg>(
+    conn: HashValue,
+    taskid: ProcRpcTaskId,
+    resp: Req::Resp,
+) -> WSResult<()> {
+    let tx = {
+        let conn_map = CONN_MAP.read();
+        let Some(conn_state) = conn_map.get(&conn) else {
+            return Err(ProcRpcErr::ConnIdNotFound {
+                conn,
+                context: "err at rpc_model::send_resp".to_string(),
+            }
+            .into());
+        };
+        conn_state.tx.clone()
+    };
+
+    let mut buf = BytesMut::with_capacity(resp.encoded_len() + 8);
+    buf.put_i16(Req::Resp::id() as i16);
+    buf.put_i32(resp.encoded_len() as i32);
+    buf.put_i32(taskid as i32);
+    resp.encode(&mut buf).unwrap();
+
+    tx.send(buf.into()).await.map_err(|err| {
+        tracing::warn!("failed to send resp: {:?}", err);
+        ProcRpcErr::SendRespFailed {
+            err,
+            context: "err at rpc_model::send_resp".to_string(),
+        }
+        .into()
+    })
+}
+// let _ = CONN_MAP
+//     .write()
+//     .get_mut(&conn)
+//     .unwrap()
+//     .tx
+//     .send(resp.encode_to_vec())
+//     .await;
+// Ok(())
 
 pub async fn call<Req: ReqMsg>(
     req: Req,
@@ -97,6 +146,7 @@ pub async fn call<Req: ReqMsg>(
 
     // send the request
     let mut buf = BytesMut::with_capacity(req.encoded_len() + 8);
+    buf.put_i16(Req::id() as i16);
     buf.put_i32(req.encoded_len() as i32);
     buf.put_i32(next_task as i32);
     req.encode(&mut buf).unwrap();
@@ -150,7 +200,8 @@ async fn listen_task<R: RpcCustom>(r: R, socket: tokio::net::UnixStream) -> WSRe
     let mut buf = [0; 1024];
     let mut len = 0;
     let (conn, rx) =
-        match listen_task_ext::verify_remote::<R>(r, &mut sockrx, &mut len, &mut buf).await {
+        match listen_task_ext::verify_remote::<R>(r.clone(), &mut sockrx, &mut len, &mut buf).await
+        {
             Ok((conn, rx)) => (conn, rx),
             Err(err) => {
                 tracing::debug!("verify failed {:?}", err);
@@ -160,7 +211,7 @@ async fn listen_task<R: RpcCustom>(r: R, socket: tokio::net::UnixStream) -> WSRe
 
     listen_task_ext::spawn_send_loop(rx, socktx);
 
-    listen_task_ext::read_loop::<R>(conn, &mut sockrx, &mut len, &mut buf).await;
+    listen_task_ext::read_loop::<R>(r, conn, &mut sockrx, &mut len, &mut buf).await;
 
     Ok(())
 }
@@ -203,7 +254,7 @@ pub(super) mod listen_task_ext {
                 .into());
             }
 
-            let verify_msg_len = consume_i32(0, buf, len);
+            let verify_msg_len = consume_i32(0, buf, len) as usize;
 
             // println!("waiting for verify msg {}", verify_msg_len);
             if !wait_for_len(sockrx, len, verify_msg_len, buf).await {
@@ -248,6 +299,7 @@ pub(super) mod listen_task_ext {
     }
 
     pub(super) async fn read_loop<R: RpcCustom>(
+        r: R,
         conn: super::HashValue,
         socket: &mut OwnedReadHalf,
         len: &mut usize,
@@ -264,7 +316,7 @@ pub(super) mod listen_task_ext {
                 }
                 offset += 9;
                 (
-                    consume_i32(0, buf, len),
+                    consume_i32(0, buf, len) as usize,
                     consume_u8(4, buf, len),
                     consume_i32(5, buf, len) as u32,
                 )
@@ -283,7 +335,7 @@ pub(super) mod listen_task_ext {
                     return;
                 }
 
-                if !R::handle_remote_call(&conn, msg_id, &buf[..msg_len]) {
+                if !r.handle_remote_call(&conn, msg_id, taskid, &buf[..msg_len]) {
                     tracing::debug!("msg id not remote call to sys, seen as sys call response");
                     let Some(cb) = CALL_MAP.write().remove(&taskid) else {
                         tracing::warn!(
@@ -375,10 +427,10 @@ pub(super) mod listen_task_ext {
     }
 
     // 4字节u32 长度
-    pub(super) fn consume_i32(off: usize, buf: &mut [u8], len: &mut usize) -> usize {
+    pub(super) fn consume_i32(off: usize, buf: &mut [u8], len: &mut usize) -> i32 {
         // let ret = bincode::deserialize::<i32>(&buf[off..off + 4]).unwrap() as usize;
         let ret = Bytes::copy_from_slice(&buf[off..off + 4]).get_i32();
         *len -= 4;
-        ret as usize
+        ret
     }
 }

@@ -2,6 +2,7 @@ pub mod java;
 pub mod process;
 pub mod process_instance_man_related;
 pub mod process_rpc;
+pub mod process_rpc_proto_ext;
 
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::m_executor::{FnExeCtxAsync, FnExeCtxSync};

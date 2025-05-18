@@ -1,3 +1,5 @@
+use crate::general::network::proto::FnTaskId;
+use crate::general::network::proto_ext::data_ope_role::ProtoExtDataOpeRole;
 use crate::general::network::proto_ext::ProtoExtDataItem;
 use crate::{
     general::{
@@ -23,14 +25,14 @@ use crate::{
     util::JoinHandleWrapper,
 };
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use ws_derive::LogicalModule;
 
 logical_module_view_impl!(KvUserClientView);
 logical_module_view_impl!(KvUserClientView, p2p, P2PModule);
 logical_module_view_impl!(KvUserClientView, data_general, DataGeneral);
 logical_module_view_impl!(KvUserClientView, dist_lock, DistLock);
-logical_module_view_impl!(KvUserClientView, kv_user_client, Option<KvUserClient>);
+logical_module_view_impl!(KvUserClientView, kv_user_client, KvUserClient);
 
 #[derive(LogicalModule)]
 pub struct KvUserClient {
@@ -45,11 +47,11 @@ impl LogicalModule for KvUserClient {
     where
         Self: Sized,
     {
-        unsafe {
-            *(&*KV_USER_CLIENT as *const Option<KvUserClientView>
-                as *mut Option<KvUserClientView>) =
-                Some(KvUserClientView::new(args.logical_modules_ref.clone()));
-        }
+        // unsafe {
+        //     *(&*KV_USER_CLIENT as *const Option<KvUserClientView>
+        //         as *mut Option<KvUserClientView>) =
+        //         Some(KvUserClientView::new(args.logical_modules_ref.clone()));
+        // }
         Self {
             // testmap: SkipMap::new(),
             view: KvUserClientView::new(args.logical_modules_ref.clone()),
@@ -76,16 +78,16 @@ impl LogicalModule for KvUserClient {
 //     }
 // }
 
-lazy_static::lazy_static! {
-    static ref KV_USER_CLIENT: Option<KvUserClientView>=None;
-    // static ref RECENT_Kv_CACHE: Cache<i32, Vec<u8>>=Cache::<i32, Vec<u8>>::builder()
-    //     .time_to_live(Duration::from_secs(10))
-    //     .weigher(|_key, value| -> u32 { value.len().try_into().unwrap_or(u32::MAX) })
-    //     // This cache will hold up to 32MiB of values.
-    //     .max_capacity(32 * 1024 * 1024)
-    //     .build();
-    // static ref NEXT_CACHE_ID: AtomicI32=AtomicI32::new(0);
-}
+// lazy_static::lazy_static! {
+//     static ref KV_USER_CLIENT: Option<KvUserClientView>=None;
+//     // static ref RECENT_Kv_CACHE: Cache<i32, Vec<u8>>=Cache::<i32, Vec<u8>>::builder()
+//     //     .time_to_live(Duration::from_secs(10))
+//     //     .weigher(|_key, value| -> u32 { value.len().try_into().unwrap_or(u32::MAX) })
+//     //     // This cache will hold up to 32MiB of values.
+//     //     .max_capacity(32 * 1024 * 1024)
+//     //     .build();
+//     // static ref NEXT_CACHE_ID: AtomicI32=AtomicI32::new(0);
+// }
 
 // pub fn kv_user_client() -> &'static KvUserClient {
 //     let res = &*KV_USER_CLIENT as *const Option<KvUserClientView> as *mut Option<KvUserClientView>;
@@ -122,21 +124,26 @@ lazy_static::lazy_static! {
 impl KvUserClient {
     pub async fn kv_requests(
         &self,
-        app_name: &str,
-        func_name: &str,
-        reqs: proto::kv::KvRequests,
+        src_taskid: FnTaskId,
+        proto::kv::KvRequests {
+            app: app_name,
+            func: func_name,
+            requests,
+            ..
+        }: proto::kv::KvRequests,
         // responsor: RPCResponsor<KvRequests>,
     ) -> WSResult<proto::kv::KvResponses> {
         let mut kv_responses = KvResponses { responses: vec![] };
         // pre-collect each operation's event trigger info
 
         // let mut kv_opeid = None;
-        for req in reqs.requests.into_iter() {
+        for req in requests.into_iter() {
             // let mut sub_tasks = vec![];
             let response = match req.op.unwrap() {
-                proto::kv::kv_request::Op::Set(set) => {
-                    Some(self.handle_kv_set(app_name, func_name, set).await)
-                }
+                proto::kv::kv_request::Op::Set(set) => Some(
+                    self.handle_kv_set(src_taskid.clone(), &app_name, &func_name, set)
+                        .await,
+                ),
                 proto::kv::kv_request::Op::Get(get) => Some(self.handle_kv_get(get).await),
                 proto::kv::kv_request::Op::Delete(delete) => {
                     Some(self.handle_kv_delete(delete).await)
@@ -200,141 +207,93 @@ impl KvUserClient {
 
     async fn handle_kv_set(
         &self,
-        _app_name: &str,
-        _func_name: &str,
-        _set: proto::kv::kv_request::KvPutRequest,
+        src_taskid: FnTaskId,
+        app_name: &str,
+        func_name: &str,
+        set: proto::kv::kv_request::KvPutRequest,
     ) -> KvResponse {
-        // let proto::kv::KvPair { key, value } = set.kv.unwrap();
-        // let cur_node = self.view.p2p().nodes_config.this_node();
-        // tracing::debug!("handle_kv_set: key: {:?}", key);
+        let kv = set.kv.unwrap();
+        let key = kv.key;
+        let values = kv.values;
 
-        // let data_general = self.view.data_general();
-        //返回结果未处理 曾俊
-        {
-            todo!()
-            //     if let Err(e) = data_general
-            //     .write_data(
-            //         new_data_unique_id_fn_kv(&key),
-            //         //原代码：
-            //         // vec![proto::DataItem {
-            //         //     data_item_dispatch: Some(proto::data_item::DataItemDispatch::RawBytes(value)),
-            //         // }],
-            //         //修改后封装成要求的DataItemArgWrapper类型 tmpzipfile设置为Uninitialized状态   在DataItemArgWrapper结构体中添加了一个new方法         曾俊
-            //         vec![DataItemArgWrapper::new(value)],
-            //         Some((
-            //             cur_node,
-            //             proto::DataOpeType::Write,
-            //             proto::data_schedule_context::OpeRole::FuncCall(proto::DataOpeRoleFuncCall {
-            //                 app_func: format!("{}/{}", app_name, func_name),
-            //                 node_id: cur_node,
-            //             }),
-            //         )),
-            //     )
-            //     .await
-            // {
-            //     tracing::error!("Failed to write data: {}", e);
-            // }
-        }
-
-        // .todo_handle("This part of the code needs to be implemented.");
-        KvResponse::new_common(vec![])
-    }
-
-    fn convert_get_data_res_to_kv_response(
-        key: Vec<u8>,
-        uid: Vec<u8>,
-        _meta: DataSetMetaV2,
-        splits: HashMap<DataItemIdx, proto::DataItem>,
-    ) -> WSResult<Vec<proto::kv::KvPair>> {
-        tracing::debug!(
-            "convert_get_data_res_to_kv_response uid: {:?}, split keys: {:?}",
-            uid,
-            splits.keys().collect::<Vec<_>>()
-        );
-        if splits.len() != 1 {
-            return Err(WSError::WsDataError(
-                WsDataError::KvGotWrongSplitCountAndIdx {
-                    unique_id: uid.clone(),
-                    idx: splits.keys().cloned().collect(),
-                },
-            ));
-        }
-
-        let (idx, data_item) = splits.into_iter().next().unwrap();
-        if idx != 0 {
-            return Err(WSError::WsDataError(
-                WsDataError::KvGotWrongSplitCountAndIdx {
-                    unique_id: uid.clone(),
-                    idx: vec![idx],
-                },
-            ));
-        }
-
-        let data_item_dispatch = data_item.data_item_dispatch.unwrap();
-        let raw_bytes = match data_item_dispatch {
-            proto::data_item::DataItemDispatch::RawBytes(value) => value,
-            _ => {
-                return Err(WSError::WsDataError(WsDataError::KvDeserializeErr {
-                    unique_id: uid,
-                    context: format!(
-                        "data_item_dispatch({}) is not RawBytes",
-                        proto::DataItem {
-                            data_item_dispatch: Some(data_item_dispatch),
-                        }
-                        .to_string(),
+        let res = self
+            .view
+            .data_general()
+            .write_data(
+                new_data_unique_id_fn_kv(&key),
+                values
+                    .into_iter()
+                    .map(|v| DataItemArgWrapper::new(proto::DataItem::new_mem_data(v)))
+                    .collect(),
+                Some((
+                    self.view.p2p().nodes_config.this_node(),
+                    proto::DataOpeType::Write,
+                    proto::data_schedule_context::OpeRole::new_fn_call(
+                        app_name,
+                        func_name,
+                        self.view.p2p().nodes_config.this_node(),
                     ),
-                }))
-            }
-        };
+                    src_taskid,
+                )),
+            )
+            .await;
 
-        Ok(vec![proto::kv::KvPair {
-            key: key,
-            value: raw_bytes,
-        }])
+        match res {
+            Err(err) => {
+                tracing::warn!("kv_requests set err:{:?}", err);
+                return KvResponse::new_put_or_del(proto::kv::KvPair {
+                    key: vec![], // err so we put empty
+                    values: vec![],
+                });
+            }
+            Ok(_) => KvResponse::new_put_or_del(proto::kv::KvPair {
+                key,
+                values: vec![],
+            }),
+        }
     }
 
     async fn handle_kv_get(&self, get: proto::kv::kv_request::KvGetRequest) -> KvResponse {
         tracing::debug!("handle_kv_get:{:?}", get);
+        let idxs: Vec<u8> = get.idxs.into_iter().map(|i| i as u8).collect();
+        let range = get.range.unwrap();
+        let key = range.start;
 
         let data_general = self.view.data_general();
-        let uid = new_data_unique_id_fn_kv(&get.range.as_ref().unwrap().start);
+        let uid = new_data_unique_id_fn_kv(&key);
         let got = data_general
             .get_or_del_datas(GetOrDelDataArg {
                 meta: None,
                 unique_id: uid.clone(),
-                ty: GetOrDelDataArgType::All,
+                ty: GetOrDelDataArgType::PartialMany {
+                    idxs: idxs.iter().map(|i| *i).collect(),
+                },
             })
             .await;
 
-        let got = match got {
-            Ok((meta, splits)) => match Self::convert_get_data_res_to_kv_response(
-                get.range.unwrap().start,
-                uid,
-                meta,
-                splits,
-            ) {
-                Ok(res) => res,
-                Err(err) => {
-                    tracing::warn!("get kv data error:{:?}", err);
-                    vec![]
+        match got {
+            Ok((_meta, mut idx_2_items)) => {
+                let mut values = vec![];
+                for idx in idxs.iter() {
+                    if let Some(mut item) = idx_2_items.remove(idx) {
+                        values.push(item.take_mem_data());
+                    }
                 }
-            },
-            Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
-                tracing::debug!("get kv data not found, uid({:?})", uniqueid);
-                vec![]
+                KvResponse::new_get(idxs, values)
             }
             Err(err) => {
-                tracing::warn!("get kv data error:{:?}", err);
-                vec![]
+                tracing::error!("kv get err: {:?}", err);
+                KvResponse::new_get(vec![], vec![])
             }
-        };
-        KvResponse::new_common(got)
+        }
     }
     async fn handle_kv_delete(&self, delete: proto::kv::kv_request::KvDeleteRequest) -> KvResponse {
         tracing::debug!("handle_kv_delete:{:?}", delete);
+        let range = delete.range.unwrap();
+        let key = range.start;
 
         let data_general = self.view.data_general();
-        let uid = new_data_unique_id_fn_kv(&delete.range.as_ref().unwrap().start);
+        let uid = new_data_unique_id_fn_kv(&key);
         let deleted = data_general
             .get_or_del_datas(GetOrDelDataArg {
                 meta: None,
@@ -343,29 +302,21 @@ impl KvUserClient {
             })
             .await;
 
-        let deleted = match deleted {
-            Ok((deleted_meta, deleted_splits)) => match Self::convert_get_data_res_to_kv_response(
-                delete.range.unwrap().start,
-                uid,
-                deleted_meta,
-                deleted_splits,
-            ) {
-                Ok(res) => res,
-                Err(err) => {
-                    tracing::warn!("delete kv data error:{:?}", err);
-                    vec![]
+        match deleted {
+            Ok((_meta, mut idx_2_items)) => {
+                let mut values = vec![];
+
+                let ordered_idxs: BTreeSet<u8> = idx_2_items.iter().map(|(i, _)| *i).collect();
+                for idx in ordered_idxs.iter() {
+                    values.push(idx_2_items.remove(idx).unwrap().take_mem_data());
                 }
-            },
-            Err(WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid })) => {
-                tracing::debug!("delete kv data not found, uid({:?})", uniqueid);
-                vec![]
+                KvResponse::new_put_or_del(proto::kv::KvPair { key, values })
             }
             Err(err) => {
-                tracing::warn!("delete kv data error:{:?}", err);
-                vec![]
+                tracing::error!("kv get err: {:?}", err);
+                KvResponse::new_get(vec![], vec![])
             }
-        };
-        KvResponse::new_common(deleted)
+        }
     }
     // async fn handle_kv_lock(
     //     &self,
@@ -445,6 +396,7 @@ mod test {
             proto::{
                 self,
                 kv::{KvRequest, KvRequests},
+                FnTaskId,
             },
             proto_ext::KvRequestExt,
         },
@@ -460,29 +412,34 @@ mod test {
         let func = "test_func";
         let test_key = "test_key";
         let test_value = "test_value";
+        let test_taskid = FnTaskId {
+            task_id: 0,
+            call_node_id: view.p2p().nodes_config.this_node(),
+        };
 
         // first time get should be none
         {
             let res = view
                 .kv_user_client()
                 .kv_requests(
-                    app,
-                    func,
+                    // fake taskid
+                    test_taskid.clone(),
                     KvRequests {
                         app: app.to_owned(),
                         func: func.to_owned(),
                         prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned())],
+                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned(), vec![0])],
                     },
                 )
                 .await
                 .unwrap();
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
+                proto::kv::kv_response::Resp::Get(kv_response) => {
+                    assert!(kv_response.idxs.len() == 0);
+                    assert!(kv_response.values.len() == 0);
                 }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
+                resp => panic!("require get resp, but get {:?}", resp),
             }
             tracing::debug!("first time get is none");
         }
@@ -492,15 +449,14 @@ mod test {
             let res = view
                 .kv_user_client()
                 .kv_requests(
-                    app,
-                    func,
+                    test_taskid.clone(),
                     KvRequests {
                         app: app.to_owned(),
                         func: func.to_owned(),
                         prev_kv_opeid: -1,
                         requests: vec![KvRequest::new_set(proto::kv::KvPair {
                             key: test_key.as_bytes().to_owned(),
-                            value: test_value.as_bytes().to_owned(),
+                            values: vec![test_value.as_bytes().to_owned()],
                         })],
                     },
                 )
@@ -508,15 +464,15 @@ mod test {
                 .unwrap();
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
+                proto::kv::kv_response::Resp::PutOrDel(kv_response) => {
+                    assert!(kv_response.kv.is_none());
                     // assert_eq!(str::from_utf8(&kv_response.kvs[0].key).unwrap(), test_key);
                     // assert_eq!(
                     //     str::from_utf8(&kv_response.kvs[0].value).unwrap(),
                     //     test_value
                     // );
                 }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
+                resp => panic!("require common resp, but get {:?}", resp),
             }
             tracing::debug!("set success");
 
@@ -524,25 +480,25 @@ mod test {
             let res = view
                 .kv_user_client()
                 .kv_requests(
-                    app,
-                    func,
+                    test_taskid.clone(),
                     KvRequests {
                         app: app.to_owned(),
                         func: func.to_owned(),
                         prev_kv_opeid: -1,
-                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned())],
+                        requests: vec![KvRequest::new_get(test_key.as_bytes().to_owned(), vec![0])],
                     },
                 )
                 .await
                 .unwrap();
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert_eq!(kv_response.kvs.len(), 1);
-                    assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
-                    assert!(kv_response.kvs[0].value == test_value.as_bytes().to_owned());
+                proto::kv::kv_response::Resp::Get(kv_response) => {
+                    // assert_eq!(kv_response.kvs.len(), 1);
+                    // assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
+                    assert!(kv_response.idxs[0] == 0);
+                    assert!(kv_response.values[0] == test_value.as_bytes().to_owned());
                 }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
+                resp => panic!("require get resp, but get {:?}", resp),
             }
             tracing::debug!("get after set success");
 
@@ -550,8 +506,7 @@ mod test {
             let res = view
                 .kv_user_client()
                 .kv_requests(
-                    app,
-                    func,
+                    test_taskid.clone(),
                     KvRequests {
                         app: app.to_owned(),
                         func: func.to_owned(),
@@ -563,11 +518,12 @@ mod test {
                 .unwrap();
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs[0].key == test_key.as_bytes().to_owned());
-                    assert!(kv_response.kvs[0].value == test_value.as_bytes().to_owned());
+                proto::kv::kv_response::Resp::PutOrDel(kv_response) => {
+                    let kv = kv_response.kv.unwrap();
+                    assert!(kv.key == test_key.as_bytes().to_owned());
+                    assert!(kv.values[0] == test_value.as_bytes().to_owned());
                 }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
+                resp => panic!("require common resp, but get {:?}", resp),
             }
             tracing::debug!("delete after get success");
 
@@ -575,8 +531,7 @@ mod test {
             let res = view
                 .kv_user_client()
                 .kv_requests(
-                    app,
-                    func,
+                    test_taskid.clone(),
                     KvRequests {
                         app: app.to_owned(),
                         func: func.to_owned(),
@@ -588,10 +543,10 @@ mod test {
                 .unwrap();
             assert!(res.responses.len() == 1);
             match res.responses[0].resp.clone().unwrap() {
-                proto::kv::kv_response::Resp::CommonResp(kv_response) => {
-                    assert!(kv_response.kvs.len() == 0);
+                proto::kv::kv_response::Resp::PutOrDel(kv_response) => {
+                    assert!(kv_response.kv.is_none());
                 }
-                proto::kv::kv_response::Resp::LockId(_) => panic!(),
+                resp => panic!("expected delete resp, got:{:?}", resp),
             }
             tracing::debug!("delete again is none");
         }

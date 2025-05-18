@@ -215,10 +215,22 @@ impl InstanceTrait for ProcessInstance {
             fn_ctx.func()
         );
         tracing::debug!("before process_rpc::call_func ");
-        let res =
-            process_rpc::call_func(fn_ctx.app(), fn_ctx.func(), fn_ctx.http_str_unwrap()).await;
+
+        let res = process_rpc::call_func(
+            proc_proto::FnTaskId {
+                call_node_id: fn_ctx.task_id().call_node_id,
+                task_id: fn_ctx.task_id().task_id,
+            },
+            fn_ctx.app(),
+            fn_ctx.func(),
+            fn_ctx.format_arg_to_pass(),
+        )
+        .await;
         tracing::debug!("after process_rpc::call_func ");
-        return res.map(|v| Some(v.ret_str));
+        match res {
+            Ok(resp) => Ok(Some(resp.ret_str)),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Process instances don't support synchronous execution

@@ -13,12 +13,10 @@ use result::ResultFuncsRegister;
 mod utils {
 
     use super::UnsafeFunctionCtx;
-    use crate::general::app::m_executor::{FnExeCtxAsync};
+    use crate::general::app::m_executor::FnExeCtxAsync;
     use crate::general::app::InstanceManager;
-    use crate::{
-        general::m_os::OperatingSystem, sys::LogicalModulesRef, util::SendNonNull,
-        worker::m_kv_user_client::KvUserClient,
-    };
+    use crate::general::data::m_kv_user_client::KvUserClient;
+    use crate::{general::m_os::OperatingSystem, sys::LogicalModulesRef, util::SendNonNull};
     use wasmedge_sdk::{Caller, Instance, Memory};
 
     pub trait WasmCtx {
@@ -127,14 +125,16 @@ mod utils {
     }
 
     pub fn m_kv_user_client() -> &'static KvUserClient {
-        unsafe {
-            &(*MODULES.as_ref().unwrap().inner.as_ptr())
-                .as_ref()
-                .unwrap()
-                .kv_user_client
-                .as_ref()
-                .unwrap()
-        }
+        // https://fvd360f8oos.feishu.cn/wiki/M4ubwJkvcichuHkiGhjc0miHn5f#share-FuaYd5qZboOkhZxYMc2cCV0fndh
+        todo!("wasm kv is not updated for src wait and multi value items (dataset)");
+        // unsafe {
+        //     &(*MODULES.as_ref().unwrap().inner.as_ptr())
+        //         .as_ref()
+        //         .unwrap()
+        //         .kv_user_client
+        //         .as_ref()
+        //         .unwrap()
+        // }
     }
 
     pub fn m_fs<'a>() -> &'a OperatingSystem {

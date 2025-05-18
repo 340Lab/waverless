@@ -1,22 +1,108 @@
+syntax = "proto3";
 package process_rpc_proto;
 
-// Sample message.
-message AppStarted {
-    required string  appid = 1;
-    optional string  http_port = 2;
-    required uint32 pid=3;
+
+////////////////////////////////////////////////////////////
+// Category: Sub Structure >>
+
+
+message FnTaskId{
+    uint32 call_node_id=1;
+    uint32 task_id=2;
 }
 
 
+////////////////////////////////////////////////////////////
+// Category: Outgoing >>
+// Sample message.
+message AppStarted {
+    string  appid = 1;
+    string  http_port = 2;
+    uint32 pid=3;
+}
+// << Category: Incomming
+
+
+////////////////////////////////////////////////////////////
+// Category: Outgoing RPC >>
+
 message FuncCallReq{
-    required string func=1;
-    required string arg_str=2;
+    FnTaskId src_task_id=1;
+    string func=2;
+    string arg_str=3;
 }
 
 message FuncCallResp{
-    required string ret_str=1;
+    string ret_str=1;
 }
 
 message UpdateCheckpoint{
     
 }
+
+
+message KeyRange {
+  bytes start=1;
+  bytes end=2;
+}
+
+message KvPair{
+  bytes key=1;
+  repeated bytes values=2;
+}
+
+
+message KvRequest {
+  message KvPutRequest{
+    FnTaskId src_task_id=1;
+    string app_fn=2;
+    // required
+    KvPair kv=3;
+  }
+  message KvGetRequest{
+    FnTaskId src_task_id=1;
+    string app_fn=2;
+    // required
+    KeyRange range=3;
+    // required
+    repeated uint32 idxs=4;
+  }
+  message KvDeleteRequest{
+    FnTaskId src_task_id=1;
+    string app_fn=2;
+    // required
+    KeyRange range=3;
+  }
+  oneof op {
+    KvPutRequest set=1;
+    KvGetRequest get=2;
+    KvDeleteRequest delete=3;
+  }
+}
+
+// message KvLockWaitAcquireNotifyRequest{
+//   uint32 release_id=1;
+// }
+
+// message KvLockWaitAcquireNotifyResponse{}
+
+message KvPairs{
+  repeated KvPair kvs=1;
+}
+
+message KvResponse{
+  message KvGetResponse{
+    repeated uint32 idxs=1;
+    repeated bytes values=2;
+  }
+  message KvPutOrDelResponse{
+    KvPair kv=1;
+  }
+  oneof resp {
+    KvGetResponse get=1;
+    KvPutOrDelResponse put_or_del=2;
+    // 0 is invalid lock id
+    uint32 lock_id=3;
+  }
+}
+
