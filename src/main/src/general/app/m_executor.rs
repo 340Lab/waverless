@@ -265,7 +265,7 @@ pub struct Executor {
     task_subwait_for: DashMap<u32, Vec<(NodeID, FnTaskId)>>,
 
     // this runing task id -> src waiting rpc
-    task_subwait_by: DashMap<FnTaskId, broadcast::Sender<()>>,
+    task_subwait_by: DashMap<FnTaskId, broadcast::Sender<String>>,
 
     rpc_handler_distribute_task: RPCHandler<proto::DistributeTaskReq>,
     rpc_caller_listen_for_task_done: RPCCaller<proto::ListenForTaskDoneReq>,
@@ -362,8 +362,10 @@ impl FnExeCtxBase for FnExeCtxSync {
 }
 
 impl Executor {
-    pub async fn wait_for_subtasks(&self, thistask: &u32) {
+    /// return last task response
+    pub async fn wait_for_subtasks(&self, thistask: &u32) -> Option<String> {
         let mut done_tasks = vec![];
+        let mut last_res = None;
         loop {
             if !self.task_subwait_for.contains_key(&thistask) {
                 tracing::debug!(
@@ -379,7 +381,7 @@ impl Executor {
                     done_tasks.push(task.clone());
                     let view = self.view.clone();
                     let wait_task = tokio::spawn(async move {
-                        let _ = view
+                        let res: Result<proto::ListenForTaskDoneResp, WSError> = view
                             .executor()
                             .rpc_caller_listen_for_task_done
                             .call(
@@ -391,19 +393,34 @@ impl Executor {
                                 Some(Duration::from_secs(180)),
                             )
                             .await;
+                        res.map_err(|err| {
+                            tracing::error!("listen for task done failed with err: {}", err);
+                            err
+                        })
+                        .unwrap()
                     });
                     wait_tasks.push(wait_task);
                 }
             }
             for wait_task in wait_tasks {
-                let _ = wait_task.await;
+                let res = wait_task.await.unwrap();
+                if !res.success {
+                    tracing::error!(
+                        "listen for task done failed with err: {}",
+                        res.response_or_errmsg
+                    );
+                } else {
+                    tracing::debug!("listen for task done success: {}", res.response_or_errmsg);
+                    last_res = Some(res.response_or_errmsg);
+                }
             }
         }
+        last_res
     }
-    pub fn notify_subwait_done(&self, taskid: &FnTaskId) {
+    pub fn notify_subwait_done(&self, taskid: &FnTaskId, res: String) {
         loop {
             if let Some((_, sender)) = self.task_subwait_by.remove(&taskid) {
-                let _ = sender.send(());
+                let _ = sender.send(res);
             }
             return;
         }
@@ -479,23 +496,26 @@ impl Executor {
                         };
                         let res = sub.recv().await;
                         tracing::debug!("task is done: {:?}", res);
-                        if res.is_ok() {
-                            let _ = responsor
-                                .send_resp(proto::ListenForTaskDoneResp {
-                                    success: true,
-                                    err_msg: "".to_owned(),
-                                })
-                                .await
-                                .todo_handle("listen task done");
-                        } else {
-                            tracing::warn!("listen task done failed: {:?}", res);
-                            let _ = responsor
-                                .send_resp(proto::ListenForTaskDoneResp {
-                                    success: false,
-                                    err_msg: format!("err:{:?}", res),
-                                })
-                                .await
-                                .todo_handle("listen task done");
+                        match res {
+                            Ok(res) => {
+                                let _ = responsor
+                                    .send_resp(proto::ListenForTaskDoneResp {
+                                        success: true,
+                                        response_or_errmsg: res,
+                                    })
+                                    .await
+                                    .todo_handle("listen task done");
+                            }
+                            Err(err) => {
+                                tracing::warn!("listen task done failed: {:?}", err);
+                                let _ = responsor
+                                    .send_resp(proto::ListenForTaskDoneResp {
+                                        success: false,
+                                        response_or_errmsg: format!("err:{:?}", err),
+                                    })
+                                    .await
+                                    .todo_handle("listen task done");
+                            }
                         }
                     });
                     Ok(())
@@ -552,6 +572,22 @@ impl Executor {
 
     pub fn local_call_execute_sync(&self, ctx: FnExeCtxSync) -> WSResult<Option<String>> {
         self.execute_sync(ctx)
+    }
+
+    pub fn handle_exec_result(&self, taskid: &FnTaskId, res: WSResult<Option<String>>) {
+        let res_str = match res {
+            Ok(Some(res)) => res,
+            Ok(None) => "".to_owned(),
+            Err(err) => {
+                tracing::warn!(
+                    "handle failed exec result for taskid: {:?} with err: {}",
+                    taskid,
+                    err
+                );
+                format!("err:{:?}", err)
+            }
+        };
+        self.notify_subwait_done(taskid, res_str);
     }
 
     pub async fn handle_distribute_task(
@@ -728,8 +764,14 @@ impl Executor {
                 tracing::error!("send sche resp for app:{app} fn:{func} failed with err: {err}");
             }
             let taskid = ctx.inner.task_id.clone();
-            let _ = self.execute_sync(ctx);
-            self.notify_subwait_done(&taskid);
+            let res = self.execute_sync(ctx);
+            self.handle_exec_result(&taskid, res);
+            // let res_str = match res {
+            //     Ok(Some(res)) => res,
+            //     Ok(None) => "".to_owned(),
+            //     Err(err) => format!("err:{:?}", err),
+            // };
+            // self.notify_subwait_done(&taskid, res_str);
         } else {
             //如果函数支持异步
             // construct async fn exe ctx
@@ -780,10 +822,12 @@ impl Executor {
             }
 
             let taskid = ctx.task_id().clone();
-            let _ = self.execute(ctx).await;
+            let res = self.execute(ctx).await;
+
+            self.handle_exec_result(&taskid, res);
 
             // notify src task
-            self.notify_subwait_done(&taskid);
+            // self.notify_subwait_done(&taskid);
             // self.take_subwaitings_for_task(&ctx.task_id())
         }
     }
@@ -881,7 +925,7 @@ impl Executor {
         };
 
         // wait for sub tasks done
-        self.wait_for_subtasks(&task_id.task_id).await;
+        let _ = self.wait_for_subtasks(&task_id.task_id).await;
 
         res
     }

@@ -197,7 +197,7 @@ async fn listen_task<R: RpcCustom>(r: R, socket: tokio::net::UnixStream) -> WSRe
     tracing::debug!("new connection: {:?}", socket.peer_addr().unwrap());
     let (mut sockrx, socktx) = socket.into_split();
 
-    let mut buf = [0; 1024];
+    let mut buf = vec![0; 1024];
     let mut len = 0;
     let (conn, rx) =
         match listen_task_ext::verify_remote::<R>(r.clone(), &mut sockrx, &mut len, &mut buf).await
@@ -303,37 +303,85 @@ pub(super) mod listen_task_ext {
         conn: super::HashValue,
         socket: &mut OwnedReadHalf,
         len: &mut usize,
-        buf: &mut [u8],
+        buf: &mut Vec<u8>,
     ) {
         *len = 0;
-        let mut offset = 0;
+        // let mut offset = 0;
+        let mut history_read_len = vec![];
         loop {
+            // fn reset_when_overflow(
+            //     buf: &mut Vec<u8>,
+            //     offset: &mut usize,
+            //     len: &mut usize,
+            //     tarlen: usize,
+            // ) {
+            //     if buf.len() < *offset + tarlen {
+            //         tracing::debug!(
+            //             "reset when overflow, offset: {}, len: {}, tarlen: {}",
+            //             *offset,
+            //             *len,
+            //             tarlen
+            //         );
+            //         buf.copy_within(*offset.., 0);
+            //         *len -= *offset;
+            //         *offset = 0;
+            //         if buf.len() < tarlen {
+            //             buf.resize(tarlen, 0);
+            //         }
+            //         tracing::debug!(
+            //             "reseted with offset: {}, len: {}, tarlen: {}, buflen: {}",
+            //             *offset,
+            //             *len,
+            //             tarlen,
+            //             buf.len()
+            //         );
+            //     }
+            // }
+
+            // reset_when_overflow(buf, &mut offset, &mut *len, 9);
             let (msg_len, msg_id, taskid) = {
-                let buf = &mut buf[offset..];
+                let buf = &mut buf[0..9];
+                *len = 0;
                 if !wait_for_len(socket, len, 9, buf).await {
                     tracing::warn!("failed to read head len, stop rd loop");
                     return;
                 }
-                offset += 9;
+                assert_eq!(*len, 9);
+                // offset += 9;
                 (
                     consume_i32(0, buf, len) as usize,
                     consume_u8(4, buf, len),
                     consume_i32(5, buf, len) as u32,
                 )
             };
+            history_read_len.push(9);
 
             {
-                if buf.len() < offset + msg_len {
-                    // move forward
-                    buf.copy_within(offset.., 0);
-                    offset = 0;
+                tracing::debug!(
+                    "history_read_len: {:?}, total: {}",
+                    history_read_len,
+                    history_read_len.iter().sum::<usize>()
+                );
+                // reset_when_overflow(buf, &mut offset, &mut *len, msg_len);
+                // if buf.len() < offset + msg_len {
+                //     // move forward
+                //     buf.copy_within(offset.., 0);
+                //     offset = 0;
+                //     *len -= offset;
+                //     if buf.len() < msg_len {
+                //         buf.resize(msg_len, 0);
+                //     }
+                // }
+                if buf.len() < msg_len {
+                    buf.resize(msg_len, 0);
                 }
-                let buf = &mut buf[offset..];
-
+                let buf = &mut buf[0..msg_len];
+                *len = 0;
                 if !wait_for_len(socket, len, msg_len, buf).await {
                     tracing::warn!("failed to read head len, stop rd loop");
                     return;
                 }
+                assert_eq!(*len, msg_len);
 
                 if !r.handle_remote_call(&conn, msg_id, taskid, &buf[..msg_len]) {
                     tracing::debug!("msg id not remote call to sys, seen as sys call response");
@@ -351,8 +399,9 @@ pub(super) mod listen_task_ext {
                 }
 
                 // update the buf meta
-                offset += msg_len;
-                *len -= msg_len;
+                // offset += msg_len;
+                // *len -= msg_len;
+                history_read_len.push(msg_len);
             }
 
             // match socket.read(buf).await {
@@ -400,9 +449,10 @@ pub(super) mod listen_task_ext {
         tarlen: usize,
         buf: &mut [u8],
     ) -> bool {
+        // let mut write_offset = *len;
         while *len < tarlen {
             tracing::debug!("current len: {}, target len: {}", *len, tarlen);
-            match socket.read(buf).await {
+            match socket.read(&mut buf[*len..]).await {
                 Ok(n) => {
                     if n == 0 {
                         tracing::warn!("connection closed");
@@ -410,6 +460,7 @@ pub(super) mod listen_task_ext {
                     }
                     // println!("recv: {:?}", buf[..n]);
                     *len += n;
+                    // write_offset += n;
                 }
                 Err(e) => {
                     tracing::warn!("failed to read from socket; err = {:?}", e);

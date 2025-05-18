@@ -15,6 +15,8 @@ use axum::routing::post;
 use axum::Router;
 use serde::Serialize;
 use std::io;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 impl DataGeneral {
     pub fn register_http(&self) -> WSResult<()> {
@@ -59,6 +61,10 @@ async fn handle_upload_data(
     let mut data_items = Vec::new();
     let mut first_field = true;
     let mut unique_id: Option<String> = None;
+    let req_arrive_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
     while let Ok(Some(field)) = multipart.next_field().await {
         if first_field {
             first_field = false;
@@ -141,9 +147,32 @@ async fn handle_upload_data(
         .await
         .todo_handle("write data failed when upload data");
 
-    view.executor().wait_for_subtasks(&taskid_value).await;
+    let res = view.executor().wait_for_subtasks(&taskid_value).await;
+    let res_str = match res {
+        Some(res) => {
+            // try deserialize res
+            match serde_json::from_str::<serde_json::Value>(&res) {
+                Ok(mut res) => {
+                    let _ = res.as_object_mut().unwrap().insert(
+                        "req_arrive_time".to_string(),
+                        serde_json::Value::Number((req_arrive_time as u64).into()),
+                    );
+                    serde_json::to_string(&res).unwrap()
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "deserialize upload data response failed: {}, can't insert req_arrive_time",
+                        err
+                    );
+                    res
+                }
+            }
+        }
+        None => "".to_owned(),
+    };
 
     // no sub trigger result collection
+    tracing::debug!("upload data result: {}", res_str);
 
-    (StatusCode::OK).into_response()
+    (StatusCode::OK, res_str).into_response()
 }

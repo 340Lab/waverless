@@ -262,7 +262,7 @@ pub async fn call_func(
             arg_str: arg,
         },
         HashValue::Str(app.into()),
-        Duration::from_secs(20),
+        Duration::from_secs(120),
     )
     .await
 }

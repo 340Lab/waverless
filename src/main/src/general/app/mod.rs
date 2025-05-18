@@ -1124,7 +1124,7 @@ impl AppMetaManager {
             )
             .await?;
         // wait for sub task done(checkpoint)
-        self.view.executor().wait_for_subtasks(&task.task_id).await;
+        let _ = self.view.executor().wait_for_subtasks(&task.task_id).await;
         tracing::debug!("app uploaded, wait for sub task done");
         Ok(())
     }
