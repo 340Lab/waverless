@@ -1,6 +1,7 @@
 use crate::{
     config::{NodeConfig, NodesConfig},
     general::app::View,
+    sys::{LogicalModulesRef, Sys},
     util::command::CommandDebugStdio,
 };
 use axum::body::Bytes;
@@ -15,41 +16,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf, process::Stdio};
 // #[cfg(test)]
 use crate::general::test_utils;
 
-#[tokio::test(flavor = "multi_thread")]
-async fn test_app_upload() -> Result<(), Box<dyn std::error::Error>> {
-    // install java related by scripts/install/2.3install_java_related.py
-    // run real time output command
-    let (stdout_task, stderr_task, mut child) = Command::new("bash")
-        .arg("-c")
-        .arg("python3 scripts/install/2.3install_java_related.py")
-        .current_dir("../../../../../middlewares/waverless/waverless")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn_debug()
-        .await
-        .unwrap();
-    let status = child.wait().await.unwrap();
-    if !status.success() {
-        panic!(
-            "install java related failed, stderr: {}, stdout: {}",
-            stderr_task.await.unwrap(),
-            stdout_task.await.unwrap()
-        );
-    }
-
-    // 使用 get_test_sys 新建两个系统模块（一个 master，一个 worker）
-    let (
-        _sys_guard,              // 互斥锁守卫
-        _master_logical_modules, // 系统 0 (Master) 的逻辑模块引用
-        worker_logical_modules,  // 系统 1 (Worker) 的逻辑模块引用
-    ) = test_utils::get_test_sys().await;
-
-    // 延迟等待连接稳定
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-    //调用 bencher 的 prepare 模式触发应用上传
-    tracing::debug!("test_app_upload uploading app");
-
+async fn bencher(app_fn_name: &str, prepare: bool) {
     // 创建临时配置文件
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
     let config_path = temp_dir.path().join("cluster_config.yml");
@@ -75,15 +42,26 @@ worker:
     // 获取配置文件的绝对路径
     let config_path_str = config_path.to_str().expect("Invalid path");
 
-    let command_str = format!(
-        "echo $PWD && \
+    let command_str = if prepare {
+        format!(
+            "echo $PWD && \
         cargo run -- \
-        simple_demo/simple \
+        {} \
         --with-wl \
         --prepare \
         --config {}",
-        config_path_str
-    );
+            app_fn_name, config_path_str
+        )
+    } else {
+        format!(
+            "echo $PWD && \
+            cargo run -- \
+            {} \
+            --with-wl \
+            --config {}",
+            app_fn_name, config_path_str
+        )
+    };
 
     let (stdout_task, stderr_task, mut child) = Command::new("bash")
         .arg("-c")
@@ -109,6 +87,52 @@ worker:
             stderr_task.await.unwrap()
         );
     }
+}
+
+async fn start_sys_with_app_uploaded<'a>(
+    app_fn_name: &str,
+) -> (
+    tokio::sync::MutexGuard<
+        'a,
+        std::option::Option<((Sys, LogicalModulesRef), (Sys, LogicalModulesRef))>,
+    >,
+    LogicalModulesRef,
+    LogicalModulesRef,
+) {
+    // install java related by scripts/install/2.3install_java_related.py
+    // run real time output command
+    let (stdout_task, stderr_task, mut child) = Command::new("bash")
+        .arg("-c")
+        .arg("python3 scripts/install/2.3install_java_related.py")
+        .current_dir("../../../../../middlewares/waverless/waverless")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn_debug()
+        .await
+        .unwrap();
+    let status = child.wait().await.unwrap();
+    if !status.success() {
+        panic!(
+            "install java related failed, stderr: {}, stdout: {}",
+            stderr_task.await.unwrap(),
+            stdout_task.await.unwrap()
+        );
+    }
+
+    // 使用 get_test_sys 新建两个系统模块（一个 master，一个 worker）
+    let (
+        sys_guard,              // 互斥锁守卫
+        master_logical_modules, // 系统 0 (Master) 的逻辑模块引用
+        worker_logical_modules, // 系统 1 (Worker) 的逻辑模块引用
+    ) = test_utils::get_test_sys().await;
+
+    // 延迟等待连接稳定
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    //调用 bencher 的 prepare 模式触发应用上传
+    tracing::debug!("test_app_upload uploading app");
+
+    bencher(app_fn_name, true).await;
 
     tracing::debug!(
         "test_app_upload app uploaded",
@@ -119,7 +143,7 @@ worker:
     // tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
     // 应用名称
-    let appname = "simple_demo";
+    let appname = app_fn_name.split('/').next().unwrap();
     // 读取本地 ZIP 文件的内容
     let zip_path = format!("../../../../../middlewares/waverless/{}.zip", appname);
     let zip_content = tokio::fs::read(zip_path)
@@ -153,7 +177,7 @@ worker:
 
     // 调用数据接口校验应用是否上传完成
     tracing::debug!("test_app_upload verifying app meta");
-    let app_meta = app_meta_manager2.get_app_meta("simple_demo").await;
+    let app_meta = app_meta_manager2.get_app_meta(appname).await;
     assert!(app_meta.is_ok(), "Failed to get app meta");
     let app_meta = app_meta.unwrap();
     assert!(app_meta.is_some(), "App meta data not found");
@@ -164,8 +188,19 @@ worker:
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         tracing::debug!("test_app_upload waited {}s", i + 1);
     }
-    // tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 
+    (sys_guard, master_logical_modules, worker_logical_modules)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_app_upload() -> Result<(), Box<dyn std::error::Error>> {
+    const APP_FN_NAME: &str = "simple_demo/simple";
+
+    // tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    let (_sys_guard, _master_logical_modules, _worker_logical_modules) =
+        start_sys_with_app_uploaded(APP_FN_NAME).await;
+
+    // 发起对函数的 http 请求校验应用是否运行
     // 发起对函数的 http 请求校验应用是否运行
     tracing::debug!("test_app_upload try calling test app");
     let client = reqwest::Client::new();
@@ -211,4 +246,16 @@ worker:
     assert!(res.get("fn_end_time").is_some(), "Missing fn_end_time");
 
     Ok(()) // 返回 Ok(()) 表示成功
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_write_data_trigger_app() -> Result<(), Box<dyn std::error::Error>> {
+    const APP_FN_NAME: &str = "img_resize/resize";
+
+    let (_sys_guard, _master_logical_modules, _worker_logical_modules) =
+        start_sys_with_app_uploaded(APP_FN_NAME).await;
+
+    bencher(APP_FN_NAME, false).await;
+
+    Ok(())
 }

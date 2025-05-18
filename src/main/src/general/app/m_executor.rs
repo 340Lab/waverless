@@ -3,6 +3,7 @@ use crate::general::app::instance::m_instance_manager::UnsafeFunctionCtx;
 use crate::general::app::instance::InstanceTrait;
 use crate::general::app::AppType;
 use crate::general::app::FnMeta;
+use crate::general::data::m_data_general::DATA_UID_PREFIX_FN_KV;
 use crate::general::network::m_p2p::RPCCaller;
 use crate::general::network::m_p2p::TaskId;
 use crate::general::network::proto::FnTaskId;
@@ -289,6 +290,8 @@ pub trait FnExeCtxBase {
     fn event_ctx(&self) -> &EventCtx;
     /// Get mutable reference to event context
     fn event_ctx_mut(&mut self) -> &mut EventCtx;
+    /// Get fn type
+    fn app_type(&self) -> AppType;
     /// format arg to pass to function
     fn format_arg_to_pass(&self) -> String {
         match &self.event_ctx() {
@@ -296,8 +299,23 @@ pub trait FnExeCtxBase {
             EventCtx::KvSet {
                 key, src_task_id, ..
             } => {
+                let key_str = std::str::from_utf8(&key).unwrap();
+                let trigger_data_key = match self.app_type() {
+                    AppType::Jar | AppType::Wasm => {
+                        // remove prefix fkv
+                        key_str
+                            .strip_prefix(DATA_UID_PREFIX_FN_KV)
+                            .unwrap_or(key_str)
+                            .to_string()
+                    }
+                    AppType::Native => {
+                        // keep the key as is
+                        key_str.to_string()
+                    }
+                };
+
                 let arg = FnDataEventArg {
-                    trigger_data_key: std::str::from_utf8(&key).unwrap().to_string(),
+                    trigger_data_key,
                     src_called_by: src_task_id.call_node_id,
                     src_taskid: src_task_id.task_id,
                 };
@@ -320,6 +338,9 @@ impl FnExeCtxBase for FnExeCtxAsync {
     fn event_ctx_mut(&mut self) -> &mut EventCtx {
         &mut self.inner.event_ctx
     }
+    fn app_type(&self) -> AppType {
+        self.inner.app_type
+    }
 }
 
 impl FnExeCtxBase for FnExeCtxSync {
@@ -334,6 +355,9 @@ impl FnExeCtxBase for FnExeCtxSync {
     }
     fn event_ctx_mut(&mut self) -> &mut EventCtx {
         &mut self.inner.event_ctx
+    }
+    fn app_type(&self) -> AppType {
+        self.inner.app_type
     }
 }
 

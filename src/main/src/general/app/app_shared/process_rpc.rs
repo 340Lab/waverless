@@ -164,16 +164,20 @@ impl RpcCustom for ProcessRpc {
                         match proc_rpc_res {
                             Ok(mut res) => {
                                 tracing::debug!("function kv request success, sending response");
-                                let _ = rpc_model::send_resp::<proc_proto::KvRequest>(
+                                match rpc_model::send_resp::<proc_proto::KvRequest>(
                                     conn,
                                     taskid,
                                     proc_proto::KvResponse::from(res.responses.pop().unwrap()),
                                 )
                                 .await
-                                .map_err(|err| {
-                                    tracing::warn!("failed to send resp: {:?}", err);
-                                    err
-                                });
+                                {
+                                    Ok(_) => {
+                                        tracing::debug!("send kv response success");
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("send kv response failed: {:?}", e);
+                                    }
+                                }
                             }
                             Err(e) => {
                                 tracing::warn!("function kv request failed, error: {:?}", e);
@@ -182,7 +186,14 @@ impl RpcCustom for ProcessRpc {
                     });
                     return true;
                 }
-                Err(e) => e,
+                Err(e) => {
+                    tracing::warn!(
+                        "decode kv request failed with buf length: {}, parital content: {:?}",
+                        buf.len(),
+                        &buf[..20]
+                    );
+                    e
+                }
             },
             id => {
                 tracing::warn!("handle_remote_call: unsupported id: {}", id);
