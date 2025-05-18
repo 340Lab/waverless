@@ -27,6 +27,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use dashmap::DashMap;
+use serde::Deserialize;
+use serde::Serialize;
 use std::time::Duration;
 use std::{
     ptr::NonNull,
@@ -148,12 +150,12 @@ impl FnExeCtxAsync {
         }
     }
 
-    pub fn http_str_unwrap(&self) -> String {
-        match &self.inner.event_ctx {
-            EventCtx::Http(text) => text.clone(),
-            _ => panic!("not http event ctx"),
-        }
-    }
+    // pub fn http_str_unwrap(&self) -> String {
+    //     match &self.inner.event_ctx {
+    //         EventCtx::Http(text) => text.clone(),
+    //         _ => panic!("not http event ctx"),
+    //     }
+    // }
 
     pub fn set_result(&mut self, result: Option<String>) {
         self.inner.res = result;
@@ -270,6 +272,13 @@ pub struct Executor {
     rpc_handler_add_wait_target: RPCHandler<proto::AddWaitTargetReq>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct FnDataEventArg {
+    src_called_by: NodeID,
+    src_taskid: u32,
+    trigger_data_key: String,
+}
+
 /// Base trait for function execution contexts
 pub trait FnExeCtxBase {
     /// Get the application name
@@ -280,6 +289,22 @@ pub trait FnExeCtxBase {
     fn event_ctx(&self) -> &EventCtx;
     /// Get mutable reference to event context
     fn event_ctx_mut(&mut self) -> &mut EventCtx;
+    /// format arg to pass to function
+    fn format_arg_to_pass(&self) -> String {
+        match &self.event_ctx() {
+            EventCtx::Http(text) => text.clone(),
+            EventCtx::KvSet {
+                key, src_task_id, ..
+            } => {
+                let arg = FnDataEventArg {
+                    trigger_data_key: std::str::from_utf8(&key).unwrap().to_string(),
+                    src_called_by: src_task_id.call_node_id,
+                    src_taskid: src_task_id.task_id,
+                };
+                serde_json::to_string(&arg).unwrap()
+            }
+        }
+    }
 }
 
 impl FnExeCtxBase for FnExeCtxAsync {

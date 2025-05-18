@@ -32,38 +32,53 @@ impl DataGeneral {
 struct UploadDataResponse {
     err_msg: String,
 }
-impl UploadDataResponse {
-    fn is_err(&self) -> bool {
-        self.err_msg.len() > 0
-    }
-}
+// impl UploadDataResponse {
+//     fn is_err(&self) -> bool {
+//         self.err_msg.len() > 0
+//     }
+// }
 
-#[derive(Debug, Serialize)]
-struct UploadDataResponses {
-    responses: Vec<UploadDataResponse>,
-}
+// #[derive(Debug, Serialize)]
+// struct UploadDataResponses {
+//     responses: Vec<UploadDataResponse>,
+// }
 
-impl UploadDataResponses {
-    fn contains_err(&self) -> bool {
-        self.responses.iter().any(|r| r.is_err())
-    }
-}
+// impl UploadDataResponses {
+//     fn contains_err(&self) -> bool {
+//         self.responses.iter().any(|r| r.is_err())
+//     }
+// }
 
 async fn handle_upload_data(
     State(view): State<DataGeneralView>,
     mut multipart: Multipart,
 ) -> Response {
-    let mut responses = UploadDataResponses {
-        responses: Vec::new(),
-    };
+    // let mut responses = UploadDataResponses {
+    //     responses: Vec::new(),
+    // };
+    let mut data_items = Vec::new();
+    let mut first_field = true;
+    let mut unique_id: Option<String> = None;
     while let Ok(Some(field)) = multipart.next_field().await {
-        let Some(name) = field.name() else {
-            responses.responses.push(UploadDataResponse {
-                err_msg: "field name is None".to_string(),
-            });
-            continue;
-        };
-        let name = name.to_string();
+        if first_field {
+            first_field = false;
+            // require name for first field as unique id
+            let Some(name) = field.name() else {
+                // responses.responses.push(UploadDataResponse {
+                //     err_msg: "field name is None".to_string(),
+                // });
+                return (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::to_string(&UploadDataResponse {
+                        err_msg: "field name is None".to_string(),
+                    })
+                    .unwrap(),
+                )
+                    .into_response();
+            };
+            unique_id = Some(name.to_string());
+        }
+
         let data = match field
             .bytes()
             .await
@@ -71,34 +86,17 @@ async fn handle_upload_data(
         {
             Ok(data) => data,
             Err(err) => {
-                responses
-                    .responses
-                    .push(UploadDataResponse { err_msg: err });
-                continue;
+                return (
+                    StatusCode::BAD_REQUEST,
+                    serde_json::to_string(&UploadDataResponse { err_msg: err }).unwrap(),
+                )
+                    .into_response();
             }
         };
 
-        tracing::debug!("data received: {}, start writing to system", &name);
-        let taskid = view.executor().register_sub_task();
-        let taskid_value = taskid.task_id;
-        let _ = view
-            .data_general()
-            .write_data(
-                new_data_unique_id_fn_kv(name.as_bytes()),
-                vec![DataItemArgWrapper::new(proto::DataItem::new_mem_data(
-                    data.to_vec(),
-                ))],
-                Some((
-                    view.p2p().nodes_config.this_node(),
-                    proto::DataOpeType::Write,
-                    proto::data_schedule_context::OpeRole::new_upload_data(),
-                    taskid,
-                )),
-            )
-            .await
-            .todo_handle("write data failed when upload data");
-
-        view.executor().wait_for_subtasks(&taskid_value).await;
+        data_items.push(DataItemArgWrapper::new(proto::DataItem::new_mem_data(
+            data.to_vec(),
+        )));
         // let name = field.name().unwrap_or("").to_string();
 
         // if name == "app_name" {
@@ -111,14 +109,41 @@ async fn handle_upload_data(
         //     })?);
         // }
     }
-
-    if responses.contains_err() {
-        (
+    let Some(unique_id) = unique_id else {
+        return (
             StatusCode::BAD_REQUEST,
-            serde_json::to_string(&responses).unwrap(),
+            serde_json::to_string(&UploadDataResponse {
+                err_msg: "unique id is not specified".to_string(),
+            })
+            .unwrap(),
         )
-            .into_response()
-    } else {
-        (StatusCode::OK, serde_json::to_string(&responses).unwrap()).into_response()
-    }
+            .into_response();
+    };
+
+    tracing::debug!("data received: {}, start writing to system", &unique_id);
+    let taskid = view.executor().register_sub_task();
+    let taskid_value = taskid.task_id;
+    let _ = view
+        .data_general()
+        .write_data(
+            new_data_unique_id_fn_kv(unique_id.as_bytes()),
+            // vec![DataItemArgWrapper::new(proto::DataItem::new_mem_data(
+            //     data.to_vec(),
+            // ))],
+            data_items,
+            Some((
+                view.p2p().nodes_config.this_node(),
+                proto::DataOpeType::Write,
+                proto::data_schedule_context::OpeRole::new_upload_data(),
+                taskid,
+            )),
+        )
+        .await
+        .todo_handle("write data failed when upload data");
+
+    view.executor().wait_for_subtasks(&taskid_value).await;
+
+    // no sub trigger result collection
+
+    (StatusCode::OK).into_response()
 }

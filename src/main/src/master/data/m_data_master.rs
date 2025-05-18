@@ -356,6 +356,7 @@ impl DataMaster {
                 app_meta_encoded,
             }) = ctx.ope_role.as_ref().unwrap()
             {
+                tracing::debug!("update app meta for data({:?})", req.unique_id);
                 let meta: AppMeta = bincode::deserialize(&app_meta_encoded).map_err(|e| {
                     WsDataError::DataDecodeError {
                         reason: format!("err: {:?}", e),

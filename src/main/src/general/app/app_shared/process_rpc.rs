@@ -6,6 +6,8 @@ use self::proc_proto::{FuncCallReq, FuncCallResp};
 use super::SharedInstance;
 use crate::general::app;
 use crate::general::app::app_shared::process_rpc::proc_proto::AppStarted;
+use crate::general::app::app_shared::process_rpc_proto_ext::{ProcRpcExtKvReq, ProcRpcReqExt};
+use crate::general::network::rpc_model::ProcRpcTaskId;
 use crate::{
     general::network::rpc_model::{self, HashValue, MsgIdBind, ReqMsg, RpcCustom},
     modules_global_bridge::process_func::ModulesGlobalBrigeInstanceManager,
@@ -119,16 +121,19 @@ impl RpcCustom for ProcessRpc {
         Some(HashValue::Str(res.appid))
     }
 
-    fn handle_remote_call(_conn: &HashValue, id: u8, buf: &[u8]) -> bool {
-        tracing::debug!("handle_remote_call: id: {}", id);
-        let _ = match id {
-            4 => (),
-            id => {
-                tracing::warn!("handle_remote_call: unsupported id: {}", id);
-                return false;
-            }
-        };
-        let err = match id {
+    fn handle_remote_call(
+        &self,
+        conn: &HashValue,
+        msgid: u8,
+        taskid: ProcRpcTaskId,
+        buf: &[u8],
+    ) -> bool {
+        tracing::debug!("handle_remote_call: id: {}", msgid);
+        // let _ = match id {
+        //     4 => (),
+
+        // };
+        let err = match msgid {
             4 => match proc_proto::UpdateCheckpoint::decode(buf) {
                 Ok(_req) => {
                     tracing::debug!("function requested for checkpoint, but we ignore it");
@@ -143,7 +148,46 @@ impl RpcCustom for ProcessRpc {
                 }
                 Err(e) => e,
             },
-            _ => unreachable!(),
+
+            5 => match proc_proto::KvRequest::decode(buf) {
+                Ok(req) => {
+                    tracing::debug!("function requested for kv");
+                    let proc_rpc = self.clone();
+                    let srctaskid = req.fn_taskid();
+                    let conn = conn.clone();
+                    let _ = tokio::spawn(async move {
+                        let proc_rpc_res = proc_rpc
+                            .0
+                            .kv_user_client()
+                            .kv_requests(srctaskid, req.to_proto_kvrequests())
+                            .await;
+                        match proc_rpc_res {
+                            Ok(mut res) => {
+                                tracing::debug!("function kv request success, sending response");
+                                let _ = rpc_model::send_resp::<proc_proto::KvRequest>(
+                                    conn,
+                                    taskid,
+                                    proc_proto::KvResponse::from(res.responses.pop().unwrap()),
+                                )
+                                .await
+                                .map_err(|err| {
+                                    tracing::warn!("failed to send resp: {:?}", err);
+                                    err
+                                });
+                            }
+                            Err(e) => {
+                                tracing::warn!("function kv request failed, error: {:?}", e);
+                            }
+                        }
+                    });
+                    return true;
+                }
+                Err(e) => e,
+            },
+            id => {
+                tracing::warn!("handle_remote_call: unsupported id: {}", id);
+                return false;
+            }
         };
         tracing::warn!("handle_remote_call error: {:?}", err);
         true
@@ -168,13 +212,41 @@ impl MsgIdBind for proc_proto::FuncCallResp {
     }
 }
 
+impl MsgIdBind for proc_proto::UpdateCheckpoint {
+    fn id() -> u16 {
+        4
+    }
+}
+
+impl MsgIdBind for proc_proto::KvRequest {
+    fn id() -> u16 {
+        5
+    }
+}
+
+impl MsgIdBind for proc_proto::KvResponse {
+    fn id() -> u16 {
+        6
+    }
+}
+
 impl ReqMsg for FuncCallReq {
     type Resp = FuncCallResp;
 }
 
-pub async fn call_func(app: &str, func: &str, arg: String) -> WSResult<FuncCallResp> {
+impl ReqMsg for proc_proto::KvRequest {
+    type Resp = proc_proto::KvResponse;
+}
+
+pub async fn call_func(
+    srcfnid: proc_proto::FnTaskId,
+    app: &str,
+    func: &str,
+    arg: String,
+) -> WSResult<FuncCallResp> {
     rpc_model::call(
         FuncCallReq {
+            src_task_id: Some(srcfnid),
             func: func.to_owned(),
             arg_str: arg,
         },

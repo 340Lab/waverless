@@ -1,6 +1,7 @@
 use crate::general::app::app_owned::wasm_host_funcs;
 use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::m_executor::Executor;
+use crate::general::data::m_kv_user_client::KvUserClient;
 use crate::{
     config::NodesConfig,
     general::{
@@ -17,7 +18,7 @@ use crate::{
         m_metric_observor::MetricObservor,
     },
     modules_global_bridge, util,
-    worker::{m_kv_user_client::KvUserClient, m_worker::WorkerCore},
+    worker::m_worker::WorkerCore,
 };
 use crate::{result::WSResult, util::JoinHandleWrapper};
 use async_trait::async_trait;
@@ -355,7 +356,9 @@ start_modules!(
         instance_manager,
         InstanceManager,
         executor,
-        Executor
+        Executor,
+        kv_user_client,
+        KvUserClient
     ],
     [
         metric_observor,
@@ -371,5 +374,5 @@ start_modules!(
         app_master,
         MasterAppMgmt
     ],
-    [worker, WorkerCore, kv_user_client, KvUserClient]
+    [worker, WorkerCore]
 );
