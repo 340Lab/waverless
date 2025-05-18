@@ -1,7 +1,0 @@
-nodes: 
-  1: 
-    addr: 127.0.0.1:2600
-    spec: [meta,master]
-  2: 
-    addr: 127.0.0.1:2605
-    spec: [meta,worker]
