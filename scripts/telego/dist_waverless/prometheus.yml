@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'waverless'
+    static_configs:
+      - targets: ['192.168.31.109:2500'
+      ]

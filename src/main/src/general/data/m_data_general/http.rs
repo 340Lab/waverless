@@ -11,7 +11,8 @@ use async_raft::State as RaftState;
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
+use crate::metrics::metrics_handler;  // 导入metrics处理函数
 use axum::Router;
 use serde::Serialize;
 use std::io;
@@ -24,7 +25,10 @@ impl DataGeneral {
 
         with_option!(router_holder.option_mut(), router => {
             // router.route("/upload_data", post(handle_write_data))
-            router.merge(Router::new().route("/upload_data", post(handle_upload_data).with_state(self.view.clone())))
+            router.merge(Router::new().route("/upload_data", post(handle_upload_data).with_state(self.view.clone()))
+                                      .route("/metrics", get(metrics_handler))
+            )
+            
         });
         Ok(())
     }

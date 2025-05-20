@@ -33,6 +33,7 @@ pub mod modules_global_bridge;
 pub mod result;
 pub mod sys;
 pub mod util;
+pub mod metrics;
 
 #[tokio::main]
 async fn main() {
