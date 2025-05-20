@@ -1,0 +1,167 @@
+# dist服务文档：https://qcnoe3hd7k5c.feishu.cn/wiki/Y9SkwEPmqiTov1knR8KctyJ0nJf
+comment: 存算融合的serverless计算平台
+
+local_values: {}
+  
+prepare:
+  # 部署前自动生成 prometheus 配置文件
+  - pyscript: gen_prometheus_config.py
+    trans:
+      - copy:
+          - /etc/prometheus/prometheus.yml: prometheus-config/prometheus.yml
+
+dist:
+  waverless-test:
+    # 运行在裸机上
+    type: raw_metal
+    # 每个unique服务的配置信息以及全局配置信息
+    conf:
+      global: {port: 2500}
+      1: {tag: "[meta, master]"}
+      2: {tag: "[meta, worker]"}
+      3: {tag: '[meta, worker]'}
+    # 每个unique服务的分布节点
+    distribution:
+      lab1: [1]
+      lab2: [2]
+      lab3: [3]
+    # 安装脚本
+    install: |
+      telego install --bin-prj bin_waverless
+    # 有状态服务备份
+    state_backup: |
+      # 调试模式，不存储任何东西
+      rm -rf test_dir/kv_store_engine*
+      rm -rf test_dir/apps
+      rm -rf test_dir/files
+
+      # mkdir -p backup
+      #mv apps backup || true # allow to fail
+      #mv files backup || true # allow to fail
+      #mv kv_store_engine* backup || true # allow to fail
+    # 有状态服务恢复
+    state_restore: |
+      # mv backup/* . || true # allow to fail
+      ############################################################
+      #
+      #    telego项目结构
+      #    二进制执行目录
+      #     \_ test_dir
+      #         \_ files
+      #         |   \_ node_config.yaml
+      #         \_ apps
+      #         |   |_ app1
+      #         |   |_ app2
+      #         |   \_ ...
+      #         \_ kv_store_engine
+      #
+      ############################################################
+
+      mkdir -p test_dir/files
+      mkdir -p test_dir/apps
+
+      ls test_dir > debug_exec_dir.log
+      ls test_dir/apps > debug_apps_dir.log
+
+      # 根据 dist conf 动态生成目标 config 格式
+      cat > gen_nodes_config.py << EOF
+      import os, subprocess
+      # DIST_UNIQUE_ID_LIST is env split with ,
+      if 'DIST_UNIQUE_ID_LIST' not in os.environ:
+          print("DIST_UNIQUE_ID_LIST is not set")
+          exit(1)
+      DIST_UNIQUE_ID_LIST = os.environ.get('DIST_UNIQUE_ID_LIST', '').split(',')
+      if DIST_UNIQUE_ID_LIST and DIST_UNIQUE_ID_LIST[0] == '':
+          DIST_UNIQUE_ID_LIST = []
+      with open("test_dir/files/node_config.yaml", "w") as f:
+          f.write("nodes:\n")
+
+          for unique_id in DIST_UNIQUE_ID_LIST:
+              print(f"processing {unique_id}")
+
+              # 使用 os.environ 来获取环境变量
+              ip = os.getenv(f"DIST_CONF_{unique_id}_NODE_IP")
+              port = os.getenv(f"DIST_CONF_{unique_id}_port")
+              spec = os.getenv(f"DIST_CONF_{unique_id}_tag")
+
+              # 将结果写入 node_config.yaml
+              f.write(f"  {unique_id}:\n")
+              f.write(f"    addr: {ip}:{port}\n")
+              f.write(f"    spec: {spec}\n")
+      def kill_process_by_port(port):
+          try:
+              # 获取监听指定端口的进程ID (PID)
+              cmd = f"lsof -t -i:{port}"
+              pid = subprocess.check_output(cmd, shell=True).decode().strip()
+      
+              # 杀死对应的进程
+              if pid:
+                  os.kill(int(pid), 9)  # 9 是 SIGKILL 信号，表示强制终止进程
+                  print(f"进程 {pid} 已被终止")
+              else:
+                  print(f"没有找到监听端口 {port} 的进程")
+          except subprocess.CalledProcessError as e:
+              print(f"出错了: {e}")
+      kill_process_by_port("2500")
+      EOF
+
+    # 启动脚本
+    entrypoint: |
+      echo "start waverless with id $DIST_UNIQUE_ID"
+      # only host contains python3
+      python3 gen_nodes_config.py
+      export RUST_LOG=debug
+      rm -rf ./wasm_serverless
+      ln -s /usr/bin/waverless ./wasm_serverless
+      cp /usr/bin/waverless_entry ./
+
+      ./waverless_entry $DIST_UNIQUE_ID
+# 部署 prometheus 和 grafana
+k8s:
+  prometheus:
+    type: k8s
+    image: prom/prometheus:latest
+    conf:
+      - name: prometheus-config
+        mountPath: /etc/prometheus/prometheus.yml
+        subPath: prometheus.yml
+        configMap: prometheus-config
+    ports:
+      - 9090:9090
+    env: {}
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    command: ["/bin/prometheus", "--config.file=/etc/prometheus/prometheus.yml"]
+
+  grafana:
+    type: k8s
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    env:
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+#实际部署时会被prepare生成的覆盖
+configmap:
+  prometheus-config:
+    prometheus.yml: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: 'waverless'
+          static_configs:
+            - targets:
+                - '1.2.3.4:2500'
+                - '5.6.7.8:2500'
+                - '9.10.11.12:2500'
