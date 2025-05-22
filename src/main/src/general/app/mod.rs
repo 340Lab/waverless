@@ -621,12 +621,12 @@ impl From<(AppType, FnMetaYaml)> for FnMeta {
 lazy_static::lazy_static! {
     static ref VIEW: Option<View> = None;
 }
-fn view() -> &'static View {
-    tracing::debug!("get view");
-    let res = unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() };
-    tracing::debug!("get view end");
-    res
-}
+// fn view() -> &'static View {
+//     tracing::debug!("get view");
+//     let res = unsafe { util::non_null(&*VIEW).as_ref().as_ref().unwrap() };
+//     tracing::debug!("get view end");
+//     res
+// }
 
 #[derive(LogicalModule)]
 pub struct AppMetaManager {
@@ -963,33 +963,61 @@ impl AppMetaManager {
         //     return Ok(Some((res, None)));
         // }
 
+        fn map_app_data_res(
+            datameta: Result<(DataSetMetaV2, HashMap<u8, proto::DataItem>), WSError>,
+        ) -> Result<Option<(DataSetMetaV2, proto::DataItem)>, WSError> {
+            match datameta {
+                Err(err) => match err {
+                    WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
+                        tracing::debug!(
+                            "get_app_meta not exist, uniqueid: {:?}",
+                            std::str::from_utf8(&*uniqueid)
+                        );
+                        Ok(None)
+                    }
+                    _ => {
+                        tracing::warn!("get_app_meta failed with err {:?}", err);
+                        Err(err)
+                    }
+                },
+                Ok((datameta, mut datas)) => {
+                    let meta: proto::DataItem = datas.remove(&0).unwrap();
+                    Ok(Some((datameta, meta)))
+                }
+            }
+        }
         // self.app_metas.get(app)
         tracing::debug!("calling get_or_del_data to get app meta, app: {}", app);
-        let datameta = view()
-            .data_general()
-            .get_or_del_datas(GetOrDelDataArg {
-                meta: None,
-                unique_id: format!("{}{}", DATA_UID_PREFIX_APP_META, app).into(),
-                ty: GetOrDelDataArgType::PartialOne { idx: 0 },
-            })
-            .await;
+        let unique_id = format!("{}{}", DATA_UID_PREFIX_APP_META, app);
 
-        // only one data item
-        let (datameta, meta): (DataSetMetaV2, proto::DataItem) = match datameta {
-            Err(err) => match err {
-                WSError::WsDataError(WsDataError::DataSetNotFound { uniqueid }) => {
-                    tracing::debug!(
-                        "get_app_meta not exist, uniqueid: {:?}",
-                        std::str::from_utf8(&*uniqueid)
-                    );
-                    return Ok(None);
-                }
-                _ => {
-                    tracing::warn!("get_app_meta failed with err {:?}", err);
-                    return Err(err);
-                }
-            },
-            Ok((datameta, mut datas)) => (datameta, datas.remove(&0).unwrap()),
+        let mut datameta_meta = None;
+        for i in 0..2 {
+            let datameta = self
+                .view
+                .data_general()
+                .get_or_del_datas(GetOrDelDataArg {
+                    meta: None,
+                    unique_id: unique_id.clone().into(),
+                    ty: GetOrDelDataArgType::PartialOne { idx: 0 },
+                })
+                .await;
+            // if let Ok((datameta, _)) = datameta {}
+            let res = map_app_data_res(datameta);
+            if let Ok(Some((datameta, meta))) = res {
+                datameta_meta = Some((datameta, meta));
+                break;
+            }
+            tracing::debug!("get_app_meta get_or_del_datas failed, uid({}) data idx({}), will retry for the {} time",
+                unique_id,
+                0,
+                i+1,
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        let Some((datameta, meta)) = datameta_meta else {
+            tracing::warn!("get_app_meta failed after retry 2 times, app: {}", app);
+            return Ok(None);
         };
 
         let proto::DataItem {

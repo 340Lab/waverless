@@ -91,6 +91,11 @@ impl InstanceManager {
 
     pub async fn make_checkpoint_for_app(&self, app: &str) -> WSResult<()> {
         tracing::debug!("make checkpoint for app: {}", app);
+        // remove app checkpoint-dir
+        let app_dir = self.view.os().app_path(app);
+        let _ = std::fs::remove_dir_all(app_dir.join("checkpoint-dir"));
+        let _ = std::fs::remove_file(app_dir.join("checkpoint.log"));
+
         let p = self.get_process_instance(&AppType::Jar, app);
         let _ = p.wait_for_verify().await;
         tracing::debug!("wait_for_verify done2");

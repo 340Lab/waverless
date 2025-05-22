@@ -22,8 +22,8 @@ use std::{
 use tokio::sync::{futures::Notified, oneshot, Mutex, Notify, RwLock};
 use tracing;
 
-/// 默认数据块大小 (4MB)
-pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024 * 1024;
+/// 默认数据块大小 (1MB)
+pub const DEFAULT_BLOCK_SIZE: usize = 1 * 1024 * 1024;
 
 enum BatchDoneMsg {
     Done {
@@ -509,7 +509,8 @@ impl DataGeneral {
                 let opetype = opetype.clone();
                 let responsor = responsor.clone();
                 let version = dataset_meta.version;
-                let node_id = split.node_id as NodeID;
+                // let node_id = split.node_id as NodeID;
+                let split = split.clone();
                 // let data_offset = split.data_offset;
                 let _ = tokio::spawn(async move {
                     // first read the partial block from target node
@@ -518,7 +519,7 @@ impl DataGeneral {
                         .rpc_call_get_data
                         .call(
                             view.p2p(),
-                            node_id,
+                            split.node_id,
                             proto::GetOneDataRequest {
                                 unique_id: unique_id.clone(),
                                 idxs: vec![idx as u32],
@@ -529,23 +530,23 @@ impl DataGeneral {
                         )
                         .await
                         .unwrap_or_else(|err| {
-                            panic!("batch one recev {:?} error: {}", request_id, err);
+                            panic!("batch one fetch {:?} error: {}", request_id, err);
                         });
 
                     if partial_block.data.len() != 1 {
-                        tracing::warn!(
-                            "batch one recev partial_block wrong count, idx({}), count({})",
+                        let err_msg = format!(
+                            "batch one fetch partial_block wrong count, key({:?}), idx({}), count({}), supposed split range({}-{})",
+                            std::str::from_utf8(&unique_id).map(|v|v.to_string()).unwrap_or(format!("{:?}", unique_id)),
                             idx,
-                            partial_block.data.len()
+                            partial_block.data.len(),
+                            split.data_offset,
+                            split.data_offset + split.data_size
                         );
+                        tracing::warn!("{}", err_msg);
                         responsor
                             .done(BatchDoneMsg::Error {
                                 version: version,
-                                error_message: format!(
-                                    "batch one recev partial_block wrong count, idx({}), count({})",
-                                    idx,
-                                    partial_block.data.len()
-                                ),
+                                error_message: err_msg,
                                 request_id: request_id.clone(),
                                 // required_result: None,
                             })

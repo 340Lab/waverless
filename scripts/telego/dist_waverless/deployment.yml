@@ -15,11 +15,20 @@ dist:
       1: {tag: "[meta, master]"}
       2: {tag: "[meta, worker]"}
       3: {tag: '[meta, worker]'}
+      7: {tag: '[meta, worker]'}
+      8: {tag: '[meta, worker]'}
+      9: {tag: '[meta, worker]'}
+      10: {tag: '[meta, worker]'}
+
     # 每个unique服务的分布节点
     distribution:
       lab1: [1]
       lab2: [2]
       lab3: [3]
+      lab7: [7]
+      lab8: [8]
+      lab9: [9]
+      lab10: [10]
     # 安装脚本
     install: |
       telego install --bin-prj bin_waverless
@@ -105,7 +114,7 @@ dist:
       echo "start waverless with id $DIST_UNIQUE_ID"
       # only host contains python3
       python3 gen_nodes_config.py
-      export RUST_LOG=debug
+      export RUST_LOG=info
       rm -rf ./wasm_serverless
       ln -s /usr/bin/waverless ./wasm_serverless
       cp /usr/bin/waverless_entry ./

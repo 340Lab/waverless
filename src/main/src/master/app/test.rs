@@ -200,6 +200,9 @@ async fn test_app_upload() -> Result<(), Box<dyn std::error::Error>> {
     let (_sys_guard, _master_logical_modules, _worker_logical_modules) =
         start_sys_with_app_uploaded(APP_FN_NAME).await;
 
+    tracing::debug!("test_app_upload uploading app again, some bug comes at later upload");
+    bencher(APP_FN_NAME, true).await;
+
     // 发起对函数的 http 请求校验应用是否运行
     // 发起对函数的 http 请求校验应用是否运行
     tracing::debug!("test_app_upload try calling test app");
@@ -245,6 +248,9 @@ async fn test_app_upload() -> Result<(), Box<dyn std::error::Error>> {
     assert!(res.get("fn_start_time").is_some(), "Missing fn_start_time");
     assert!(res.get("fn_end_time").is_some(), "Missing fn_end_time");
 
+    tracing::debug!("test_app_upload uploading app again, some bug comes at later upload");
+    bencher(APP_FN_NAME, true).await;
+
     Ok(()) // 返回 Ok(()) 表示成功
 }
 
@@ -256,6 +262,23 @@ async fn test_write_data_trigger_app() -> Result<(), Box<dyn std::error::Error>>
         start_sys_with_app_uploaded(APP_FN_NAME).await;
 
     bencher(APP_FN_NAME, false).await;
+
+    tracing::debug!(
+        "test_write_data_trigger_app uploading app again, some bug comes at later upload"
+    );
+    bencher(APP_FN_NAME, true).await;
+
+    // 重新调用
+    tracing::debug!(
+        "test_write_data_trigger_app calling app again, some bug comes at later upload"
+    );
+    bencher(APP_FN_NAME, false).await;
+
+    // 重新上传
+    tracing::debug!(
+        "test_write_data_trigger_app uploading app again, some bug comes at later upload"
+    );
+    bencher(APP_FN_NAME, true).await;
 
     Ok(())
 }

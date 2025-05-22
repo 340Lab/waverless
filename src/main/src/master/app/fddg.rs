@@ -90,11 +90,16 @@ impl FDDGMgmt {
                     &*_hold.as_ref().unwrap()
                 };
 
+                // let new_map_cb = || {
+
+                // };
+
                 let node = self
                     .prefix_key_to_functions
                     .search_or_insert(&insert_key, || {
                         new_map! (HashMap {
                             app_name.to_string() => {
+                                // one app fn meta
                                 (app_type, new_map! (HashMap {
                                     fn_name.to_string() => fn_meta.clone(),
                                 }))
@@ -107,7 +112,14 @@ impl FDDGMgmt {
                     .and_modify(|(_app_type, fn_names)| {
                         let _ = fn_names.insert(fn_name.to_string(), fn_meta.clone());
                     })
-                    .or_insert_with(|| panic!("app_name not found, should be created when search"));
+                    .or_insert_with(|| {
+                        (
+                            app_type,
+                            new_map! (HashMap {
+                                fn_name.to_string() => fn_meta.clone(),
+                            }),
+                        )
+                    });
             }
         }
         Ok(())
