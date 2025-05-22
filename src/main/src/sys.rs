@@ -2,6 +2,8 @@ use crate::general::app::app_owned::wasm_host_funcs;
 use crate::general::app::instance::m_instance_manager::InstanceManager;
 use crate::general::app::m_executor::Executor;
 use crate::general::data::m_kv_user_client::KvUserClient;
+use crate::general::metrics::MetricsCollector;
+use crate::master::metrics::MetricsAggregator;
 use crate::{
     config::NodesConfig,
     general::{
@@ -358,7 +360,9 @@ start_modules!(
         executor,
         Executor,
         kv_user_client,
-        KvUserClient
+        KvUserClient,
+        metrics_collector,
+        MetricsCollector
     ],
     [
         metric_observor,
@@ -372,7 +376,9 @@ start_modules!(
         data_master,
         DataMaster,
         app_master,
-        MasterAppMgmt
+        MasterAppMgmt,
+        metrics_aggregator,
+        MetricsAggregator
     ],
     [worker, WorkerCore]
 );

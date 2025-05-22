@@ -3,6 +3,8 @@ use async_trait::async_trait;
 use axum::{http::StatusCode, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use crate::metrics::metrics_handler;
+use axum::routing::get;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeBasic {
@@ -185,6 +187,5 @@ pub fn add_routers(mut router: Router) -> Router {
         )
     }
     router = router.route("/run_service_action", post(run_service_action));
-
     router
 }

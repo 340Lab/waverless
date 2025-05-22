@@ -3,7 +3,12 @@ comment: 存算融合的serverless计算平台
 
 local_values: {}
   
-prepare: []
+prepare:
+  # 部署前自动生成 prometheus 配置文件
+  - pyscript: gen_prometheus_config.py
+    trans:
+      - copy:
+          - /etc/prometheus/prometheus.yml: prometheus-config/prometheus.yml
 
 dist:
   waverless-test:
@@ -120,3 +125,52 @@ dist:
       cp /usr/bin/waverless_entry ./
 
       ./waverless_entry $DIST_UNIQUE_ID
+# 部署 prometheus 和 grafana
+k8s:
+  prometheus:
+    type: k8s
+    image: prom/prometheus:latest
+    conf:
+      - name: prometheus-config
+        mountPath: /etc/prometheus/prometheus.yml
+        subPath: prometheus.yml
+        configMap: prometheus-config
+    ports:
+      - 9090:9090
+    env: {}
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+    command: ["/bin/prometheus", "--config.file=/etc/prometheus/prometheus.yml"]
+
+  grafana:
+    type: k8s
+    image: grafana/grafana:latest
+    ports:
+      - 3000:3000
+    env:
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+#实际部署时会被prepare生成的覆盖
+configmap:
+  prometheus-config:
+    prometheus.yml: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: 'waverless'
+          static_configs:
+            - targets:
+                - '1.2.3.4:2500'
+                - '5.6.7.8:2500'
+                - '9.10.11.12:2500'
