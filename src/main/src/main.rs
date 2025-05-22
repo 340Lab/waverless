@@ -41,10 +41,13 @@ async fn main() {
     let config = config::read_config(args.this_id, args.files_dir);
     tracing::info!("config: {:?}", config);
     // dist_kv_raft::tikvraft_proxy::start();
-    let mut sys=Sys::new(config);
-    let modules_ref=sys.new_logical_modules_ref();
+    let mut sys = Sys::new(config);
+    let modules_ref = sys.new_logical_modules_ref();
     // modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;})   由于modules_ref_scope改为了异步函数，所以这里加上.await   曾俊
-    modules_global_bridge::modules_ref_scope(modules_ref, async move{sys.wait_for_end().await;}).await;
+    modules_global_bridge::modules_ref_scope(modules_ref, async move {
+        sys.wait_for_end().await;
+    })
+    .await;
 }
 
 pub fn start_tracing() {
@@ -89,8 +92,8 @@ pub fn start_tracing() {
         // }
 
         // v.level() == &tracing::Level::ERROR
-        //     || v.level() == &tracing::Level::WARN
-        //     || v.level() == &tracing::Level::INFO
+        // || v.level() == &tracing::Level::WARN
+        // || v.level() == &tracing::Level::INFO
         v.level() != &tracing::Level::TRACE
         // v.level() == &tracing::Level::INFO
         // true

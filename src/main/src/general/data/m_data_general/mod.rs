@@ -624,11 +624,21 @@ impl DataGeneral {
                 },
                 Some(Duration::from_secs(60)),
             )
-            .await?;
+            .await
+            .map_err(|err| {
+                tracing::error!(
+                    "{} write_data version_schedule_resp error: {}",
+                    log_tag,
+                    err
+                );
+                err
+            })?;
 
         // Clone the response to extend its lifetime
         let version = version_schedule_resp.version;
         let splits = version_schedule_resp.split.clone();
+        // debug schedule plan
+        tracing::debug!("{} schedule plan: {:?}", log_tag, version_schedule_resp);
 
         // 处理每个数据项
         let mut iter = WantIdxIter::new(&GetOrDelDataArgType::All, datas.len() as u8);

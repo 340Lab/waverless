@@ -309,8 +309,16 @@ impl DataMaster {
                 .plan_for_write_data(&req.unique_id, ctx, FuncTriggerType::DataWrite)
                 .await?;
 
+            tracing::debug!(
+                "master planned for write data({:?}) cache_modes: {:?}, fetching meta lock",
+                req.unique_id,
+                item_cache_modes
+            );
+
             let update_version_lock = kv_store_engine.with_rwlock(&metakey_bytes);
             let _guard = update_version_lock.write();
+            tracing::debug!("master got meta lock for data({:?})", req.unique_id);
+
             let dataset_meta = kv_store_engine.get(&metakey, true, KvAdditionalConf::default());
 
             // let takeonce=Some((new_meta,new_))
